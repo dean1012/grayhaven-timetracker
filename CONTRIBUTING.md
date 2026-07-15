@@ -76,8 +76,11 @@ git ls-files '*.md' | xargs -r markdownlint-cli2
 git diff --check
 ```
 
-Coverage includes branch measurement and fails below the 90% threshold in
-`pyproject.toml`. CI uploads `coverage.xml` to Codecov through GitHub Actions
+Coverage includes line and branch measurement and fails below the 90% threshold
+in `pyproject.toml`, matching the established `jobright-export` policy. The
+engineering goal is to exercise every practical line, branch, error boundary,
+and permission path; new work should keep coverage near 99% rather than treating
+90% as the target. CI uploads `coverage.xml` to Codecov through GitHub Actions
 OIDC; no Codecov token is required.
 
 [Back to top](#contributing)

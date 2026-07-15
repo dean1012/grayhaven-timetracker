@@ -28,23 +28,30 @@ to adapt the runtime branding, deployment, and operating procedures.
 
 ## Scope
 
-- Administrator-provisioned accounts with hidden admin and user role mappings.
-- Argon2id passwords, TOTP two-factor authentication, and self-service profile
-  changes.
-- Client and contract records with an immutable hourly rate per contract.
+- Administrator-provisioned accounts with generated temporary credentials,
+  hidden admin and user role mappings, and no email dependency.
+- Argon2id passwords, TOTP two-factor authentication, self-service profile
+  changes, and administrator-assisted password recovery that preserves TOTP.
+- Editable client and contract records with an immutable hourly rate per
+  contract.
 - Shared tasks and one optional layer of subtasks.
 - One active timer per user, enforced by the database.
-- Completed-session correction and deletion by the owner or an administrator.
-- Administrator-only live and one-click PDF contract reports.
+- Manual completed-session entry, correction, and deletion by the owner or an
+  administrator, with per-user overlap prevention.
+- Administrator-only internal reports and one-click branded PDF reports.
+- Live client reports without account registration, protected by a high-entropy
+  link and a separately delivered client password. Links can be rotated,
+  revoked, and configured with optional expiration.
 - Report summaries grouped by task and subtask, including duration, cost, and a
   pie chart.
 - Detailed report sessions with user, start time, end time, duration, and cost.
 - SQLCipher encryption at rest and UTC timestamp storage.
-- Structured application, access, authentication, and audit logs.
+- An administrator-only, append-only audit log for user, public-report, and
+  system activity, with matching structured JSON events for future Loki use.
 - Responsive layouts at the documented Grayhaven web breakpoints.
 
 All recorded time is billable. The application intentionally does not include
-invoicing, payment processing, estimates, client portals, or public reports.
+invoicing, payment processing, estimates, client accounts, or email delivery.
 
 [Back to top](#grayhaven-systems-llc-time-tracker)
 
@@ -138,7 +145,14 @@ Required settings are:
 - `INITIAL_ADMIN_TOTP_SECRET` or `INITIAL_ADMIN_TOTP_SECRET_FILE`
 
 Operational settings include `TZ`, `DATABASE_PATH`, `BRANDING_PATH`,
-`CONTACT_URL`, `SESSION_COOKIE_SECURE`, and `TRUSTED_PROXY_COUNT`.
+`CONTACT_URL`, `SESSION_COOKIE_SECURE`, `TRUSTED_PROXY_COUNT`, `TRUSTED_HOSTS`,
+and `PUBLIC_BASE_URL`.
+
+`TRUSTED_HOSTS` is a comma-separated browser Host allowlist and defaults to
+`localhost,127.0.0.1` for local UAT. Set `PUBLIC_BASE_URL` to the canonical
+external HTTPS origin when live report links are generated behind a reverse
+proxy. Configuring an external origin requires Secure cookies and a matching
+trusted host; the application refuses to start otherwise.
 
 The branding path must contain:
 
@@ -168,6 +182,13 @@ Administrators can open a contract report in a new browser tab or download the
 same report as a branded PDF with one click. Both forms snapshot active timers
 at report-generation time without stopping or modifying those timers.
 
+An administrator can also create one live report link per contract. A client
+does not create an account: they open the opaque link and enter the separately
+delivered client report password. Expiration is optional, and administrators
+can rotate or revoke the contract link or reset the client password. Password
+reset immediately invalidates existing client report browser sessions across
+that client's contracts.
+
 The report contains only the client and contract names. Client and contract
 contact details remain internal. Currency is USD, timestamps are displayed in
 the configured IANA timezone, and stored timestamps remain UTC.
@@ -178,8 +199,10 @@ the configured IANA timezone, and stored timestamps remain UTC.
 
 The initial design includes SQLCipher encryption, Argon2id password hashing,
 TOTP, CSRF protection, concrete route permissions, secure response headers,
-request-size limits, login throttling, session invalidation, and database-level
-integrity guards. TLS and host access controls remain deployment boundaries.
+request-size limits, abuse throttling, administrator reauthentication for
+credential rotation, session invalidation, trusted-host validation, and
+database-level integrity guards. TLS and reverse-proxy access controls remain
+deployment boundaries.
 
 See [Security Model](docs/security.md) for assumptions, controls, and known
 limitations. See [Operations](docs/operations.md) before backing up, restoring,

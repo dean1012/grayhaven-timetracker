@@ -17,6 +17,8 @@
 - Client and contract contact data
 - Task structures and time-entry history
 - Contract rates and calculated report costs
+- Live report-link hashes, report-password hashes, and report browser sessions
+- Append-only audit history and actor snapshots
 - Flask signing key and SQLCipher passphrase
 - Proprietary Grayhaven branding assets
 
@@ -31,7 +33,10 @@ counts, persistent-storage ownership, and localhost-only health routing.
 Authenticated users are trusted to access all client and contract names,
 hourly rates, and task structures. Administrators are trusted with user
 management, contact details, all completed sessions, and contract reports.
-Clients do not access the application in this release.
+Clients may access an explicitly shared live contract report without an
+account. That boundary requires both the contract's opaque high-entropy link
+and the client's separately delivered report password. Shared reports exclude
+internal contact details.
 
 [Back to top](#security-model)
 
@@ -39,24 +44,38 @@ Clients do not access the application in this release.
 
 - Passwords require at least 32 characters with uppercase, lowercase, numeric,
   and special characters and are hashed with Argon2id.
-- TOTP is required for the deployment-created administrator and can be enabled
-  or disabled by authenticated users after password confirmation.
+- TOTP is required for deployment-created administrators and newly provisioned
+  users. Disabling an active method requires the current password and TOTP.
 - Login checks use a dummy Argon2id hash for unknown users and bounded in-memory
   throttles by account and source address.
+- Administrator-assisted password recovery generates a temporary password,
+  invalidates existing sessions, forces a password change, preserves TOTP, and
+  sends no email.
+- User-password and client-report-password rotation require the acting
+  administrator's current password and TOTP and apply a separate abuse limit.
 - Session cookies are HTTP-only and SameSite Lax. Production must enable Secure
   cookies behind TLS.
 - State changes use POST requests and CSRF tokens.
 - Stable permissions are enforced at route boundaries even though the current
   interface exposes only admin and user behavior.
+- Browser Host values are checked against an explicit allowlist. External live
+  report URLs require a canonical HTTPS origin, Secure cookies, and a matching
+  trusted host.
 - SQLCipher encrypts database pages and enables page authentication, memory
   security, secure deletion, foreign keys, and integrity checks.
 - Database constraints prevent multiple active timers for one user, invalid
-  task/subtask assignments, negative session durations, and removal of the
-  last enabled administrator.
+  task/subtask assignments, overlapping time for one user, negative session
+  durations, removal of the last enabled administrator, and audit history
+  updates or deletion.
+- Report links store only SHA-256 token hashes. Client report passwords use
+  Argon2id, can be rotated independently, and invalidate existing report
+  browser sessions by version.
 - Security headers deny framing, cross-origin resource use, external scripts,
   and browser capabilities not needed by the application.
 - Error responses omit internal exception and database details.
-- Secret values and SQL parameters are not intentionally logged.
+- Audit details discard credential-like fields. Shared report tokens and
+  Unicode control characters are redacted from application, exception, access,
+  and audit log text.
 
 [Back to top](#security-model)
 
@@ -64,12 +83,15 @@ Clients do not access the application in this release.
 
 - Terminate TLS with the managed production reverse proxy.
 - Set `SESSION_COOKIE_SECURE=true` and the exact trusted proxy count.
+- Set the exact `TRUSTED_HOSTS` allowlist and canonical `PUBLIC_BASE_URL`.
 - Bind the application upstream and health endpoint to loopback only.
 - Mount secret files read-only and restrict their host permissions.
 - Keep the persistent database directory private to the service account.
 - Back up through the verified SQLCipher maintenance command before restic.
 - Collect structured logs and alert on health failures and repeated login
   rejection.
+- Redact shared report tokens in reverse-proxy access logs and monitor database
+  capacity for append-only audit growth.
 - Pin application builds and review dependency and base-image updates before
   deployment.
 - Run the container with a read-only root filesystem, no Linux capabilities,
@@ -80,12 +102,12 @@ Clients do not access the application in this release.
 
 ## Known Limitations
 
-- The login throttle is process-local and designed for the one-worker initial
-  deployment. Multi-instance deployments need a shared limiter or proxy-level
-  enforcement.
-- TOTP recovery codes, email recovery, administrator password reset, and
-  administrator TOTP override are not implemented. Authorized operators must
-  use a documented offline database procedure when recovery is necessary.
+- Login, shared-report, and sensitive-action throttles are process-local and
+  designed for the one-worker initial deployment. Multi-instance deployments
+  need a shared limiter or proxy-level enforcement.
+- TOTP recovery codes, email recovery, and administrator TOTP override are not
+  implemented. Password reset deliberately preserves TOTP, so loss of both
+  factors requires an authorized offline recovery procedure.
 - SQLCipher does not protect data after the running application has unlocked
   it. Host root, container-process compromise, or stolen runtime secrets remain
   critical threats.
@@ -93,9 +115,12 @@ Clients do not access the application in this release.
   scaling requires a coordinated database migration.
 - Client and contract names, hourly rates, and task data are shared with every
   enabled internal user by design.
-- Application logs are structured for future monitoring, but Alloy, Loki,
-  fail2ban, dashboards, and alerts are deployment work and are not configured
-  by this repository.
+- The audit history is append-only and has no in-application retention or
+  deletion workflow. Capacity monitoring and a future approved archival policy
+  are operational requirements.
+- Application and audit logs are structured for future monitoring, but Alloy,
+  Loki, fail2ban, dashboards, and alerts are deployment work and are not
+  configured by this repository.
 
 [Back to top](#security-model)
 

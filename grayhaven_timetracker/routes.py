@@ -1508,7 +1508,7 @@ def reset_user_password(user_id: int) -> Any:
         "eyebrow": "PASSWORD RESET",
         "title": user.full_name,
         "description": (
-            "Generate a one-time password, invalidate the user's existing "
+            "Generate a temporary password, invalidate the user's existing "
             "sessions, and require a password change after sign-in."
         ),
         "submit_label": "Reset user password",

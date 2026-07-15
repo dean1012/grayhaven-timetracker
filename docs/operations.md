@@ -5,10 +5,13 @@
 ## Table of Contents
 
 - [Service Health](#service-health)
+- [Production Origin and Proxy](#production-origin-and-proxy)
 - [Backups](#backups)
 - [Restore](#restore)
 - [SQLCipher Key Rotation](#sqlcipher-key-rotation)
 - [Initial Administrator Reconciliation](#initial-administrator-reconciliation)
+- [No-Email User Recovery](#no-email-user-recovery)
+- [Live Client Reports](#live-client-reports)
 - [Timezone Changes](#timezone-changes)
 - [Logs and Monitoring](#logs-and-monitoring)
 
@@ -22,6 +25,30 @@ Compose publishes the application only on `127.0.0.1:8000`. Production Nginx
 must deny external access to `/health` while allowing the host's monitoring
 agent to query the loopback listener. The health endpoint must not be placed on
 a public load-balancer route.
+
+[Back to top](#operations)
+
+## Production Origin and Proxy
+
+Set the external origin and browser trust boundary explicitly in production:
+
+```text
+PUBLIC_BASE_URL=https://time.example.invalid
+SESSION_COOKIE_SECURE=true
+TRUSTED_HOSTS=time.example.invalid
+TRUSTED_PROXY_COUNT=1
+```
+
+Replace the example hostname and proxy count with deployed values. The
+application refuses an external `PUBLIC_BASE_URL` unless Secure cookies are
+enabled and its hostname matches `TRUSTED_HOSTS`. Configure Nginx to preserve
+the original Host and send the expected forwarded address and scheme headers.
+Do not increase `TRUSTED_PROXY_COUNT` beyond the exact number of trusted proxy
+hops.
+
+The application redacts live report tokens from its own logs. Configure the
+reverse proxy to redact `/shared/reports/<token>` paths as well, because proxy
+access logs are outside the application logger.
 
 [Back to top](#operations)
 
@@ -41,7 +68,8 @@ docker compose exec timetracker \
 ```
 
 The command uses SQLite's online backup API, verifies SQLCipher and SQLite
-integrity, writes mode `0600`, and refuses to overwrite an existing file.
+integrity, writes mode `0600`, and refuses to overwrite an existing file. The
+backup includes the append-only audit history.
 Configure restic automation to run this command successfully before taking the
 filesystem snapshot. Apply retention to old local staging copies separately.
 
@@ -123,6 +151,44 @@ administrator.
 
 [Back to top](#operations)
 
+## No-Email User Recovery
+
+The application sends no email. An administrator can open **Users**, select
+**Reset password**, and re-enter their own current password and TOTP code. A
+successful reset:
+
+- generates a strong temporary password and displays it once;
+- stores only its Argon2id hash;
+- invalidates the user's existing application sessions;
+- requires the user to replace it immediately after sign-in; and
+- preserves the user's existing TOTP secret.
+
+Deliver the temporary password through an approved channel separate from any
+TOTP provisioning information. If the user has also lost the configured TOTP
+method, password reset alone cannot restore access. Recovery then requires the
+authorized offline procedure; there is no email fallback or administrator TOTP
+override in the application.
+
+[Back to top](#operations)
+
+## Live Client Reports
+
+Client reports do not require account registration. At client creation, the
+application generates one report password and displays it once. Deliver that
+password separately from contract report links.
+
+From a contract, an administrator can create or rotate the opaque report link
+and select 7, 30, 90, or 365 days, or no expiration. Rotation immediately
+invalidates the prior link. Revocation removes access regardless of a client's
+existing browser session.
+
+Resetting the client report password requires administrator password and TOTP
+reauthentication. It displays a new password once and invalidates existing
+report browser sessions for every contract under that client. Stored report
+passwords cannot be viewed or recovered.
+
+[Back to top](#operations)
+
 ## Timezone Changes
 
 Set `TZ` to an IANA timezone name and recreate the container. Stored timestamps
@@ -133,14 +199,24 @@ The same sessions will be rendered in the new local timezone.
 
 ## Logs and Monitoring
 
-Logs are emitted as one JSON object per line. Events include HTTP method, path,
-status, elapsed microseconds, source address, user agent, and authenticated user
-identifier where available. Authentication events include successful,
-rejected, and rate-limited logins without passwords or TOTP values.
+Logs are emitted as one JSON object per line. Access events include HTTP method,
+redacted path, status, elapsed microseconds, source address, user agent, and
+authenticated user identifier where available. Authentication events include
+successful, rejected, and rate-limited logins without passwords or TOTP values.
+
+The encrypted database also contains an append-only audit history available to
+administrators under **Audit**. It records authenticated requests, protected
+public-report activity, semantic state changes, administrator recovery actions,
+and application startup or bootstrap events. There is no application delete or
+edit operation for audit events, and database triggers reject either change.
+Monitor persistent-volume capacity because audit history grows with use.
 
 Future Alloy and Loki configuration should collect container standard output
-and error without parsing secrets. Fail2ban can match repeated
-`login_rejected` and `login_rate_limited` events once production log paths and
-the reverse-proxy address model are finalized.
+and error and select the `grayhaven_timetracker.audit` logger for canonical
+audit events. Those JSON records already contain source, actor, request, status,
+and safe structured details. Fail2ban can match repeated `login_rejected`,
+`login_rate_limited`, shared-report rejection, and sensitive-action
+rate-limited events once production log paths and the reverse-proxy address
+model are finalized.
 
 [Back to top](#operations)
