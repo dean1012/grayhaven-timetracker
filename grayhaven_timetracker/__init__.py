@@ -13,7 +13,7 @@ from werkzeug.exceptions import SecurityError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from .audit import record_audit_event, safe_audit_path
-from .bootstrap import reconcile_initial_admin
+from .bootstrap import reconcile_bootstrap_users
 from .config import (
     DEFAULT_CONTACT_URL,
     environment_config,
@@ -78,7 +78,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     csrf.init_app(app)
     init_database(app)
     with session_scope(app) as database:
-        bootstrap_result = reconcile_initial_admin(app, database)
+        bootstrap_outcomes = reconcile_bootstrap_users(app, database)
         prior_schema = app.extensions.get("database_prior_schema")
         if prior_schema is not None:
             record_audit_event(
@@ -87,12 +87,20 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                 source="system",
                 details={"prior_schema": prior_schema, "schema": SCHEMA_VERSION},
             )
-        record_audit_event(
-            database,
-            "initial_admin_reconciled",
-            source="system",
-            details={"outcome": bootstrap_result},
-        )
+        for bootstrap_outcome in bootstrap_outcomes:
+            user = bootstrap_outcome.user
+            record_audit_event(
+                database,
+                "bootstrap_user_reconciled",
+                source="system",
+                details={
+                    "enabled": user.is_enabled,
+                    "email": user.email,
+                    "outcome": bootstrap_outcome.outcome,
+                    "role": user.role,
+                    "user_id": user.id,
+                },
+            )
         record_audit_event(
             database,
             "application_started",

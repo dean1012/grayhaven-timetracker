@@ -44,8 +44,12 @@ internal contact details.
 
 - Passwords require at least 32 characters with uppercase, lowercase, numeric,
   and special characters and are hashed with Argon2id.
-- TOTP is required for deployment-created administrators and newly provisioned
-  users. Disabling an active method requires the current password and TOTP.
+- Deployment automation can reconcile multiple administrator and standard-user
+  accounts from a permission-restricted JSON manifest containing Argon2id
+  hashes and optional per-account TOTP seeds. TOTP can be enrolled from the
+  profile page when omitted. Standard users created inside the application
+  receive a unique TOTP secret. Disabling an active method requires the current
+  password and TOTP.
 - Login checks use a dummy Argon2id hash for unknown users and bounded in-memory
   throttles by account and source address.
 - Administrator-assisted password recovery generates a temporary password,

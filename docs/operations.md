@@ -9,7 +9,7 @@
 - [Backups](#backups)
 - [Restore](#restore)
 - [SQLCipher Key Rotation](#sqlcipher-key-rotation)
-- [Initial Administrator Reconciliation](#initial-administrator-reconciliation)
+- [Deployment-Managed User Reconciliation](#deployment-managed-user-reconciliation)
 - [No-Email User Recovery](#no-email-user-recovery)
 - [Live Client Reports](#live-client-reports)
 - [Timezone Changes](#timezone-changes)
@@ -132,22 +132,40 @@ confirmed to match.
 
 [Back to top](#operations)
 
-## Initial Administrator Reconciliation
+## Deployment-Managed User Reconciliation
 
-Deployment automation supplies the initial administrator's email, display
-name, Argon2id password hash, and TOTP secret. On startup:
+For local UAT, deployment automation can supply one initial administrator's
+email, display name, and Argon2id password hash through the `INITIAL_ADMIN_*`
+settings. The TOTP secret is optional; omission creates the account without
+TOTP so the administrator can enroll it from **Profile** after login.
 
-- The same email updates the display name.
-- Changed configured authentication values update that account and invalidate
-  its existing sessions.
-- Unchanged configured values preserve password or TOTP changes made through
-  the application.
-- A different email creates a new enabled administrator and leaves the prior
-  account unchanged.
+The production-oriented interface is `BOOTSTRAP_USERS_FILE`. Ansible should
+render a JSON list from encrypted Grayhaven vault data, validate it before
+deployment, install it as a permission-restricted secret file with `no_log`,
+and point the container at the installed path. This mirrors the existing
+vault-to-htpasswd workflow while allowing structured application attributes.
+Each entry requires email, first name, last name, Argon2id password hash, and
+an `admin` or `user` role. The enabled flag defaults to true, and TOTP is
+optional per account.
 
-After logging into a replacement account, an administrator can demote and
-disable the old account. The database refuses to remove the last enabled
-administrator.
+On startup:
+
+- missing accounts are created as administrators or standard users;
+- names, roles, and enabled states are reconciled every time;
+- changed configured password or TOTP fingerprints update authentication and
+  invalidate existing sessions;
+- unchanged credential fingerprints preserve in-application password and TOTP
+  changes;
+- omitted TOTP values never remove an authenticator enrolled from **Profile**;
+- disabling an account stops its active timer; and
+- each account reconciliation is recorded as a system audit event without
+  credential material.
+
+At least one configured account must be an enabled administrator. To retire an
+account, retain its manifest entry with `enabled: false`; this preserves time
+and audit history. Removing an entry only stops deployment management and does
+not delete or disable the database account. The database independently refuses
+to remove the last enabled administrator.
 
 [Back to top](#operations)
 

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
 from datetime import date, datetime
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pyotp
@@ -17,7 +19,10 @@ from sqlalchemy.exc import IntegrityError
 from grayhaven_timetracker import create_app
 from grayhaven_timetracker.audit import record_audit_event
 from grayhaven_timetracker.auth import hash_password, verify_password
-from grayhaven_timetracker.bootstrap import reconcile_initial_admin
+from grayhaven_timetracker.bootstrap import (
+    is_deployment_managed_user,
+    reconcile_bootstrap_users,
+)
 from grayhaven_timetracker.config import (
     ConfigurationError,
     environment_config,
@@ -39,7 +44,14 @@ from grayhaven_timetracker.database import (
     sql_literal,
     verify_cipher_integrity,
 )
-from grayhaven_timetracker.models import AuditEvent, Subtask, Task, TimeEntry, User
+from grayhaven_timetracker.models import (
+    ApplicationMetadata,
+    AuditEvent,
+    Subtask,
+    Task,
+    TimeEntry,
+    User,
+)
 from tests.helpers import (
     ADMIN_EMAIL,
     ADMIN_PASSWORD_HASH,
@@ -94,17 +106,21 @@ class ConfigurationTests(unittest.TestCase):
             root = Path(directory)
             secret_file = root / "secret"
             cipher_file = root / "cipher"
+            bootstrap_file = root / "bootstrap-users.json"
             secret_file.write_text("S" * 32 + "\n", encoding="utf-8")
             cipher_file.write_text("C" * 32 + "\n", encoding="utf-8")
+            bootstrap_file.write_text("[]\n", encoding="utf-8")
             values = self.required_environment()
             del values["SECRET_KEY"]
             del values["SQLCIPHER_PASSPHRASE"]
             values["SECRET_KEY_FILE"] = str(secret_file)
             values["SQLCIPHER_PASSPHRASE_FILE"] = str(cipher_file)
+            values["BOOTSTRAP_USERS_FILE"] = str(bootstrap_file)
             with patch.dict(os.environ, values, clear=True):
                 config = environment_config()
         self.assertEqual(config["SECRET_KEY"], "S" * 32)
         self.assertEqual(config["SQLCIPHER_PASSPHRASE"], "C" * 32)
+        self.assertEqual(config["BOOTSTRAP_USERS"], "[]")
 
     def test_environment_config_rejects_conflicts_and_invalid_values(self) -> None:
         cases = [
@@ -583,12 +599,12 @@ class BootstrapTests(AppTestCase):
             admin.password_hash = replacement
             admin.totp_secret = pyotp.random_base32()
         with session_scope(self.app) as database:
-            result = reconcile_initial_admin(self.app, database)
+            result = reconcile_bootstrap_users(self.app, database)
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
             assert admin is not None
             self.assertEqual(admin.password_hash, replacement)
             self.assertNotEqual(admin.totp_secret, ADMIN_TOTP_SECRET)
-            self.assertEqual(result, "unchanged")
+            self.assertEqual(result[0].outcome, "unchanged")
 
     def test_changed_bootstrap_authentication_updates_and_invalidates_sessions(
         self,
@@ -602,11 +618,11 @@ class BootstrapTests(AppTestCase):
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
             assert admin is not None
             prior_version = admin.session_version
-            result = reconcile_initial_admin(self.app, database)
+            result = reconcile_bootstrap_users(self.app, database)
             self.assertTrue(verify_password(admin.password_hash, new_password))
             self.assertEqual(admin.totp_secret, new_secret)
             self.assertEqual(admin.session_version, prior_version + 1)
-            self.assertEqual(result, "updated")
+            self.assertEqual(result[0].outcome, "updated")
 
     def test_new_bootstrap_email_creates_another_administrator(self) -> None:
         self.app.config.update(
@@ -617,26 +633,228 @@ class BootstrapTests(AppTestCase):
             }
         )
         with session_scope(self.app) as database:
-            result = reconcile_initial_admin(self.app, database)
+            result = reconcile_bootstrap_users(self.app, database)
             users = database.scalars(select(User).order_by(User.id)).all()
             self.assertEqual(len(users), 2)
             self.assertTrue(all(user.is_admin for user in users))
-            self.assertEqual(result, "created")
+            self.assertEqual(result[0].outcome, "created")
+
+    def test_bootstrap_without_totp_creates_admin_and_preserves_in_app_setup(
+        self,
+    ) -> None:
+        self.app.config.update(
+            {
+                "INITIAL_ADMIN_EMAIL": "password-only-admin@example.invalid",
+                "INITIAL_ADMIN_TOTP_SECRET": None,
+            }
+        )
+        with session_scope(self.app) as database:
+            result = reconcile_bootstrap_users(self.app, database)
+            admin = database.scalar(
+                select(User).where(User.email == "password-only-admin@example.invalid")
+            )
+            assert admin is not None
+            self.assertIsNone(admin.totp_secret)
+            self.assertEqual(result[0].outcome, "created")
+
+            enrolled_secret = pyotp.random_base32()
+            admin.totp_secret = enrolled_secret
+
+        with session_scope(self.app) as database:
+            self.assertEqual(
+                reconcile_bootstrap_users(self.app, database)[0].outcome,
+                "unchanged",
+            )
+            admin = database.scalar(
+                select(User).where(User.email == "password-only-admin@example.invalid")
+            )
+            assert admin is not None
+            self.assertEqual(admin.totp_secret, enrolled_secret)
+
+    def test_manifest_bootstrap_creates_admin_and_standard_user(self) -> None:
+        user_secret = pyotp.random_base32()
+        self.app.config.update(
+            {
+                "INITIAL_ADMIN_PASSWORD_HASH": None,
+                "INITIAL_ADMIN_TOTP_SECRET": None,
+                "BOOTSTRAP_USERS": json.dumps(
+                    [
+                        {
+                            "email": "managed-admin@example.invalid",
+                            "first_name": "Managed",
+                            "last_name": "Administrator",
+                            "password_hash": ADMIN_PASSWORD_HASH,
+                            "role": "admin",
+                        },
+                        {
+                            "email": "managed-user@example.invalid",
+                            "enabled": True,
+                            "first_name": "Managed",
+                            "last_name": "User",
+                            "password_hash": ADMIN_PASSWORD_HASH,
+                            "role": "user",
+                            "totp_secret": user_secret,
+                        },
+                    ]
+                ),
+            }
+        )
+        with session_scope(self.app) as database:
+            outcomes = reconcile_bootstrap_users(self.app, database)
+            managed_admin = database.scalar(
+                select(User).where(User.email == "managed-admin@example.invalid")
+            )
+            managed_user = database.scalar(
+                select(User).where(User.email == "managed-user@example.invalid")
+            )
+            assert managed_admin is not None and managed_user is not None
+            self.assertEqual(
+                [item.outcome for item in outcomes], ["created", "created"]
+            )
+            self.assertTrue(managed_admin.is_admin)
+            self.assertIsNone(managed_admin.totp_secret)
+            self.assertFalse(managed_user.is_admin)
+            self.assertTrue(managed_user.is_enabled)
+            self.assertEqual(managed_user.totp_secret, user_secret)
+            self.assertTrue(is_deployment_managed_user(database, managed_admin.email))
+            managed_user_id = managed_user.id
+
+        seed = self.seed_contract(entry_user_id=managed_user_id)
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, seed.entry_id)
+            assert entry is not None
+            entry.stopped_at = None
+
+        manifest = json.loads(cast(str, self.app.config["BOOTSTRAP_USERS"]))
+        manifest[1]["enabled"] = False
+        self.app.config["BOOTSTRAP_USERS"] = json.dumps(manifest)
+        with session_scope(self.app) as database:
+            outcomes = reconcile_bootstrap_users(self.app, database)
+            managed_user = database.get(User, managed_user_id)
+            entry = database.get(TimeEntry, seed.entry_id)
+            assert managed_user is not None and entry is not None
+            self.assertEqual(outcomes[1].outcome, "updated")
+            self.assertFalse(managed_user.is_enabled)
+            self.assertIsNotNone(entry.stopped_at)
+
+        manifest[1]["enabled"] = True
+        self.app.config["BOOTSTRAP_USERS"] = json.dumps(manifest)
+        with session_scope(self.app) as database:
+            reconcile_bootstrap_users(self.app, database)
+            managed_user = database.get(User, managed_user_id)
+            assert managed_user is not None
+            self.assertTrue(managed_user.is_enabled)
+
+        self.app.config["BOOTSTRAP_USERS"] = json.dumps(manifest[:1])
+        with session_scope(self.app) as database:
+            reconcile_bootstrap_users(self.app, database)
+            managed_user = database.get(User, managed_user_id)
+            assert managed_user is not None
+            self.assertTrue(managed_user.is_enabled)
+            self.assertFalse(is_deployment_managed_user(database, managed_user.email))
+
+    def test_manifest_bootstrap_rejects_unsafe_or_ambiguous_entries(self) -> None:
+        valid = {
+            "email": "managed-admin@example.invalid",
+            "first_name": "Managed",
+            "last_name": "Administrator",
+            "password_hash": ADMIN_PASSWORD_HASH,
+            "role": "admin",
+        }
+        invalid_manifests = [
+            "{",
+            "{}",
+            "[]",
+            json.dumps([1]),
+            json.dumps([{**valid, "unsupported": True}]),
+            json.dumps(
+                [{key: value for key, value in valid.items() if key != "email"}]
+            ),
+            json.dumps([{**valid, "email": 7}]),
+            json.dumps([{**valid, "enabled": "yes"}]),
+            json.dumps([{**valid, "role": "owner"}]),
+            json.dumps([{**valid, "first_name": ""}]),
+            json.dumps([{**valid, "totp_secret": "not-base32!"}]),
+            json.dumps([valid, valid]),
+            json.dumps([{**valid, "role": "user"}]),
+            json.dumps([valid] * 1001),
+        ]
+        self.app.config.update(
+            {
+                "INITIAL_ADMIN_PASSWORD_HASH": None,
+                "INITIAL_ADMIN_TOTP_SECRET": None,
+            }
+        )
+        for manifest in invalid_manifests:
+            self.app.config["BOOTSTRAP_USERS"] = manifest
+            with (
+                self.subTest(manifest=manifest),
+                session_scope(self.app) as database,
+                self.assertRaises(ConfigurationError),
+            ):
+                reconcile_bootstrap_users(self.app, database)
+
+    def test_manifest_bootstrap_recovers_missing_or_malformed_metadata(self) -> None:
+        self.app.config.update(
+            {
+                "INITIAL_ADMIN_PASSWORD_HASH": None,
+                "INITIAL_ADMIN_TOTP_SECRET": None,
+                "BOOTSTRAP_USERS": json.dumps(
+                    [
+                        {
+                            "email": ADMIN_EMAIL,
+                            "first_name": "Managed",
+                            "last_name": "Administrator",
+                            "password_hash": ADMIN_PASSWORD_HASH,
+                            "role": "admin",
+                        }
+                    ]
+                ),
+            }
+        )
+        with session_scope(self.app) as database:
+            self.assertEqual(
+                reconcile_bootstrap_users(self.app, database)[0].outcome,
+                "updated",
+            )
+            marker = database.scalar(
+                select(ApplicationMetadata).where(
+                    ApplicationMetadata.key.startswith("bootstrap_user_")
+                )
+            )
+            assert marker is not None
+            marker.value = "{"
+
+        with session_scope(self.app) as database:
+            reconcile_bootstrap_users(self.app, database)
+            marker = database.scalar(
+                select(ApplicationMetadata).where(
+                    ApplicationMetadata.key.startswith("bootstrap_user_")
+                )
+            )
+            assert marker is not None
+            marker.value = "[]"
+
+        with session_scope(self.app) as database:
+            self.assertEqual(
+                reconcile_bootstrap_users(self.app, database)[0].outcome,
+                "unchanged",
+            )
 
     def test_bootstrap_rejects_invalid_configuration_and_can_be_skipped(self) -> None:
         original_first_name = self.app.config["INITIAL_ADMIN_FIRST_NAME"]
         self.app.config["INITIAL_ADMIN_FIRST_NAME"] = ""
         with session_scope(self.app) as database, self.assertRaises(ConfigurationError):
-            reconcile_initial_admin(self.app, database)
+            reconcile_bootstrap_users(self.app, database)
         self.app.config["INITIAL_ADMIN_FIRST_NAME"] = original_first_name
 
         self.app.config["INITIAL_ADMIN_PASSWORD_HASH"] = None
         with session_scope(self.app) as database, self.assertRaises(ConfigurationError):
-            reconcile_initial_admin(self.app, database)
+            reconcile_bootstrap_users(self.app, database)
 
         self.app.config["INITIAL_ADMIN_PASSWORD_HASH"] = "invalid"
         with session_scope(self.app) as database, self.assertRaises(ConfigurationError):
-            reconcile_initial_admin(self.app, database)
+            reconcile_bootstrap_users(self.app, database)
 
         self.app.config["INITIAL_ADMIN_PASSWORD_HASH"] = PasswordHasher(
             time_cost=1,
@@ -644,15 +862,15 @@ class BootstrapTests(AppTestCase):
             parallelism=1,
         ).hash("weak-parameter-test")
         with session_scope(self.app) as database, self.assertRaises(ConfigurationError):
-            reconcile_initial_admin(self.app, database)
+            reconcile_bootstrap_users(self.app, database)
 
         self.app.config["INITIAL_ADMIN_PASSWORD_HASH"] = ADMIN_PASSWORD_HASH
         self.app.config["INITIAL_ADMIN_TOTP_SECRET"] = "invalid"
         with session_scope(self.app) as database, self.assertRaises(ConfigurationError):
-            reconcile_initial_admin(self.app, database)
+            reconcile_bootstrap_users(self.app, database)
         self.app.config["SKIP_BOOTSTRAP"] = True
         with session_scope(self.app) as database:
-            self.assertEqual(reconcile_initial_admin(self.app, database), "skipped")
+            self.assertEqual(reconcile_bootstrap_users(self.app, database), [])
 
 
 if __name__ == "__main__":

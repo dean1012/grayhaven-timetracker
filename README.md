@@ -99,8 +99,6 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(48))' \
   > secrets/flask_secret_key
 python3 -c 'import secrets; print(secrets.token_urlsafe(48))' \
   > secrets/sqlcipher_passphrase
-python3 -c 'import pyotp; print(pyotp.random_base32())' \
-  > secrets/initial_admin_totp_secret
 python3 -c 'from getpass import getpass; from grayhaven_timetracker.auth import hash_password; print(hash_password(getpass()))' \
   > secrets/initial_admin_password_hash
 chmod 600 secrets/*
@@ -139,10 +137,51 @@ Required settings are:
 
 - `SECRET_KEY` or `SECRET_KEY_FILE`
 - `SQLCIPHER_PASSPHRASE` or `SQLCIPHER_PASSPHRASE_FILE`
-- `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_FIRST_NAME`, and
-  `INITIAL_ADMIN_LAST_NAME`
-- `INITIAL_ADMIN_PASSWORD_HASH` or `INITIAL_ADMIN_PASSWORD_HASH_FILE`
-- `INITIAL_ADMIN_TOTP_SECRET` or `INITIAL_ADMIN_TOTP_SECRET_FILE`
+- at least one enabled administrator supplied through the single-account
+  settings or the deployment-managed user manifest described below
+
+The local single-account path uses `INITIAL_ADMIN_EMAIL`,
+`INITIAL_ADMIN_FIRST_NAME`, `INITIAL_ADMIN_LAST_NAME`, and
+`INITIAL_ADMIN_PASSWORD_HASH` or `INITIAL_ADMIN_PASSWORD_HASH_FILE`.
+`INITIAL_ADMIN_TOTP_SECRET` or `INITIAL_ADMIN_TOTP_SECRET_FILE` is optional.
+When omitted, the administrator is created without TOTP and can enroll an
+authenticator from the profile page after signing in.
+
+Production automation can instead supply `BOOTSTRAP_USERS_FILE` containing a
+JSON list rendered from encrypted Grayhaven vault data. This follows the
+existing per-domain htpasswd pattern: the vault owns complete credential
+entries, Ansible validates and writes a permission-restricted generated file,
+and the service reads that file without logging it. The equivalent direct
+`BOOTSTRAP_USERS` variable is supported but is not recommended for production.
+
+```json
+[
+  {
+    "email": "administrator@example.invalid",
+    "first_name": "Example",
+    "last_name": "Administrator",
+    "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$...",
+    "role": "admin",
+    "enabled": true
+  },
+  {
+    "email": "user@example.invalid",
+    "first_name": "Example",
+    "last_name": "User",
+    "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$...",
+    "role": "user",
+    "enabled": true,
+    "totp_secret": "OPTIONALBASE32VALUE"
+  }
+]
+```
+
+Email, first name, last name, password hash, and role are required for each
+entry. Role must be `admin` or `user`; `enabled` defaults to `true`; and
+`totp_secret` is optional. At least one configured account must be an enabled
+administrator. Set `enabled` to `false` to retain history while blocking an
+account. Removing an entry stops managing it but does not delete or disable the
+database account automatically.
 
 Operational settings include `TZ`, `DATABASE_PATH`, `BRANDING_PATH`,
 `CONTACT_URL`, `SESSION_COOKIE_SECURE`, `TRUSTED_PROXY_COUNT`, `TRUSTED_HOSTS`,
@@ -169,10 +208,13 @@ fonts/inter-600.ttf
 fonts/inter-700.ttf
 ```
 
-When the configured administrator email remains unchanged, bootstrap updates
-the display name every startup. It only replaces the password hash or TOTP
-secret when the corresponding configured value changes. A new email creates a
-new enabled administrator and leaves the existing account untouched.
+Deployment-managed names, roles, and enabled states are reconciled every
+startup. Password and explicitly supplied TOTP values are reapplied only when
+their configured fingerprints change, so in-application password recovery and
+TOTP enrollment are preserved across ordinary restarts. Omitting TOTP never
+removes an authenticator enrolled through the application. Disabling a managed
+account stops its active timer, and every reconciled account produces a safe
+system audit event.
 
 [Back to top](#grayhaven-systems-llc-time-tracker)
 

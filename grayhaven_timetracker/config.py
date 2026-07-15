@@ -103,6 +103,7 @@ def environment_config() -> dict[str, Any]:
         "BRANDING_PATH": str(
             Path(os.environ.get("BRANDING_PATH", "/app/branding")).resolve()
         ),
+        "BOOTSTRAP_USERS": _read_secret("BOOTSTRAP_USERS", required=False),
         "CONTACT_URL": os.environ.get(
             "CONTACT_URL",
             DEFAULT_CONTACT_URL,

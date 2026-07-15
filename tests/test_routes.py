@@ -36,6 +36,17 @@ from tests.helpers import (
 
 
 class AuthenticationRouteTests(AppTestCase):
+    def test_login_without_totp_when_account_has_not_enrolled_it(self) -> None:
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.totp_secret = None
+        accepted = self.client.post(
+            "/login",
+            data={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+        )
+        self.assertEqual(accepted.location, "/")
+
     def test_login_logout_head_and_safe_next_workflow(self) -> None:
         self.assertEqual(self.client.get("/").status_code, 302)
         self.assertIn("next=/", self.client.get("/").location)

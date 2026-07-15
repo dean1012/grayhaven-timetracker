@@ -50,10 +50,9 @@ from .auth import (
     verify_password_constant_time,
     verify_totp,
 )
-from .bootstrap import BOOTSTRAP_EMAIL_KEY
+from .bootstrap import is_deployment_managed_user
 from .database import get_session, health_check
 from .models import (
-    ApplicationMetadata,
     AuditEvent,
     Client,
     Contract,
@@ -1454,8 +1453,7 @@ def edit_user(user_id: int) -> Any:
     database = get_session()
     actor = cast(User, current_user())
     user = cast(User, get_or_404(User, user_id))
-    bootstrap_email = database.get(ApplicationMetadata, BOOTSTRAP_EMAIL_KEY)
-    email_managed = bool(bootstrap_email and bootstrap_email.value == user.email)
+    email_managed = is_deployment_managed_user(database, user.email)
     if request.method != "POST":
         return render_template(
             "user_edit_form.html", user=user, email_managed=email_managed
@@ -1463,9 +1461,7 @@ def edit_user(user_id: int) -> Any:
     try:
         email = normalize_email(request.form.get("email", ""))
         if email_managed and email != user.email:
-            raise ValueError(
-                "The deployment-managed administrator email cannot be changed here."
-            )
+            raise ValueError("A deployment-managed user email cannot be changed here.")
         existing = find_user_by_email(email)
         if existing is not None and existing.id != user.id:
             raise ValueError("A user with that email already exists.")
