@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1C1F24">
+  <title>{% block title %}Grayhaven Systems LLC - Contract Time Report{% endblock %}</title>
+  <link rel="icon" type="image/x-icon" href="{{ url_for('main.branding_asset', filename='favicon.ico') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='fontawesome.min.css') }}?v={{ app_version }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ app_version }}">
+</head>
+<body class="report-body"><main class="report-shell">{% block content %}{% endblock %}</main></body>
+</html>

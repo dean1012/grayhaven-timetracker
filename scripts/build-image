@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+version="$(tr -d '\r\n' < VERSION)"
+revision="$(git rev-parse --short=8 HEAD)"
+build_timestamp="$(date -u +%Y%m%d%H%M%S)"
+if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+  build_state=".dirty"
+else
+  build_state=""
+fi
+
+export APP_VERSION="${version}-${revision}.${build_timestamp}${build_state}"
+docker compose build
+printf 'Built Grayhaven Time Tracker %s\n' "$APP_VERSION"

@@ -7,9 +7,13 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 instance/
+output/
+tmp/
 data/
 branding/
 secrets/
+coverage.xml
+.coverage.*
 *.sqlite3
 *.sqlite3-*
 *.db
@@ -21,4 +25,3 @@ htmlcov/
 dist/
 build/
 .DS_Store
-

@@ -1,0 +1,37 @@
+<aside class="active-timer panel" aria-label="Active timer">
+  <div class="active-timer-copy">
+    <span class="running-dot" aria-hidden="true"></span>
+    <div>
+      <p class="eyebrow">ACTIVE TIMER</p>
+      <span class="active-timer-context">
+        {{ active_entry.task.contract.client.name }}
+        <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
+        {{ active_entry.task.contract.name }}
+      </span>
+      <strong>
+        {{ active_entry.task.name }}{% if active_entry.subtask %}
+        <span>/</span> {{ active_entry.subtask.name }}{% endif %}
+      </strong>
+    </div>
+  </div>
+  <div class="active-timer-actions">
+    <span
+      class="timer-elapsed"
+      data-timer-start="{{ active_entry.started_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"
+      aria-label="Elapsed time">
+      {{ format_duration(active_elapsed_seconds) }}
+    </span>
+    {% if current_contract_id != active_entry.task.contract_id %}
+    <a class="button button-secondary" href="{{ url_for('main.contract', contract_id=active_entry.task.contract_id) }}">
+      Open contract
+    </a>
+    {% endif %}
+    <form method="post" action="{{ url_for('main.stop_timer', entry_id=active_entry.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ request.path }}">
+      <button class="button button-stop" type="submit">
+        <i class="fa-solid fa-stop" aria-hidden="true"></i> Stop timer
+      </button>
+    </form>
+  </div>
+</aside>

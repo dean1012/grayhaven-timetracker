@@ -1,3 +1,0 @@
-{% extends "base.html" %}
-{% block title %}2FA enabled · Grayhaven Systems LLC Time Tracker{% endblock %}
-{% block content %}<section class="narrow-content"><div class="panel form-panel"><p class="eyebrow">TWO-FACTOR AUTHENTICATION</p><h1>2FA enabled</h1><p class="muted">Add this secret to your authenticator app. It will not be shown again in this view.</p><div class="secret-value">{{ user.totp_secret }}</div><div class="form-actions"><a class="button button-primary" href="{{ url_for('profile') }}">Done</a></div></div></section>{% endblock %}

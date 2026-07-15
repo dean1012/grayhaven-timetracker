@@ -1,0 +1,193 @@
+"""Relational models for clients, contracts, tasks, users, and time entries."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal
+from typing import ClassVar
+
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+class Base(DeclarativeBase):
+    """Base class for all application models."""
+
+
+class User(Base):
+    __tablename__ = "user_account"
+    __table_args__: ClassVar[tuple[CheckConstraint, ...]] = (
+        CheckConstraint("role IN ('admin', 'user')", name="ck_user_role"),
+        CheckConstraint("length(trim(email)) > 3", name="ck_user_email"),
+        CheckConstraint("length(trim(first_name)) > 0", name="ck_user_first_name"),
+        CheckConstraint("length(trim(last_name)) > 0", name="ck_user_last_name"),
+        CheckConstraint("session_version >= 1", name="ck_user_session_version"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(
+        String(255, collation="NOCASE"), unique=True, index=True
+    )
+    first_name: Mapped[str] = mapped_column(String(100))
+    last_name: Mapped[str] = mapped_column(String(100))
+    password_hash: Mapped[str] = mapped_column(String(512))
+    totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    pending_totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    role: Mapped[str] = mapped_column(String(16), default="user")
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    session_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+    time_entries: Mapped[list[TimeEntry]] = relationship(back_populates="user")
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.first_name} {self.last_name}"
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role == "admin"
+
+
+class Client(Base):
+    __tablename__ = "client"
+    __table_args__: ClassVar[tuple[CheckConstraint, ...]] = (
+        CheckConstraint("length(trim(name)) > 0", name="ck_client_name"),
+        CheckConstraint(
+            "length(trim(contact_name)) > 0", name="ck_client_contact_name"
+        ),
+        CheckConstraint(
+            "length(trim(contact_email)) > 3", name="ck_client_contact_email"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    contact_name: Mapped[str] = mapped_column(String(200))
+    contact_email: Mapped[str] = mapped_column(String(255))
+
+    contracts: Mapped[list[Contract]] = relationship(
+        back_populates="client", order_by="Contract.name"
+    )
+
+
+class Contract(Base):
+    __tablename__ = "contract"
+    __table_args__: ClassVar[tuple[CheckConstraint, ...]] = (
+        CheckConstraint("length(trim(name)) > 0", name="ck_contract_name"),
+        CheckConstraint(
+            "length(trim(contact_name)) > 0", name="ck_contract_contact_name"
+        ),
+        CheckConstraint(
+            "length(trim(contact_email)) > 3", name="ck_contract_contact_email"
+        ),
+        CheckConstraint(
+            "hourly_rate_cents BETWEEN 0 AND 100000000",
+            name="ck_contract_rate",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("client.id", ondelete="RESTRICT"))
+    name: Mapped[str] = mapped_column(String(200))
+    contact_name: Mapped[str] = mapped_column(String(200))
+    contact_email: Mapped[str] = mapped_column(String(255))
+    hourly_rate_cents: Mapped[int] = mapped_column(Integer)
+
+    client: Mapped[Client] = relationship(back_populates="contracts")
+    tasks: Mapped[list[Task]] = relationship(
+        back_populates="contract", order_by="Task.id"
+    )
+
+    @property
+    def hourly_rate(self) -> Decimal:
+        return Decimal(self.hourly_rate_cents) / Decimal(100)
+
+
+class Task(Base):
+    __tablename__ = "task"
+    __table_args__: ClassVar[tuple[CheckConstraint, ...]] = (
+        CheckConstraint("length(trim(name)) > 0", name="ck_task_name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    contract_id: Mapped[int] = mapped_column(
+        ForeignKey("contract.id", ondelete="RESTRICT"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(200))
+
+    contract: Mapped[Contract] = relationship(back_populates="tasks")
+    subtasks: Mapped[list[Subtask]] = relationship(
+        back_populates="task", cascade="all, delete-orphan", order_by="Subtask.id"
+    )
+    time_entries: Mapped[list[TimeEntry]] = relationship(back_populates="task")
+
+
+class Subtask(Base):
+    __tablename__ = "subtask"
+    __table_args__: ClassVar[tuple[CheckConstraint, ...]] = (
+        CheckConstraint("length(trim(name)) > 0", name="ck_subtask_name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("task.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(200))
+
+    task: Mapped[Task] = relationship(back_populates="subtasks")
+    time_entries: Mapped[list[TimeEntry]] = relationship(back_populates="subtask")
+
+
+class TimeEntry(Base):
+    __tablename__ = "time_entry"
+    __table_args__ = (
+        CheckConstraint(
+            "stopped_at IS NULL OR stopped_at >= started_at",
+            name="ck_time_entry_order",
+        ),
+        Index(
+            "uq_active_timer_per_user",
+            "user_id",
+            unique=True,
+            sqlite_where=text("stopped_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_account.id", ondelete="RESTRICT"), index=True
+    )
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("task.id", ondelete="RESTRICT"), index=True
+    )
+    subtask_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subtask.id", ondelete="RESTRICT"), nullable=True
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime)
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    user: Mapped[User] = relationship(back_populates="time_entries")
+    task: Mapped[Task] = relationship(back_populates="time_entries")
+    subtask: Mapped[Subtask | None] = relationship(back_populates="time_entries")
+
+    @property
+    def contract(self) -> Contract:
+        return self.task.contract
+
+
+class ApplicationMetadata(Base):
+    __tablename__ = "application_metadata"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(Text)

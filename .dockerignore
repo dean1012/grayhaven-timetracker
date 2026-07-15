@@ -1,7 +1,10 @@
 .git
 .gitignore
 data
+branding
 instance
+output
+tmp
 secrets
 *.sqlite3
 *.db

@@ -3,30 +3,43 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1C1F24">
   <title>{% block title %}Grayhaven Systems LLC Time Tracker{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='fontawesome.min.css') }}?v=20260715">
-  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v=20260715">
+  <link rel="icon" type="image/x-icon" href="{{ url_for('main.branding_asset', filename='favicon.ico') }}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('main.branding_asset', filename='favicon-32.png') }}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('main.branding_asset', filename='favicon-16.png') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('main.branding_asset', filename='apple-touch-icon.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='fontawesome.min.css') }}?v={{ app_version }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ app_version }}">
+  <script src="{{ url_for('static', filename='app.js') }}?v={{ app_version }}" defer></script>
 </head>
 <body>
   <header class="app-header">
     <div class="app-header-inner">
-      <a class="brand" href="{{ url_for('dashboard') }}" aria-label="Grayhaven Systems LLC time tracker home">
-        <img src="{{ url_for('branding_asset', filename='grayhaven-logo-wordmark-dark.svg') }}" alt="Grayhaven Systems LLC">
+      <a class="brand" href="{{ url_for('main.dashboard') }}" aria-label="Grayhaven Systems LLC Time Tracker home">
+        <img src="{{ url_for('main.branding_asset', filename='grayhaven-logo-wordmark-dark.svg') }}" alt="Grayhaven Systems LLC">
         <span class="brand-product">Time Tracker</span>
       </a>
       {% if logged_user %}
       <nav class="app-nav" aria-label="Application navigation">
-        <a href="{{ url_for('dashboard') }}" {% if request.endpoint == 'dashboard' %}aria-current="page"{% endif %}><i class="fa-solid fa-gauge-high" aria-hidden="true"></i> Dashboard</a>
-        <a href="{{ url_for('profile') }}" {% if request.endpoint == 'profile' %}aria-current="page"{% endif %}><i class="fa-solid fa-user" aria-hidden="true"></i> Profile</a>
-        {% if logged_user.is_admin %}<a href="{{ url_for('users') }}" {% if request.endpoint in ('users', 'new_user') %}aria-current="page"{% endif %}><i class="fa-solid fa-users" aria-hidden="true"></i> Users</a>{% endif %}
-        <form method="post" action="{{ url_for('logout') }}"><button class="nav-button" type="submit"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Sign out</button></form>
+        <a href="{{ url_for('main.dashboard') }}" {% if request.endpoint == 'main.dashboard' %}aria-current="page"{% endif %}><i class="fa-solid fa-gauge-high" aria-hidden="true"></i> Dashboard</a>
+        <a href="{{ url_for('main.profile') }}" {% if request.endpoint == 'main.profile' %}aria-current="page"{% endif %}><i class="fa-solid fa-user" aria-hidden="true"></i> Profile</a>
+        {% if can('user:view') %}<a href="{{ url_for('main.users') }}" {% if request.endpoint in ('main.users', 'main.new_user') %}aria-current="page"{% endif %}><i class="fa-solid fa-users" aria-hidden="true"></i> Users</a>{% endif %}
+        <form method="post" action="{{ url_for('main.logout') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="nav-button" type="submit"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Sign out</button>
+        </form>
       </nav>
       {% endif %}
     </div>
   </header>
   <main class="page-shell">
     {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}<div class="flash-stack">{% for category, message in messages %}<div class="flash flash-{{ category }}" role="status">{{ message }}</div>{% endfor %}</div>{% endif %}
+      {% if messages %}
+      <div class="flash-stack">
+        {% for category, message in messages %}<div class="flash flash-{{ category }}" role="status">{{ message }}</div>{% endfor %}
+      </div>
+      {% endif %}
     {% endwith %}
     {% block content %}{% endblock %}
   </main>
