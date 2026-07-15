@@ -1,0 +1,30 @@
+services:
+  timetracker:
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION:-0.1.0-dev}
+    container_name: grayhaven-timetracker
+    environment:
+      TZ: ${TZ:-America/Chicago}
+      DATABASE_PATH: /app/data/timetracker.sqlite3
+      SECRET_KEY: ${SECRET_KEY:-alpha-development-secret-change-me}
+      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-admin@example.invalid}
+      INITIAL_ADMIN_FIRST_NAME: ${INITIAL_ADMIN_FIRST_NAME:-Jerry}
+      INITIAL_ADMIN_LAST_NAME: ${INITIAL_ADMIN_LAST_NAME:-Smith}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-Alpha-development-password-123456789!}
+      INITIAL_ADMIN_PASSWORD_HASH: ${INITIAL_ADMIN_PASSWORD_HASH:-}
+      INITIAL_ADMIN_TOTP_SECRET: ${INITIAL_ADMIN_TOTP_SECRET:-JBSWY3DPEHPK3PXP}
+      BRANDING_PATH: /app/branding
+    user: "${UID:-1000}:${GID:-1000}"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./branding:/app/branding:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

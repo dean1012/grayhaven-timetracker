@@ -1,0 +1,10 @@
+.git
+.gitignore
+data
+instance
+secrets
+*.sqlite3
+*.db
+*.pdf
+__pycache__
+*.pyc
