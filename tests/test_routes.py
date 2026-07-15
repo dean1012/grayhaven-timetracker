@@ -451,6 +451,7 @@ class AuditRouteTests(AppTestCase):
         )
         dashboard = standard_client.get("/")
         self.assertEqual(dashboard.status_code, 200)
+        self.assertIn(b"Clients &amp; Contracts", dashboard.data)
         self.assertNotIn(b'href="/audit"', dashboard.data)
         self.assertEqual(standard_client.get("/audit").status_code, 403)
         with session_scope(self.app) as database:
