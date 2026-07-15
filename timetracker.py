@@ -137,6 +137,7 @@ def create_app():
             connection.execute("PRAGMA journal_mode=WAL")
 
         db.create_all()
+        next(index for index in TimeEntry.__table__.indexes if index.name == "uq_active_timer_per_user").create(bind=engine, checkfirst=True)
         bootstrap_admin()
 
     register_routes(app)
