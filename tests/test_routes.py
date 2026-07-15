@@ -428,6 +428,28 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             302,
         )
 
+    def test_active_totp_factor_cannot_be_replaced_directly(self) -> None:
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            original_secret = admin.totp_secret
+            admin.pending_totp_secret = pyotp.random_base32()
+            pending_secret = admin.pending_totp_secret
+
+        self.assertEqual(self.client.post("/profile/totp/setup").status_code, 409)
+        self.assertEqual(
+            self.client.post(
+                "/profile/totp/confirm",
+                data={"totp": pyotp.TOTP(pending_secret).now()},
+            ).status_code,
+            409,
+        )
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            self.assertEqual(admin.totp_secret, original_secret)
+            self.assertEqual(admin.pending_totp_secret, pending_secret)
+
     def test_user_creation_role_changes_and_disable_stops_timer(self) -> None:
         self.assertEqual(self.client.get("/users/new").status_code, 200)
         invalid = self.client.post(

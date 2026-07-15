@@ -49,7 +49,8 @@ roles map to stable permission identifiers such as `report:generate`,
 Administrators manage users, clients, contracts, reports, and all sessions.
 Users can view shared client and contract structures, manage tasks and
 subtasks, control their own timer, and correct their own completed sessions.
-All users can access all current clients and contracts.
+All users can access all current clients and contracts, including their hourly
+rates.
 
 Database guards preserve at least one enabled administrator, prevent a subtask
 from being assigned to an unrelated task, and enforce one active timer per

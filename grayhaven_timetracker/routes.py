@@ -767,6 +767,8 @@ def change_password() -> Any:
 @login_required
 def setup_totp() -> str:
     user = cast(User, current_user())
+    if user.totp_secret:
+        abort(409, "Disable the active two-factor method before setting up a new one.")
     user.pending_totp_secret = pyotp.random_base32()
     get_session().commit()
     uri = provisioning_uri(user, user.pending_totp_secret)
@@ -782,6 +784,8 @@ def setup_totp() -> str:
 @login_required
 def confirm_totp() -> Any:
     user = cast(User, current_user())
+    if user.totp_secret:
+        abort(409, "Disable the active two-factor method before setting up a new one.")
     secret = user.pending_totp_secret
     if not secret or not verify_totp(secret, request.form.get("totp", "")):
         flash("The verification code was not accepted. Setup was not enabled.", "error")

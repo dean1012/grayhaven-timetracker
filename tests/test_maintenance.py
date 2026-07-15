@@ -127,6 +127,87 @@ class DatabaseMaintenanceTests(unittest.TestCase):
                 self.database, self.old_key_file, self.old_key_file
             )
 
+    def test_verify_missing_database_fails_without_creating_it(self) -> None:
+        missing = self.root / "missing.sqlite3"
+        with self.assertRaises(DatabaseError):
+            database_maintenance.verify_database(missing, self.old_key_file)
+        self.assertFalse(missing.exists())
+
+    def test_plaintext_migration_rejects_symbolic_links(self) -> None:
+        target = self.root / "plaintext-target.sqlite3"
+        plaintext = sqlite3.connect(target)
+        plaintext.execute("CREATE TABLE sample (value TEXT NOT NULL)")
+        plaintext.execute("INSERT INTO sample VALUES ('preserved')")
+        plaintext.commit()
+        plaintext.close()
+        alias = self.root / "plaintext-alias.sqlite3"
+        alias.symlink_to(target)
+
+        with self.assertRaises(DatabaseError):
+            database_maintenance.encrypt_plaintext(alias, self.old_key_file)
+
+        self.assertTrue(alias.is_symlink())
+        with sqlite3.connect(target) as connection:
+            self.assertEqual(
+                connection.execute("SELECT value FROM sample").fetchone()[0],
+                "preserved",
+            )
+
+    def test_backup_rejects_source_and_sidecar_path_collisions(self) -> None:
+        colliding_source = self.root / ".online.sqlite3.tmp"
+        self.database = colliding_source
+        self.create_encrypted_database()
+
+        formerly_colliding_output = self.root / "online.sqlite3"
+        database_maintenance.create_backup(
+            self.database, self.old_key_file, formerly_colliding_output
+        )
+        database_maintenance.verify_database(
+            formerly_colliding_output, self.old_key_file
+        )
+
+        for output in (
+            self.database.with_name(self.database.name + "-wal"),
+            self.database.with_name(self.database.name + "-shm"),
+        ):
+            with self.subTest(output=output), self.assertRaises(DatabaseError):
+                database_maintenance.create_backup(
+                    self.database, self.old_key_file, output
+                )
+
+        database_maintenance.verify_database(self.database, self.old_key_file)
+        connection = connect_sqlcipher(self.database, SQLCIPHER_PASSPHRASE)
+        self.assertEqual(
+            connection.execute("SELECT value FROM sample").fetchone()[0], "preserved"
+        )
+        connection.close()
+
+    def test_failed_rekey_backup_copy_preserves_the_source(self) -> None:
+        self.create_encrypted_database()
+
+        def fail_after_partial_copy(source: Path, destination: Path) -> None:
+            Path(destination).write_bytes(Path(source).read_bytes()[:1024])
+            raise OSError("simulated interrupted copy")
+
+        with (
+            patch(
+                "scripts.database_maintenance.shutil.copy2",
+                side_effect=fail_after_partial_copy,
+            ),
+            self.assertRaises(OSError),
+        ):
+            database_maintenance.rotate_key(
+                self.database, self.old_key_file, self.new_key_file
+            )
+
+        database_maintenance.verify_database(self.database, self.old_key_file)
+        connection = connect_sqlcipher(self.database, SQLCIPHER_PASSPHRASE)
+        self.assertEqual(
+            connection.execute("SELECT value FROM sample").fetchone()[0], "preserved"
+        )
+        connection.close()
+        self.assertEqual(list(self.root.glob("timetracker.sqlite3.pre-rekey-*")), [])
+
     def test_recovery_operations_refuse_to_overwrite_existing_backups(self) -> None:
         fixed = datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
         self.create_encrypted_database()

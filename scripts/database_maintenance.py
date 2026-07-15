@@ -7,6 +7,7 @@ import argparse
 import os
 import shutil
 import sys
+import tempfile
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,7 +33,37 @@ def read_secret(path: Path) -> str:
     return secret
 
 
+def require_regular_file(path: Path, label: str) -> None:
+    """Reject missing, non-regular, and symbolic-link maintenance inputs."""
+    if path.is_symlink() or not path.is_file():
+        raise DatabaseError(f"{label} must be an existing regular file: {path}")
+
+
+def resolved_path(path: Path) -> Path:
+    """Return a normalized path for collision checks without requiring existence."""
+    return path.resolve(strict=False)
+
+
+def reserve_temporary_path(destination: Path) -> Path:
+    """Reserve a private temporary file beside an atomic replacement target."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+    )
+    os.close(descriptor)
+    temporary = Path(name)
+    os.chmod(temporary, 0o600)
+    return temporary
+
+
+def discard_database_file(path: Path) -> None:
+    """Remove a temporary database and any SQLite sidecars it created."""
+    path.unlink(missing_ok=True)
+    remove_sidecars(path)
+
+
 def verify_database(database: Path, key_file: Path) -> None:
+    require_regular_file(database, "Database")
     passphrase = read_secret(key_file)
     connection = connect_sqlcipher(database, passphrase)
     try:
@@ -53,13 +84,22 @@ def remove_sidecars(database: Path) -> None:
 
 
 def restore_database(backup: Path, database: Path) -> None:
-    """Restore a checkpointed database file without retaining stale sidecars."""
-    remove_sidecars(database)
-    shutil.copy2(backup, database)
-    os.chmod(database, 0o600)
+    """Atomically restore a checkpointed database without stale sidecars."""
+    require_regular_file(backup, "Recovery backup")
+    if resolved_path(backup) == resolved_path(database):
+        raise DatabaseError("Recovery backup must differ from the database")
+    temporary = reserve_temporary_path(database)
+    try:
+        shutil.copy2(backup, temporary)
+        os.chmod(temporary, 0o600)
+        remove_sidecars(database)
+        os.replace(temporary, database)
+    finally:
+        discard_database_file(temporary)
 
 
 def rotate_key(database: Path, old_key_file: Path, new_key_file: Path) -> Path:
+    require_regular_file(database, "Database")
     if not database_is_encrypted(database):
         raise DatabaseError("Refusing to rekey a plaintext SQLite database")
     old_key = read_secret(old_key_file)
@@ -69,14 +109,23 @@ def rotate_key(database: Path, old_key_file: Path, new_key_file: Path) -> Path:
 
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     backup = database.with_name(f"{database.name}.pre-rekey-{timestamp}")
-    if backup.exists():
+    if backup.exists() or backup.is_symlink():
         raise DatabaseError(f"Recovery backup already exists: {backup}")
     connection = connect_sqlcipher(database, old_key)
+    rekey_started = False
     try:
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
         connection.execute("PRAGMA journal_mode = DELETE").fetchone()
-        shutil.copy2(database, backup)
-        os.chmod(backup, 0o600)
+        temporary_backup = reserve_temporary_path(backup)
+        try:
+            shutil.copy2(database, temporary_backup)
+            os.chmod(temporary_backup, 0o600)
+            verify_database(temporary_backup, old_key_file)
+            remove_sidecars(temporary_backup)
+            os.replace(temporary_backup, backup)
+        finally:
+            discard_database_file(temporary_backup)
+        rekey_started = True
         connection.execute(f"PRAGMA rekey = {sql_literal(new_key)}")
         connection.execute("SELECT count(*) FROM sqlite_master").fetchone()
         if connection.execute("PRAGMA cipher_integrity_check").fetchall():
@@ -86,7 +135,7 @@ def rotate_key(database: Path, old_key_file: Path, new_key_file: Path) -> Path:
     except Exception:
         with suppress(Exception):
             connection.close()
-        if backup.is_file():
+        if rekey_started and backup.is_file():
             restore_database(backup, database)
             verify_database(database, old_key_file)
         raise
@@ -94,8 +143,7 @@ def rotate_key(database: Path, old_key_file: Path, new_key_file: Path) -> Path:
 
 
 def encrypt_plaintext(database: Path, key_file: Path) -> Path:
-    if not database.is_file():
-        raise DatabaseError(f"Database does not exist: {database}")
+    require_regular_file(database, "Database")
     with database.open("rb") as database_file:
         if database_file.read(len(SQLITE_HEADER)) != SQLITE_HEADER:
             raise DatabaseError("Source database is not plaintext SQLite")
@@ -103,7 +151,7 @@ def encrypt_plaintext(database: Path, key_file: Path) -> Path:
     passphrase = read_secret(key_file)
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     backup = database.with_name(f"{database.name}.pre-migration-encrypted-{timestamp}")
-    if backup.exists():
+    if backup.exists() or backup.is_symlink():
         raise DatabaseError(f"Recovery backup already exists: {backup}")
     temporary = database.with_name(f".{database.name}.encrypted.tmp")
     temporary.unlink(missing_ok=True)
@@ -141,41 +189,58 @@ def encrypt_plaintext(database: Path, key_file: Path) -> Path:
 
 def create_backup(database: Path, key_file: Path, output: Path) -> None:
     """Create a transactionally consistent encrypted online backup."""
+    require_regular_file(database, "Database")
     if not database_is_encrypted(database):
         raise DatabaseError("Refusing to back up a plaintext SQLite database")
-    if output.exists():
+    if output.exists() or output.is_symlink():
         raise DatabaseError(f"Backup destination already exists: {output}")
-    if output.resolve() == database.resolve():
-        raise DatabaseError("Backup destination must differ from the database")
 
     passphrase = read_secret(key_file)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(f".{output.name}.tmp")
-    temporary.unlink(missing_ok=True)
-    remove_sidecars(temporary)
+    database_path = resolved_path(database)
+    output_path = resolved_path(output)
+    source_sidecars = {
+        resolved_path(database.with_name(database.name + suffix))
+        for suffix in ("-wal", "-shm")
+    }
+    if output_path == database_path:
+        raise DatabaseError("Backup destination must differ from the database")
+    if output_path in source_sidecars:
+        raise DatabaseError("Backup destination uses a reserved database sidecar path")
 
-    source = connect_sqlcipher(database, passphrase)
-    destination = connect_sqlcipher(temporary, passphrase)
-    try:
-        destination.execute("PRAGMA journal_mode = DELETE").fetchone()
-        source.backup(destination)
-        destination.commit()
-        if destination.execute("PRAGMA cipher_integrity_check").fetchall():
-            raise DatabaseError("Encrypted backup failed integrity validation")
-    finally:
-        destination.close()
-        source.close()
+    temporary = reserve_temporary_path(output)
+    if resolved_path(temporary) in {database_path, *source_sidecars}:
+        discard_database_file(temporary)
+        raise DatabaseError("Backup temporary path collides with the source database")
 
-    verify_database(temporary, key_file)
-    temporary_connection = connect_sqlcipher(temporary, passphrase)
+    source = None
+    destination = None
     try:
-        temporary_connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
-        temporary_connection.execute("PRAGMA journal_mode = DELETE").fetchone()
+        source = connect_sqlcipher(database, passphrase)
+        destination = connect_sqlcipher(temporary, passphrase)
+        try:
+            destination.execute("PRAGMA journal_mode = DELETE").fetchone()
+            source.backup(destination)
+            destination.commit()
+            if destination.execute("PRAGMA cipher_integrity_check").fetchall():
+                raise DatabaseError("Encrypted backup failed integrity validation")
+        finally:
+            if destination is not None:
+                destination.close()
+            if source is not None:
+                source.close()
+
+        verify_database(temporary, key_file)
+        temporary_connection = connect_sqlcipher(temporary, passphrase)
+        try:
+            temporary_connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+            temporary_connection.execute("PRAGMA journal_mode = DELETE").fetchone()
+        finally:
+            temporary_connection.close()
+        remove_sidecars(temporary)
+        os.replace(temporary, output)
+        os.chmod(output, 0o600)
     finally:
-        temporary_connection.close()
-    remove_sidecars(temporary)
-    os.replace(temporary, output)
-    os.chmod(output, 0o600)
+        discard_database_file(temporary)
 
 
 def parser() -> argparse.ArgumentParser:

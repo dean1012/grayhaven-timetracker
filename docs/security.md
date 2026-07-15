@@ -28,10 +28,10 @@ The application trusts the deployment system to provide correct secret files,
 runtime branding, timezone configuration, TLS termination, proxy forwarding
 counts, persistent-storage ownership, and localhost-only health routing.
 
-Authenticated users are trusted to access all client and contract names and
-task structures. Administrators are trusted with user management, contact
-details, all completed sessions, and contract reports. Clients do not access
-the application in this release.
+Authenticated users are trusted to access all client and contract names,
+hourly rates, and task structures. Administrators are trusted with user
+management, contact details, all completed sessions, and contract reports.
+Clients do not access the application in this release.
 
 [Back to top](#security-model)
 
@@ -91,7 +91,8 @@ the application in this release.
   critical threats.
 - SQLite supports the current low-concurrency workload. Horizontal application
   scaling requires a coordinated database migration.
-- Contact and task data are shared with every enabled internal user by design.
+- Client and contract names, hourly rates, and task data are shared with every
+  enabled internal user by design.
 - Application logs are structured for future monitoring, but Alloy, Loki,
   fail2ban, dashboards, and alerts are deployment work and are not configured
   by this repository.
