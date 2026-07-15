@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+import logging
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pyotp
@@ -156,20 +157,30 @@ class ClientContractTaskRouteTests(AppTestCase):
             data={"name": "", "contact_name": "Contact", "contact_email": "invalid"},
         )
         self.assertEqual(invalid_client.status_code, 400)
-        created = self.client.post(
-            "/clients/new",
-            data={
-                "name": "Client One",
-                "contact_name": "Client Contact",
-                "contact_email": "CLIENT@EXAMPLE.INVALID",
-            },
-        )
-        self.assertEqual(created.status_code, 302)
+        report_password = "Client-Report-Password-For-Testing-0001!"
+        with patch(
+            "grayhaven_timetracker.routes.generate_temporary_password",
+            return_value=report_password,
+        ):
+            created = self.client.post(
+                "/clients/new",
+                data={
+                    "name": "Client One",
+                    "contact_name": "Client Contact",
+                    "contact_email": "CLIENT@EXAMPLE.INVALID",
+                },
+            )
+        self.assertEqual(created.status_code, 200)
+        self.assertIn(report_password.encode(), created.data)
         with session_scope(self.app) as database:
             client = database.scalar(select(Client).where(Client.name == "Client One"))
             assert client is not None
             client_id = client.id
             self.assertEqual(client.contact_email, "client@example.invalid")
+            assert client.report_password_hash is not None
+            self.assertTrue(
+                verify_password(client.report_password_hash, report_password)
+            )
         self.assertEqual(self.client.get(f"/clients/{client_id}").status_code, 200)
         self.assertEqual(self.client.get("/clients/9999").status_code, 404)
         for rate in ("invalid", "-1", "1000000.01"):
@@ -199,7 +210,57 @@ class ClientContractTaskRouteTests(AppTestCase):
                 select(Contract).where(Contract.name == "Contract One")
             )
             assert contract is not None
+            contract_id = contract.id
             self.assertEqual(contract.hourly_rate_cents, 5501)
+        self.assertEqual(self.client.get(f"/clients/{client_id}/edit").status_code, 200)
+        updated_client = self.client.post(
+            f"/clients/{client_id}/edit",
+            data={
+                "name": "Client One Updated",
+                "contact_name": "New Client Contact",
+                "contact_email": "new-client@example.invalid",
+            },
+        )
+        self.assertEqual(updated_client.status_code, 302)
+        self.assertEqual(
+            self.client.get(f"/contracts/{contract_id}/edit").status_code, 200
+        )
+        updated_contract = self.client.post(
+            f"/contracts/{contract_id}/edit",
+            data={
+                "name": "Contract One Updated",
+                "contact_name": "New Contract Contact",
+                "contact_email": "new-contract@example.invalid",
+                "hourly_rate": "999999.99",
+            },
+        )
+        self.assertEqual(updated_contract.status_code, 302)
+        with session_scope(self.app) as database:
+            client = database.get(Client, client_id)
+            contract = database.get(Contract, contract_id)
+            assert client and contract
+            self.assertEqual(client.name, "Client One Updated")
+            self.assertEqual(contract.name, "Contract One Updated")
+            self.assertEqual(contract.hourly_rate_cents, 5501)
+        self.assertEqual(
+            self.client.post(
+                f"/clients/{client_id}/edit",
+                data={"name": "", "contact_name": "Contact", "contact_email": "bad"},
+            ).status_code,
+            400,
+        )
+        self.assertEqual(self.client.get("/clients/9999/edit").status_code, 404)
+        self.assertEqual(self.client.get("/contracts/9999/edit").status_code, 404)
+        replacement_password = "Replacement-Report-Password-For-Test-0001!"
+        with patch(
+            "grayhaven_timetracker.routes.generate_temporary_password",
+            return_value=replacement_password,
+        ):
+            reset_password = self.client.post(
+                f"/clients/{client_id}/report-password/reset"
+            )
+        self.assertEqual(reset_password.status_code, 200)
+        self.assertIn(replacement_password.encode(), reset_password.data)
 
     def test_task_subtask_rename_delete_and_time_guards(self) -> None:
         seed = self.seed_contract()
@@ -281,6 +342,30 @@ class TimerAndPermissionRouteTests(AppTestCase):
             self.client.get(f"/reports/{self.seed.contract_id}").status_code, 403
         )
         self.assertEqual(self.client.post("/clients/new").status_code, 403)
+        self.assertEqual(
+            self.client.get(f"/clients/{self.seed.client_id}/edit").status_code, 403
+        )
+        self.assertEqual(
+            self.client.get(f"/contracts/{self.seed.contract_id}/edit").status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/contracts/{self.seed.contract_id}/report-link",
+                data={"expires_in_days": "never"},
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/clients/{self.seed.client_id}/report-password/reset"
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(f"/users/{self.user.id}/reset-password").status_code,
+            403,
+        )
         started = self.client.post(
             "/timer/start",
             data={"task_id": self.seed.task_id, "subtask_id": self.seed.subtask_id},
@@ -462,25 +547,28 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             },
         )
         self.assertEqual(invalid.status_code, 400)
-        password = "New-Standard-User-Password-For-Test-0001!"
-        created = self.client.post(
-            "/users/new",
-            data={
-                "first_name": "New",
-                "last_name": "User",
-                "email": "new-user@example.invalid",
-                "password": password,
-            },
-        )
+        temporary_password = "Generated-Temporary-Password-For-Test-0001!"
+        with patch(
+            "grayhaven_timetracker.routes.generate_temporary_password",
+            return_value=temporary_password,
+        ):
+            created = self.client.post(
+                "/users/new",
+                data={
+                    "first_name": "New",
+                    "last_name": "User",
+                    "email": "new-user@example.invalid",
+                },
+            )
         self.assertEqual(created.status_code, 200)
         self.assertIn(b"Authenticator setup QR code", created.data)
+        self.assertIn(temporary_password.encode(), created.data)
         duplicate = self.client.post(
             "/users/new",
             data={
                 "first_name": "New",
                 "last_name": "User",
                 "email": "new-user@example.invalid",
-                "password": password,
             },
         )
         self.assertEqual(duplicate.status_code, 400)
@@ -490,6 +578,8 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             )
             assert user is not None
             user_id = user.id
+            self.assertTrue(user.password_change_required)
+            self.assertTrue(verify_password(user.password_hash, temporary_password))
             task = Task(
                 contract=Contract(
                     client=Client(
@@ -531,6 +621,115 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         self.assertEqual(self.client.post("/users/1/toggle-enabled").status_code, 409)
         self.assertEqual(self.client.post("/users/1/toggle-admin").status_code, 409)
 
+    def test_user_identity_correction_invalidates_other_sessions(self) -> None:
+        password = "Identity-User-Test-Password-0001!"
+        secret = "KRSXG5DSNFXGOIDB"
+        user = self.create_user(password=password, totp_secret=secret)
+        user_client = self.app.test_client()
+        self.login(
+            user_client,
+            email=user.email,
+            password=password,
+            totp_secret=secret,
+        )
+
+        self.assertEqual(self.client.get(f"/users/{user.id}/edit").status_code, 200)
+        updated = self.client.post(
+            f"/users/{user.id}/edit",
+            data={
+                "first_name": "Corrected",
+                "last_name": "Identity",
+                "email": "corrected@example.invalid",
+            },
+        )
+        self.assertEqual(updated.status_code, 302)
+        self.assertIn("/login", user_client.get("/").location)
+        self.login(
+            user_client,
+            email="corrected@example.invalid",
+            password=password,
+            totp_secret=secret,
+        )
+
+        managed_email_change = self.client.post(
+            "/users/1/edit",
+            data={
+                "first_name": "Admin",
+                "last_name": "Operator",
+                "email": "different-admin@example.invalid",
+            },
+        )
+        self.assertEqual(managed_email_change.status_code, 400)
+
+    def test_admin_password_reset_requires_change_and_preserves_totp(self) -> None:
+        original_password = "Recovery-User-Original-Password-0001!"
+        temporary_password = "Recovery-Temporary-Password-For-Test-0001!"
+        permanent_password = "Recovery-Permanent-Password-For-Test-0001!"
+        secret = "KRSXG5DSNFXGOIDB"
+        user = self.create_user(password=original_password, totp_secret=secret)
+        existing_session = self.app.test_client()
+        self.login(
+            existing_session,
+            email=user.email,
+            password=original_password,
+            totp_secret=secret,
+        )
+
+        with patch(
+            "grayhaven_timetracker.routes.generate_temporary_password",
+            return_value=temporary_password,
+        ):
+            reset = self.client.post(f"/users/{user.id}/reset-password")
+        self.assertEqual(reset.status_code, 200)
+        self.assertIn(temporary_password.encode(), reset.data)
+        self.assertIn("/login", existing_session.get("/").location)
+        self.assertEqual(self.client.post("/users/1/reset-password").status_code, 409)
+
+        recovered = self.app.test_client()
+        rejected_totp = recovered.post(
+            "/login",
+            data={
+                "email": user.email,
+                "password": temporary_password,
+                "totp": "000000",
+            },
+        )
+        self.assertEqual(rejected_totp.status_code, 401)
+        accepted = recovered.post(
+            "/login",
+            data={
+                "email": user.email,
+                "password": temporary_password,
+                "totp": pyotp.TOTP(secret).now(),
+            },
+        )
+        self.assertEqual(accepted.location, "/profile/password/change-required")
+        self.assertEqual(
+            recovered.get("/profile/password/change-required").status_code, 200
+        )
+        self.assertEqual(
+            recovered.get("/profile").location,
+            "/profile/password/change-required",
+        )
+        changed = recovered.post(
+            "/profile/password",
+            data={
+                "current_password": temporary_password,
+                "new_password": permanent_password,
+                "confirm_password": permanent_password,
+            },
+        )
+        self.assertEqual(changed.location, "/")
+        self.assertEqual(recovered.get("/").status_code, 200)
+        with session_scope(self.app) as database:
+            recovered_user = database.get(User, user.id)
+            assert recovered_user is not None
+            self.assertFalse(recovered_user.password_change_required)
+            self.assertEqual(recovered_user.totp_secret, secret)
+            self.assertTrue(
+                verify_password(recovered_user.password_hash, permanent_password)
+            )
+
 
 class ReportAndSessionRouteTests(AppTestCase):
     USER_PASSWORD = "Session-User-Test-Password-0001!"
@@ -554,6 +753,135 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertTrue(pdf.data.startswith(b"%PDF-"))
         self.assertEqual(self.client.get("/reports/9999").status_code, 404)
         self.assertEqual(self.client.get("/reports/9999.pdf").status_code, 404)
+
+    def test_live_client_report_links_are_private_rotatable_and_revocable(
+        self,
+    ) -> None:
+        self.login()
+        first_token = "A" * 43
+        second_token = "B" * 43
+        report_password = "Shared-Report-Password-For-Testing-0001!"
+        self.assertEqual(
+            self.client.post(
+                f"/contracts/{self.seed.contract_id}/report-link",
+                data={"expires_in_days": "invalid"},
+            ).status_code,
+            400,
+        )
+        with (
+            patch(
+                "grayhaven_timetracker.routes.secrets.token_urlsafe",
+                return_value=first_token,
+            ),
+            patch(
+                "grayhaven_timetracker.routes.generate_temporary_password",
+                return_value=report_password,
+            ),
+        ):
+            created = self.client.post(
+                f"/contracts/{self.seed.contract_id}/report-link",
+                data={"expires_in_days": "never"},
+            )
+        self.assertEqual(created.status_code, 200)
+        self.assertIn(first_token.encode(), created.data)
+        self.assertIn(report_password.encode(), created.data)
+        self.assertIn(b"does not expire", created.data)
+        with session_scope(self.app) as database:
+            contract = database.get(Contract, self.seed.contract_id)
+            assert contract is not None
+            self.assertNotEqual(contract.report_token_hash, first_token)
+            self.assertEqual(
+                contract.report_token_hash, routes.report_token_hash(first_token)
+            )
+            self.assertIsNone(contract.report_expires_at)
+            assert contract.client.report_password_hash is not None
+            self.assertTrue(
+                verify_password(contract.client.report_password_hash, report_password)
+            )
+
+        anonymous = self.app.test_client()
+        logging.disable(logging.NOTSET)
+        try:
+            with self.assertLogs(
+                "grayhaven_timetracker.access", level=logging.INFO
+            ) as captured:
+                shared = anonymous.get(f"/shared/reports/{first_token}")
+        finally:
+            logging.disable(logging.CRITICAL)
+        self.assertEqual(shared.status_code, 200)
+        self.assertIn(b"CLIENT REPORT ACCESS", shared.data)
+        self.assertEqual(captured.records[-1].path, "/shared/reports/[redacted]")
+        rejected = anonymous.post(
+            f"/shared/reports/{first_token}",
+            data={"report_password": "incorrect"},
+        )
+        self.assertEqual(rejected.status_code, 401)
+        shared = anonymous.post(
+            f"/shared/reports/{first_token}",
+            data={"report_password": report_password},
+        )
+        self.assertEqual(shared.status_code, 200)
+        self.assertIn(b"Live Client Report", shared.data)
+        self.assertNotIn(b"morgan@example.invalid", shared.data)
+
+        with patch(
+            "grayhaven_timetracker.routes.secrets.token_urlsafe",
+            return_value=second_token,
+        ):
+            rotated = self.client.post(
+                f"/contracts/{self.seed.contract_id}/report-link",
+                data={"expires_in_days": "7"},
+            )
+        self.assertEqual(rotated.status_code, 200)
+        self.assertEqual(
+            anonymous.get(f"/shared/reports/{first_token}").status_code, 404
+        )
+        self.assertEqual(
+            anonymous.get(f"/shared/reports/{second_token}").status_code, 200
+        )
+        replacement_password = "New-Shared-Report-Password-For-Test-0001!"
+        with patch(
+            "grayhaven_timetracker.routes.generate_temporary_password",
+            return_value=replacement_password,
+        ):
+            password_reset = self.client.post(
+                f"/clients/{self.seed.client_id}/report-password/reset"
+            )
+        self.assertEqual(password_reset.status_code, 200)
+        password_prompt = anonymous.get(f"/shared/reports/{second_token}")
+        self.assertIn(b"CLIENT REPORT ACCESS", password_prompt.data)
+        self.assertEqual(
+            anonymous.post(
+                f"/shared/reports/{second_token}",
+                data={"report_password": report_password},
+            ).status_code,
+            401,
+        )
+        self.assertEqual(
+            anonymous.post(
+                f"/shared/reports/{second_token}",
+                data={"report_password": replacement_password},
+            ).status_code,
+            200,
+        )
+        with session_scope(self.app) as database:
+            contract = database.get(Contract, self.seed.contract_id)
+            assert contract and contract.report_expires_at
+            self.assertGreater(contract.report_expires_at, datetime.now())
+            contract.report_expires_at = datetime.now() - timedelta(seconds=1)
+        self.assertEqual(
+            anonymous.get(f"/shared/reports/{second_token}").status_code, 404
+        )
+        revoked = self.client.post(
+            f"/contracts/{self.seed.contract_id}/report-link/revoke"
+        )
+        self.assertEqual(revoked.status_code, 302)
+        with session_scope(self.app) as database:
+            contract = database.get(Contract, self.seed.contract_id)
+            assert contract is not None
+            self.assertIsNone(contract.report_token_hash)
+            self.assertIsNone(contract.report_expires_at)
+        self.assertEqual(anonymous.get("/shared/reports/short").status_code, 404)
 
     def test_session_visibility_ownership_edit_delete_and_active_guards(self) -> None:
         user_client = self.app.test_client()
@@ -619,6 +947,70 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertEqual(
             user_client.post(f"/sessions/{active_id}/delete").status_code, 409
         )
+
+    def test_manual_sessions_enforce_ownership_time_and_overlap_rules(self) -> None:
+        user_client = self.app.test_client()
+        self.login(
+            user_client,
+            email=self.user.email,
+            password=self.USER_PASSWORD,
+            totp_secret=self.USER_SECRET,
+        )
+        self.assertEqual(
+            user_client.get(
+                f"/contracts/{self.seed.contract_id}/sessions/new"
+            ).status_code,
+            200,
+        )
+        created = user_client.post(
+            f"/contracts/{self.seed.contract_id}/sessions/new",
+            data={
+                "user_id": "1",
+                "assignment": f"{self.seed.task_id}:{self.seed.subtask_id}",
+                "started_at": "2026-07-15T10:00:00",
+                "stopped_at": "2026-07-15T10:30:00",
+            },
+        )
+        self.assertEqual(created.status_code, 302)
+        overlap = user_client.post(
+            f"/contracts/{self.seed.contract_id}/sessions/new",
+            data={
+                "assignment": str(self.seed.other_task_id),
+                "started_at": "2026-07-15T10:15:00",
+                "stopped_at": "2026-07-15T10:45:00",
+            },
+        )
+        self.assertEqual(overlap.status_code, 400)
+        future = user_client.post(
+            f"/contracts/{self.seed.contract_id}/sessions/new",
+            data={
+                "assignment": str(self.seed.other_task_id),
+                "started_at": "2099-01-01T10:00:00",
+                "stopped_at": "2099-01-01T10:30:00",
+            },
+        )
+        self.assertEqual(future.status_code, 400)
+
+        self.login()
+        admin_created = self.client.post(
+            f"/contracts/{self.seed.contract_id}/sessions/new",
+            data={
+                "user_id": "1",
+                "assignment": str(self.seed.other_task_id),
+                "started_at": "2026-07-15T10:00:00",
+                "stopped_at": "2026-07-15T10:30:00",
+            },
+        )
+        self.assertEqual(admin_created.status_code, 302)
+        with session_scope(self.app) as database:
+            matching_entries = database.scalars(
+                select(TimeEntry).where(
+                    TimeEntry.started_at == datetime(2026, 7, 15, 15, 0, 0)
+                )
+            ).all()
+            self.assertEqual(
+                {entry.user_id for entry in matching_entries}, {1, self.user.id}
+            )
 
     def test_session_edit_validation_and_admin_access(self) -> None:
         self.login()

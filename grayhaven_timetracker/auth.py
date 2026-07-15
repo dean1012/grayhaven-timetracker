@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import io
 import re
+import secrets
+import string
 import threading
 import time
 from collections import OrderedDict, deque
@@ -25,6 +27,8 @@ from .models import User
 
 PASSWORD_MIN_LENGTH = 32
 PASSWORD_MAX_LENGTH = 1024
+TEMPORARY_PASSWORD_LENGTH = 40
+TEMPORARY_PASSWORD_SPECIALS = "!#$%&*+-=?@^_"  # noqa: S105
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 password_hasher = PasswordHasher(
     time_cost=3,
@@ -83,6 +87,28 @@ def hash_password(password: str) -> str:
     if error:
         raise ValueError(error)
     return password_hasher.hash(password)
+
+
+def generate_temporary_password() -> str:
+    """Generate a policy-compliant credential suitable for one-time delivery."""
+    required = [
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.digits),
+        secrets.choice(TEMPORARY_PASSWORD_SPECIALS),
+    ]
+    alphabet = (
+        string.ascii_uppercase
+        + string.ascii_lowercase
+        + string.digits
+        + TEMPORARY_PASSWORD_SPECIALS
+    )
+    required.extend(
+        secrets.choice(alphabet)
+        for _ in range(TEMPORARY_PASSWORD_LENGTH - len(required))
+    )
+    secrets.SystemRandom().shuffle(required)
+    return "".join(required)
 
 
 def verify_password(password_hash: str, password: str) -> bool:

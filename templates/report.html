@@ -2,7 +2,7 @@
 {% block title %}Grayhaven Systems LLC - Contract Time Report | {{ report.contract.client.name }} | {{ report.contract.name }}{% endblock %}
 {% block content %}
 <article class="report-page">
-  <header class="report-header"><img src="{{ url_for('main.branding_asset', filename='grayhaven-logo-wordmark-dark.svg') }}" alt="Grayhaven Systems LLC"><div class="report-meta"><p class="eyebrow">CONFIDENTIAL</p><p>Contract Time Report</p></div></header>
+  <header class="report-header"><img src="{{ url_for('main.branding_asset', filename='grayhaven-logo-wordmark-dark.svg') }}" alt="Grayhaven Systems LLC"><div class="report-meta"><p class="eyebrow">CONFIDENTIAL</p><p>{{ 'Live Client Report' if shared_report else 'Contract Time Report' }}</p></div></header>
   <section class="report-title"><p class="eyebrow">{{ report.contract.client.name }}</p><h1>{{ report.contract.name }}</h1><p class="muted">Generated {{ format_datetime(report.generated_at, report.timezone) }} · all billable time · {{ format_money(report.contract.hourly_rate) }} per hour</p></section>
   <section class="report-summary panel"><div class="summary-card"><span>Total duration</span><strong>{{ format_duration(report.total_seconds) }}</strong></div><div class="summary-card"><span>Equivalent cost</span><strong>{{ format_money(report.total_cost) }}</strong></div></section>
   <section class="report-overview-grid">

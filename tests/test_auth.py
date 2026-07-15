@@ -8,6 +8,7 @@ import pyotp
 
 from grayhaven_timetracker.auth import (
     LoginLimiter,
+    generate_temporary_password,
     hash_password,
     normalize_email,
     password_error,
@@ -65,6 +66,13 @@ class InputValidationTests(unittest.TestCase):
         self.assertFalse(verify_password(encoded, "x" * 1025))
         with self.assertRaises(ValueError):
             hash_password("short")
+
+    def test_temporary_passwords_are_random_and_policy_compliant(self) -> None:
+        first = generate_temporary_password()
+        second = generate_temporary_password()
+        self.assertEqual(len(first), 40)
+        self.assertIsNone(password_error(first))
+        self.assertNotEqual(first, second)
 
     def test_constant_time_password_path_supports_missing_users(self) -> None:
         self.assertFalse(verify_password_constant_time(None, "incorrect"))

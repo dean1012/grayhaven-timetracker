@@ -83,12 +83,17 @@ def register_request_logging(app: Flask) -> None:
             return response
         started_at = getattr(g, "request_started_at", time.perf_counter())
         user = getattr(g, "current_user", None)
+        logged_path = (
+            "/shared/reports/[redacted]"
+            if request.endpoint == "main.shared_report"
+            else request.path
+        )
         access_logger.info(
             "HTTP request",
             extra={
                 "event": "http_access",
                 "method": request.method,
-                "path": request.path,
+                "path": logged_path,
                 "status": response.status_code,
                 "duration_us": int((time.perf_counter() - started_at) * 1_000_000),
                 "ip": request.remote_addr,
@@ -157,7 +162,7 @@ def register_error_handlers(app: Flask) -> None:
     app.register_error_handler(
         429,
         lambda _: error_page(
-            429, "Too many sign-in attempts. Try again in a few minutes."
+            429, "Too many access attempts. Try again in a few minutes."
         ),
     )
     app.register_error_handler(

@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pyotp
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
 from grayhaven_timetracker.auth import hash_password, verify_password
@@ -26,6 +26,7 @@ from grayhaven_timetracker.database import (
     DatabaseError,
     connect_sqlcipher,
     database_is_encrypted,
+    initialize_database,
     session_scope,
     sql_literal,
 )
@@ -189,6 +190,58 @@ class DatabaseAndModelTests(AppTestCase):
                     select(User).where(User.email == "rollback@example.invalid")
                 )
             )
+
+    def test_schema_one_is_migrated_without_replacing_existing_data(self) -> None:
+        engine = self.app.extensions["database_engine"]
+        with engine.begin() as connection:
+            connection.exec_driver_sql("DROP INDEX uq_contract_report_token_hash")
+            connection.exec_driver_sql(
+                "ALTER TABLE contract DROP COLUMN report_expires_at"
+            )
+            connection.exec_driver_sql(
+                "ALTER TABLE contract DROP COLUMN report_token_hash"
+            )
+            connection.exec_driver_sql(
+                "ALTER TABLE user_account DROP COLUMN password_change_required"
+            )
+            connection.execute(
+                text(
+                    "UPDATE application_metadata SET value = '1' "
+                    "WHERE key = 'schema_version'"
+                )
+            )
+
+        initialize_database(engine)
+
+        with engine.connect() as connection:
+            user_columns = {
+                row[1]
+                for row in connection.exec_driver_sql("PRAGMA table_info(user_account)")
+            }
+            contract_columns = {
+                row[1]
+                for row in connection.exec_driver_sql("PRAGMA table_info(contract)")
+            }
+            client_columns = {
+                row[1]
+                for row in connection.exec_driver_sql("PRAGMA table_info(client)")
+            }
+            version = connection.execute(
+                text(
+                    "SELECT value FROM application_metadata "
+                    "WHERE key = 'schema_version'"
+                )
+            ).scalar_one()
+            admin_count = connection.exec_driver_sql(
+                "SELECT count(*) FROM user_account WHERE email = ?", (ADMIN_EMAIL,)
+            ).scalar_one()
+        self.assertIn("password_change_required", user_columns)
+        self.assertIn("report_token_hash", contract_columns)
+        self.assertIn("report_expires_at", contract_columns)
+        self.assertIn("report_password_hash", client_columns)
+        self.assertIn("report_password_version", client_columns)
+        self.assertEqual(version, "2")
+        self.assertEqual(admin_count, 1)
 
     def test_database_guards_active_timer_subtask_and_last_admin(self) -> None:
         seed = self.seed_contract()

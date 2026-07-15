@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
-from datetime import UTC, datetime
+import secrets
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, cast
@@ -24,7 +26,7 @@ from flask import (
     session,
     url_for,
 )
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -32,6 +34,7 @@ from .auth import (
     LoginLimiter,
     current_user,
     find_user_by_email,
+    generate_temporary_password,
     hash_password,
     load_current_user,
     login_required,
@@ -46,18 +49,32 @@ from .auth import (
     verify_password_constant_time,
     verify_totp,
 )
+from .bootstrap import BOOTSTRAP_EMAIL_KEY
 from .database import get_session, health_check
-from .models import Client, Contract, Subtask, Task, TimeEntry, User
+from .models import (
+    ApplicationMetadata,
+    Client,
+    Contract,
+    Subtask,
+    Task,
+    TimeEntry,
+    User,
+)
 from .permissions import (
     CLIENT_ADD,
+    CLIENT_EDIT,
     CLIENT_VIEW,
     CONTRACT_ADD,
+    CONTRACT_EDIT,
     CONTRACT_VIEW,
     REPORT_GENERATE,
+    REPORT_SHARE,
     REPORT_VIEW,
     TASK_ADD,
     TASK_DELETE,
     TASK_EDIT,
+    TIME_ENTRY_ADD_ANY,
+    TIME_ENTRY_ADD_OWN,
     TIME_ENTRY_DELETE_ANY,
     TIME_ENTRY_DELETE_OWN,
     TIME_ENTRY_EDIT_ANY,
@@ -68,6 +85,7 @@ from .permissions import (
     TIMER_STOP,
     USER_ADD,
     USER_EDIT,
+    USER_PASSWORD_RESET,
     USER_VIEW,
     can,
     permission_required,
@@ -85,6 +103,8 @@ main = Blueprint("main", __name__)
 logger = logging.getLogger("grayhaven_timetracker.audit")
 login_limiter = LoginLimiter()
 login_ip_limiter = LoginLimiter(limit=50)
+shared_report_limiter = LoginLimiter()
+REPORT_LINK_EXPIRATION_DAYS = frozenset({7, 30, 90, 365})
 
 
 def now_utc() -> datetime:
@@ -93,6 +113,20 @@ def now_utc() -> datetime:
 
 def audit(event: str, **fields: Any) -> None:
     logger.info(event.replace("_", " "), extra={"event": event, **fields})
+
+
+def report_token_hash(token: str) -> str:
+    """Return the non-reversible lookup value stored for a report link."""
+    return hashlib.sha256(token.encode("ascii")).hexdigest()
+
+
+def shared_report_access_allowed(client: Client) -> bool:
+    """Validate client report access stored in the signed browser session."""
+    return bool(
+        session.get("shared_report_client_id") == client.id
+        and session.get("shared_report_password_version")
+        == client.report_password_version
+    )
 
 
 def form_text(name: str, label: str, maximum: int) -> str:
@@ -112,6 +146,24 @@ def time_entry_allowed(
     """Authorize a time entry using the future-facing own/any permission split."""
     user = cast(User, current_user())
     return can(any_permission) or (entry.user_id == user.id and can(own_permission))
+
+
+def time_entry_overlaps(
+    user_id: int,
+    started_at: datetime,
+    stopped_at: datetime,
+    *,
+    exclude_entry_id: int | None = None,
+) -> bool:
+    """Return whether a completed interval conflicts with the user's time."""
+    statement = select(func.count(TimeEntry.id)).where(
+        TimeEntry.user_id == user_id,
+        TimeEntry.started_at < stopped_at,
+        or_(TimeEntry.stopped_at.is_(None), TimeEntry.stopped_at > started_at),
+    )
+    if exclude_entry_id is not None:
+        statement = statement.where(TimeEntry.id != exclude_entry_id)
+    return bool(get_session().scalar(statement))
 
 
 def parse_assignment(value: str, contract_id: int) -> tuple[Task, Subtask | None]:
@@ -181,6 +233,24 @@ def datetime_local_value(value: datetime, timezone_name: str) -> str:
 def register_routes(app: Flask) -> None:
     app.before_request(load_current_user)
     app.register_blueprint(main)
+
+    @app.before_request
+    def enforce_required_password_change() -> Any:
+        user = current_user()
+        allowed_endpoints = {
+            "main.branding_asset",
+            "main.change_password",
+            "main.logout",
+            "main.required_password_change",
+            "static",
+        }
+        if (
+            user is not None
+            and user.password_change_required
+            and request.endpoint not in allowed_endpoints
+        ):
+            return redirect(url_for("main.required_password_change"))
+        return None
 
     @app.context_processor
     def inject_globals() -> dict[str, Any]:
@@ -269,6 +339,8 @@ def login() -> Any:
     session["user_id"] = user.id
     session["session_version"] = user.session_version
     audit("login_succeeded", user_id=user.id, ip=ip)
+    if user.password_change_required:
+        return redirect(url_for("main.required_password_change"))
     return redirect(
         safe_next_url(request.args.get("next")) or url_for("main.dashboard")
     )
@@ -341,18 +413,70 @@ def new_client() -> Any:
     if request.method != "POST":
         return render_template("client_form.html")
     try:
+        report_password = generate_temporary_password()
         item = Client(
             name=form_text("name", "Client name", 200),
             contact_name=form_text("contact_name", "Contact name", 200),
             contact_email=normalize_email(request.form.get("contact_email", "")),
+            report_password_hash=hash_password(report_password),
+            report_password_version=1,
         )
     except ValueError as exc:
         flash(str(exc), "error")
         return render_template("client_form.html"), 400
     get_session().add(item)
     get_session().commit()
-    audit("client_created", user_id=cast(User, current_user()).id)
+    audit(
+        "client_created",
+        actor_id=cast(User, current_user()).id,
+        client_id=item.id,
+    )
+    return render_template(
+        "client_created.html", client=item, report_password=report_password
+    )
+
+
+@main.route("/clients/<int:client_id>/edit", methods=["GET", "POST"])
+@permission_required(CLIENT_EDIT)
+def edit_client(client_id: int) -> Any:
+    item = cast(Client, get_or_404(Client, client_id))
+    if request.method != "POST":
+        return render_template("client_form.html", client=item)
+    try:
+        item.name = form_text("name", "Client name", 200)
+        item.contact_name = form_text("contact_name", "Contact name", 200)
+        item.contact_email = normalize_email(request.form.get("contact_email", ""))
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return render_template("client_form.html", client=item), 400
+    get_session().commit()
+    audit(
+        "client_updated",
+        actor_id=cast(User, current_user()).id,
+        client_id=item.id,
+    )
+    flash("Client details updated.", "success")
     return redirect(url_for("main.client", client_id=item.id))
+
+
+@main.post("/clients/<int:client_id>/report-password/reset")
+@permission_required(REPORT_SHARE)
+def reset_client_report_password(client_id: int) -> Any:
+    item = cast(Client, get_or_404(Client, client_id))
+    report_password = generate_temporary_password()
+    item.report_password_hash = hash_password(report_password)
+    item.report_password_version += 1
+    get_session().commit()
+    audit(
+        "client_report_password_reset",
+        actor_id=cast(User, current_user()).id,
+        client_id=item.id,
+    )
+    return render_template(
+        "client_report_password_created.html",
+        client=item,
+        report_password=report_password,
+    )
 
 
 @main.route("/contracts/new/<int:client_id>", methods=["GET", "POST"])
@@ -380,8 +504,39 @@ def new_contract(client_id: int) -> Any:
         return render_template("contract_form.html", client=client_item), 400
     get_session().add(contract_item)
     get_session().commit()
-    audit("contract_created", user_id=cast(User, current_user()).id)
+    audit(
+        "contract_created",
+        actor_id=cast(User, current_user()).id,
+        client_id=client_item.id,
+        contract_id=contract_item.id,
+    )
     return redirect(url_for("main.contract", contract_id=contract_item.id))
+
+
+@main.route("/contracts/<int:contract_id>/edit", methods=["GET", "POST"])
+@permission_required(CONTRACT_EDIT)
+def edit_contract(contract_id: int) -> Any:
+    item = cast(Contract, get_or_404(Contract, contract_id))
+    if request.method != "POST":
+        return render_template("contract_form.html", client=item.client, contract=item)
+    try:
+        item.name = form_text("name", "Contract name", 200)
+        item.contact_name = form_text("contact_name", "Contact name", 200)
+        item.contact_email = normalize_email(request.form.get("contact_email", ""))
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return render_template(
+            "contract_form.html", client=item.client, contract=item
+        ), 400
+    get_session().commit()
+    audit(
+        "contract_updated",
+        actor_id=cast(User, current_user()).id,
+        client_id=item.client_id,
+        contract_id=item.id,
+    )
+    flash("Contract details updated. The billable rate was not changed.", "success")
+    return redirect(url_for("main.contract", contract_id=item.id))
 
 
 @main.get("/contracts/<int:contract_id>")
@@ -401,6 +556,17 @@ def contract(contract_id: int) -> str:
     )
     if item is None:
         abort(404)
+    snapshot_at = now_utc()
+    report_link_active = bool(
+        item.report_token_hash
+        and (item.report_expires_at is None or item.report_expires_at > snapshot_at)
+    )
+    report_link_expired = bool(
+        item.report_token_hash
+        and item.report_expires_at is not None
+        and item.report_expires_at <= snapshot_at
+    )
+    timezone_info = ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"]))
     active_entry = get_session().scalar(
         select(TimeEntry)
         .where(
@@ -422,6 +588,13 @@ def contract(contract_id: int) -> str:
             duration_seconds(active_entry.started_at, now_utc()) if active_entry else 0
         ),
         current_contract_id=item.id,
+        report_link_active=report_link_active,
+        report_link_expired=report_link_expired,
+        report_link_expiration=(
+            format_datetime(item.report_expires_at, timezone_info)
+            if item.report_expires_at is not None
+            else None
+        ),
     )
 
 
@@ -434,8 +607,16 @@ def new_task(contract_id: int) -> Any:
     except ValueError as exc:
         flash(str(exc), "error")
     else:
-        get_session().add(Task(contract=contract_item, name=name))
+        task = Task(contract=contract_item, name=name)
+        get_session().add(task)
         get_session().commit()
+        audit(
+            "task_created",
+            actor_id=cast(User, current_user()).id,
+            contract_id=contract_id,
+            task_id=task.id,
+        )
+        flash("Task added.", "success")
     return redirect(url_for("main.contract", contract_id=contract_id))
 
 
@@ -448,8 +629,17 @@ def new_subtask(task_id: int) -> Any:
     except ValueError as exc:
         flash(str(exc), "error")
     else:
-        get_session().add(Subtask(task=task, name=name))
+        subtask = Subtask(task=task, name=name)
+        get_session().add(subtask)
         get_session().commit()
+        audit(
+            "subtask_created",
+            actor_id=cast(User, current_user()).id,
+            contract_id=task.contract_id,
+            task_id=task.id,
+            subtask_id=subtask.id,
+        )
+        flash("Subtask added.", "success")
     return redirect(url_for("main.contract", contract_id=task.contract_id))
 
 
@@ -462,6 +652,14 @@ def rename_task(task_id: int) -> Any:
         get_session().commit()
     except ValueError as exc:
         flash(str(exc), "error")
+    else:
+        audit(
+            "task_renamed",
+            actor_id=cast(User, current_user()).id,
+            contract_id=task.contract_id,
+            task_id=task.id,
+        )
+        flash("Task renamed.", "success")
     return redirect(url_for("main.contract", contract_id=task.contract_id))
 
 
@@ -474,6 +672,15 @@ def rename_subtask(subtask_id: int) -> Any:
         get_session().commit()
     except ValueError as exc:
         flash(str(exc), "error")
+    else:
+        audit(
+            "subtask_renamed",
+            actor_id=cast(User, current_user()).id,
+            contract_id=subtask.task.contract_id,
+            task_id=subtask.task_id,
+            subtask_id=subtask.id,
+        )
+        flash("Subtask renamed.", "success")
     return redirect(url_for("main.contract", contract_id=subtask.task.contract_id))
 
 
@@ -494,6 +701,13 @@ def delete_task(task_id: int) -> Any:
     except IntegrityError:
         database.rollback()
         abort(409, "Tasks with recorded time cannot be deleted.")
+    audit(
+        "task_deleted",
+        actor_id=cast(User, current_user()).id,
+        contract_id=contract_id,
+        task_id=task_id,
+    )
+    flash("Task deleted.", "success")
     return redirect(url_for("main.contract", contract_id=contract_id))
 
 
@@ -514,6 +728,14 @@ def delete_subtask(subtask_id: int) -> Any:
     except IntegrityError:
         database.rollback()
         abort(409, "Subtasks with recorded time cannot be deleted.")
+    audit(
+        "subtask_deleted",
+        actor_id=cast(User, current_user()).id,
+        contract_id=contract_id,
+        task_id=subtask.task_id,
+        subtask_id=subtask_id,
+    )
+    flash("Subtask deleted.", "success")
     return redirect(url_for("main.contract", contract_id=contract_id))
 
 
@@ -557,7 +779,14 @@ def start_timer() -> Any:
         return redirect(
             url_for("main.contract", contract_id=task.contract_id), code=303
         )
-    audit("timer_started", user_id=user.id)
+    audit(
+        "timer_started",
+        user_id=user.id,
+        contract_id=task.contract_id,
+        task_id=task.id,
+        subtask_id=subtask.id if subtask else None,
+        time_entry_id=entry.id,
+    )
     return redirect(url_for("main.contract", contract_id=task.contract_id))
 
 
@@ -571,11 +800,115 @@ def stop_timer(entry_id: int) -> Any:
         abort(403)
     entry.stopped_at = max(now_utc(), entry.started_at)
     database.commit()
-    audit("timer_stopped", user_id=user.id)
+    audit(
+        "timer_stopped",
+        user_id=user.id,
+        contract_id=entry.task.contract_id,
+        task_id=entry.task_id,
+        subtask_id=entry.subtask_id,
+        time_entry_id=entry.id,
+    )
     destination = safe_next_url(request.form.get("next"))
     return redirect(
         destination or url_for("main.contract", contract_id=entry.task.contract_id)
     )
+
+
+@main.route("/contracts/<int:contract_id>/sessions/new", methods=["GET", "POST"])
+@login_required
+def new_time_entry(contract_id: int) -> Any:
+    if not (can(TIME_ENTRY_ADD_OWN) or can(TIME_ENTRY_ADD_ANY)):
+        abort(403)
+    database = get_session()
+    contract_item = database.scalar(
+        select(Contract)
+        .where(Contract.id == contract_id)
+        .options(
+            selectinload(Contract.client),
+            selectinload(Contract.tasks).selectinload(Task.subtasks),
+        )
+    )
+    if contract_item is None:
+        abort(404)
+    users = (
+        database.scalars(select(User).order_by(User.last_name, User.first_name)).all()
+        if can(TIME_ENTRY_ADD_ANY)
+        else []
+    )
+    timezone_name = cast(str, current_app.config["DISPLAY_TIMEZONE"])
+    default_end = now_utc()
+    default_start = default_end - timedelta(hours=1)
+    if request.method != "POST":
+        return render_template(
+            "session_create_form.html",
+            contract=contract_item,
+            tasks=contract_item.tasks,
+            users=users,
+            timezone_name=timezone_name,
+            start_value=datetime_local_value(default_start, timezone_name),
+            end_value=datetime_local_value(default_end, timezone_name),
+        )
+    actor = cast(User, current_user())
+    try:
+        entry_user = actor
+        if can(TIME_ENTRY_ADD_ANY):
+            raw_user_id = request.form.get("user_id", "")
+            if not raw_user_id.isdigit():
+                raise ValueError("Select a valid user.")
+            selected_user = database.get(User, int(raw_user_id))
+            if selected_user is None:
+                raise ValueError("Select a valid user.")
+            entry_user = selected_user
+        task, subtask = parse_assignment(
+            request.form.get("assignment", ""), contract_id
+        )
+        started_at = local_datetime_to_utc(
+            request.form.get("started_at", ""), "Start time", timezone_name
+        )
+        stopped_at = local_datetime_to_utc(
+            request.form.get("stopped_at", ""), "End time", timezone_name
+        )
+        if stopped_at < started_at:
+            raise ValueError("End time cannot be earlier than start time.")
+        if stopped_at > now_utc():
+            raise ValueError("End time cannot be in the future.")
+        if time_entry_overlaps(entry_user.id, started_at, stopped_at):
+            raise ValueError("This time overlaps another session for the user.")
+    except (OverflowError, ValueError) as exc:
+        flash(str(exc), "error")
+        return render_template(
+            "session_create_form.html",
+            contract=contract_item,
+            tasks=contract_item.tasks,
+            users=users,
+            timezone_name=timezone_name,
+            start_value=datetime_local_value(default_start, timezone_name),
+            end_value=datetime_local_value(default_end, timezone_name),
+        ), 400
+    entry = TimeEntry(
+        user=entry_user,
+        task=task,
+        subtask=subtask,
+        started_at=started_at,
+        stopped_at=stopped_at,
+    )
+    database.add(entry)
+    try:
+        database.commit()
+    except IntegrityError:
+        database.rollback()
+        abort(409, "This time overlaps another session for the user.")
+    audit(
+        "time_entry_created",
+        actor_id=actor.id,
+        user_id=entry.user_id,
+        contract_id=contract_id,
+        task_id=entry.task_id,
+        subtask_id=entry.subtask_id,
+        time_entry_id=entry.id,
+    )
+    flash("Time session added.", "success")
+    return redirect(url_for("main.contract_sessions", contract_id=contract_id))
 
 
 @main.get("/contracts/<int:contract_id>/sessions")
@@ -683,6 +1016,15 @@ def edit_time_entry(entry_id: int) -> Any:
         )
         if stopped_at < started_at:
             raise ValueError("End time cannot be earlier than start time.")
+        if stopped_at > now_utc():
+            raise ValueError("End time cannot be in the future.")
+        if time_entry_overlaps(
+            entry.user_id,
+            started_at,
+            stopped_at,
+            exclude_entry_id=entry.id,
+        ):
+            raise ValueError("This time overlaps another session for the user.")
     except (OverflowError, ValueError) as exc:
         flash(str(exc), "error")
         return redirect(url_for("main.edit_time_entry", entry_id=entry.id), code=303)
@@ -690,7 +1032,11 @@ def edit_time_entry(entry_id: int) -> Any:
     entry.subtask = subtask
     entry.started_at = started_at
     entry.stopped_at = stopped_at
-    database.commit()
+    try:
+        database.commit()
+    except IntegrityError:
+        database.rollback()
+        abort(409, "This time overlaps another session for the user.")
     audit(
         "time_entry_updated",
         actor_id=cast(User, current_user()).id,
@@ -743,6 +1089,15 @@ def profile() -> str:
     return render_template("profile.html", user=cast(User, current_user()))
 
 
+@main.get("/profile/password/change-required")
+@login_required
+def required_password_change() -> Any:
+    user = cast(User, current_user())
+    if not user.password_change_required:
+        return redirect(url_for("main.profile"))
+    return render_template("password_change_required.html", user=user)
+
+
 @main.post("/profile/name")
 @login_required
 def update_profile_name() -> Any:
@@ -754,6 +1109,7 @@ def update_profile_name() -> Any:
         flash(str(exc), "error")
     else:
         get_session().commit()
+        audit("profile_updated", user_id=user.id)
         flash("Profile updated.", "success")
     return redirect(url_for("main.profile"))
 
@@ -762,6 +1118,7 @@ def update_profile_name() -> Any:
 @login_required
 def change_password() -> Any:
     user = cast(User, current_user())
+    was_required = user.password_change_required
     current_password = request.form.get("current_password", "")
     new_password = request.form.get("new_password", "")
     confirmation = request.form.get("confirm_password", "")
@@ -775,12 +1132,16 @@ def change_password() -> Any:
         flash(error, "error")
     else:
         user.password_hash = hash_password(new_password)
+        user.password_change_required = False
         user.session_version += 1
         get_session().commit()
         session["session_version"] = user.session_version
         audit("password_changed", user_id=user.id)
         flash("Password changed successfully.", "success")
-    return redirect(url_for("main.profile"))
+        return redirect(url_for("main.dashboard" if was_required else "main.profile"))
+    return redirect(
+        url_for("main.required_password_change" if was_required else "main.profile")
+    )
 
 
 @main.post("/profile/totp/setup")
@@ -861,8 +1222,8 @@ def new_user() -> Any:
         email = normalize_email(request.form.get("email", ""))
         if find_user_by_email(email):
             raise ValueError("A user with that email already exists.")
-        password = request.form.get("password", "")
-        password_hash = hash_password(password)
+        temporary_password = generate_temporary_password()
+        password_hash = hash_password(temporary_password)
         secret = pyotp.random_base32()
         user = User(
             email=email,
@@ -873,6 +1234,7 @@ def new_user() -> Any:
             pending_totp_secret=None,
             role="user",
             is_enabled=True,
+            password_change_required=True,
             session_version=1,
             created_at=now_utc(),
         )
@@ -886,10 +1248,87 @@ def new_user() -> Any:
         get_session().rollback()
         flash("A user with that email already exists.", "error")
         return render_template("user_form.html"), 409
-    audit("user_created", user_id=user.id)
+    audit(
+        "user_created",
+        actor_id=cast(User, current_user()).id,
+        user_id=user.id,
+    )
     uri = provisioning_uri(user, secret)
     return render_template(
-        "user_created.html", user=user, secret=secret, qr_code=qr_data_uri(uri)
+        "user_created.html",
+        user=user,
+        temporary_password=temporary_password,
+        secret=secret,
+        qr_code=qr_data_uri(uri),
+    )
+
+
+@main.route("/users/<int:user_id>/edit", methods=["GET", "POST"])
+@permission_required(USER_EDIT)
+def edit_user(user_id: int) -> Any:
+    database = get_session()
+    actor = cast(User, current_user())
+    user = cast(User, get_or_404(User, user_id))
+    bootstrap_email = database.get(ApplicationMetadata, BOOTSTRAP_EMAIL_KEY)
+    email_managed = bool(bootstrap_email and bootstrap_email.value == user.email)
+    if request.method != "POST":
+        return render_template(
+            "user_edit_form.html", user=user, email_managed=email_managed
+        )
+    try:
+        email = normalize_email(request.form.get("email", ""))
+        if email_managed and email != user.email:
+            raise ValueError(
+                "The deployment-managed administrator email cannot be changed here."
+            )
+        existing = find_user_by_email(email)
+        if existing is not None and existing.id != user.id:
+            raise ValueError("A user with that email already exists.")
+        first_name = form_text("first_name", "First name", 100)
+        last_name = form_text("last_name", "Last name", 100)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return render_template(
+            "user_edit_form.html", user=user, email_managed=email_managed
+        ), 400
+    email_changed = user.email != email
+    user.email = email
+    user.first_name = first_name
+    user.last_name = last_name
+    if email_changed:
+        user.session_version += 1
+    try:
+        database.commit()
+    except IntegrityError:
+        database.rollback()
+        flash("A user with that email already exists.", "error")
+        return render_template(
+            "user_edit_form.html", user=user, email_managed=email_managed
+        ), 409
+    if user.id == actor.id and email_changed:
+        session["session_version"] = user.session_version
+    audit("user_updated", actor_id=actor.id, user_id=user.id)
+    flash("User details updated.", "success")
+    return redirect(url_for("main.users"))
+
+
+@main.post("/users/<int:user_id>/reset-password")
+@permission_required(USER_PASSWORD_RESET)
+def reset_user_password(user_id: int) -> Any:
+    actor = cast(User, current_user())
+    user = cast(User, get_or_404(User, user_id))
+    if user.id == actor.id:
+        abort(409, "Use the profile page to change your current password.")
+    temporary_password = generate_temporary_password()
+    user.password_hash = hash_password(temporary_password)
+    user.password_change_required = True
+    user.session_version += 1
+    get_session().commit()
+    audit("user_password_reset", actor_id=actor.id, user_id=user.id)
+    return render_template(
+        "password_reset_created.html",
+        user=user,
+        temporary_password=temporary_password,
     )
 
 
@@ -918,6 +1357,7 @@ def toggle_user_enabled(user_id: int) -> Any:
         abort(409, "At least one enabled administrator is required.")
     audit(
         "user_enabled" if user.is_enabled else "user_disabled",
+        actor_id=actor.id,
         user_id=user.id,
     )
     return redirect(url_for("main.users"))
@@ -937,13 +1377,148 @@ def toggle_user_admin(user_id: int) -> Any:
     except IntegrityError:
         database.rollback()
         abort(409, "At least one enabled administrator is required.")
-    audit("user_role_changed", user_id=user.id)
+    audit("user_role_changed", actor_id=actor.id, user_id=user.id)
     return redirect(url_for("main.users"))
 
 
 # ---------------------------------------------------------------------------
 # Reporting routes
 # ---------------------------------------------------------------------------
+
+
+@main.post("/contracts/<int:contract_id>/report-link")
+@permission_required(REPORT_SHARE)
+def create_report_link(contract_id: int) -> Any:
+    contract_item = cast(Contract, get_or_404(Contract, contract_id))
+    expiration_choice = request.form.get("expires_in_days", "90")
+    expires_at: datetime | None = None
+    if expiration_choice != "never":
+        try:
+            expiration_days = int(expiration_choice)
+        except ValueError:
+            abort(400)
+        if expiration_days not in REPORT_LINK_EXPIRATION_DAYS:
+            abort(400)
+        expires_at = now_utc() + timedelta(days=expiration_days)
+    token = secrets.token_urlsafe(32)
+    contract_item.report_token_hash = report_token_hash(token)
+    contract_item.report_expires_at = expires_at
+    report_password: str | None = None
+    if contract_item.client.report_password_hash is None:
+        report_password = generate_temporary_password()
+        contract_item.client.report_password_hash = hash_password(report_password)
+        contract_item.client.report_password_version += 1
+    get_session().commit()
+    actor = cast(User, current_user())
+    audit(
+        "report_link_created",
+        actor_id=actor.id,
+        client_id=contract_item.client_id,
+        contract_id=contract_item.id,
+    )
+    return render_template(
+        "report_link_created.html",
+        contract=contract_item,
+        report_url=url_for("main.shared_report", token=token, _external=True),
+        report_password=report_password,
+        expires_at=(
+            format_datetime(
+                expires_at,
+                ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"])),
+            )
+            if expires_at is not None
+            else None
+        ),
+    )
+
+
+@main.post("/contracts/<int:contract_id>/report-link/revoke")
+@permission_required(REPORT_SHARE)
+def revoke_report_link(contract_id: int) -> Any:
+    contract_item = cast(Contract, get_or_404(Contract, contract_id))
+    contract_item.report_token_hash = None
+    contract_item.report_expires_at = None
+    get_session().commit()
+    audit(
+        "report_link_revoked",
+        actor_id=cast(User, current_user()).id,
+        client_id=contract_item.client_id,
+        contract_id=contract_item.id,
+    )
+    flash("The client report link has been revoked.", "success")
+    return redirect(url_for("main.contract", contract_id=contract_item.id))
+
+
+@main.route("/shared/reports/<token>", methods=["GET", "POST"])
+def shared_report(token: str) -> Any:
+    if (
+        not 32 <= len(token) <= 128
+        or not token.isascii()
+        or any(not (character.isalnum() or character in "-_") for character in token)
+    ):
+        abort(404)
+    contract_item = get_session().scalar(
+        select(Contract)
+        .where(Contract.report_token_hash == report_token_hash(token))
+        .options(selectinload(Contract.client))
+    )
+    if contract_item is None or (
+        contract_item.report_expires_at is not None
+        and contract_item.report_expires_at <= now_utc()
+    ):
+        abort(404)
+    client_item = contract_item.client
+    password_hash = client_item.report_password_hash
+    if password_hash is None:
+        abort(404)
+    if not shared_report_access_allowed(client_item):
+        if request.method != "POST":
+            return render_template("shared_report_login.html", contract=contract_item)
+        ip = request.remote_addr or "unknown"
+        rate_key = f"{ip}|{client_item.id}"
+        if shared_report_limiter.blocked(rate_key):
+            audit(
+                "shared_report_rate_limited",
+                client_id=client_item.id,
+                contract_id=contract_item.id,
+                ip=ip,
+            )
+            abort(429)
+        if not verify_password(
+            password_hash,
+            request.form.get("report_password", ""),
+        ):
+            shared_report_limiter.record_failure(rate_key)
+            audit(
+                "shared_report_rejected",
+                client_id=client_item.id,
+                contract_id=contract_item.id,
+                ip=ip,
+            )
+            flash("The report password was not accepted.", "error")
+            return render_template(
+                "shared_report_login.html", contract=contract_item
+            ), 401
+        shared_report_limiter.clear(rate_key)
+        session.permanent = True
+        session["shared_report_client_id"] = client_item.id
+        session["shared_report_password_version"] = client_item.report_password_version
+        audit(
+            "shared_report_access_granted",
+            client_id=client_item.id,
+            contract_id=contract_item.id,
+            ip=ip,
+        )
+    report = build_contract_report(
+        get_session(), contract_item, cast(str, current_app.config["DISPLAY_TIMEZONE"])
+    )
+    audit(
+        "shared_report_viewed",
+        client_id=contract_item.client_id,
+        contract_id=contract_item.id,
+        ip=request.remote_addr,
+    )
+    return render_template("report.html", report=report, shared_report=True)
 
 
 @main.get("/reports/<int:contract_id>")
@@ -958,6 +1533,12 @@ def report_view(contract_id: int) -> str:
         abort(404)
     report = build_contract_report(
         get_session(), contract_item, cast(str, current_app.config["DISPLAY_TIMEZONE"])
+    )
+    audit(
+        "report_viewed",
+        user_id=cast(User, current_user()).id,
+        client_id=contract_item.client_id,
+        contract_id=contract_item.id,
     )
     return render_template("report.html", report=report)
 
@@ -981,7 +1562,12 @@ def report_pdf(contract_id: int) -> Any:
         cast(str, current_app.config["CONTACT_URL"]),
     )
     filename = f"contract-time-report-{contract_id}.pdf"
-    audit("report_generated", user_id=cast(User, current_user()).id)
+    audit(
+        "report_generated",
+        user_id=cast(User, current_user()).id,
+        client_id=contract_item.client_id,
+        contract_id=contract_item.id,
+    )
     return send_file(
         pdf,
         as_attachment=True,

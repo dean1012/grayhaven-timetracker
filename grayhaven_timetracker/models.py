@@ -44,6 +44,7 @@ class User(Base):
     pending_totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
     role: Mapped[str] = mapped_column(String(16), default="user")
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    password_change_required: Mapped[bool] = mapped_column(Boolean, default=False)
     session_version: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
@@ -68,12 +69,18 @@ class Client(Base):
         CheckConstraint(
             "length(trim(contact_email)) > 3", name="ck_client_contact_email"
         ),
+        CheckConstraint(
+            "report_password_version >= 1",
+            name="ck_client_report_password_version",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
     contact_name: Mapped[str] = mapped_column(String(200))
     contact_email: Mapped[str] = mapped_column(String(255))
+    report_password_hash: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    report_password_version: Mapped[int] = mapped_column(Integer, default=1)
 
     contracts: Mapped[list[Contract]] = relationship(
         back_populates="client", order_by="Contract.name"
@@ -94,6 +101,12 @@ class Contract(Base):
             "hourly_rate_cents BETWEEN 0 AND 100000000",
             name="ck_contract_rate",
         ),
+        Index(
+            "uq_contract_report_token_hash",
+            "report_token_hash",
+            unique=True,
+            sqlite_where=text("report_token_hash IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -102,6 +115,8 @@ class Contract(Base):
     contact_name: Mapped[str] = mapped_column(String(200))
     contact_email: Mapped[str] = mapped_column(String(255))
     hourly_rate_cents: Mapped[int] = mapped_column(Integer)
+    report_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    report_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     client: Mapped[Client] = relationship(back_populates="contracts")
     tasks: Mapped[list[Task]] = relationship(

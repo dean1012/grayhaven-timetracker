@@ -106,6 +106,7 @@ def reconcile_initial_admin(app: Flask, database: Session) -> None:
             pending_totp_secret=None,
             role="admin",
             is_enabled=True,
+            password_change_required=False,
             session_version=1,
             created_at=_utc_now(),
         )
@@ -121,6 +122,7 @@ def reconcile_initial_admin(app: Flask, database: Session) -> None:
         authentication_changed = False
         if password_changed_in_config and user.password_hash != password_hash:
             user.password_hash = password_hash
+            user.password_change_required = False
             authentication_changed = True
         if totp_changed_in_config and user.totp_secret != totp_secret:
             user.totp_secret = totp_secret

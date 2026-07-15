@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Client created · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block content %}
+<section class="narrow-content">
+  <div class="panel form-panel">
+    <p class="eyebrow">CLIENT CREATED</p>
+    <h1>{{ client.name }}</h1>
+    <p class="muted">Retain this generated report password securely if the client will receive live report links. It is stored only as an Argon2id hash and will not be displayed again.</p>
+    <div class="secret-value">{{ report_password }}</div>
+    <p class="muted">You can reset the password later from the client page. Resetting it immediately invalidates existing client report sessions across all of this client’s contracts.</p>
+    <div class="form-actions"><a class="button button-primary" href="{{ url_for('main.client', client_id=client.id) }}">Continue to client</a></div>
+  </div>
+</section>
+{% endblock %}

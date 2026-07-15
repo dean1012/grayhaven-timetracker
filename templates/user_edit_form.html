@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Edit user · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block content %}
+<section class="narrow-content">
+  <a class="back-link" href="{{ url_for('main.users') }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to users</a>
+  <div class="panel form-panel">
+    <p class="eyebrow">ACCESS MANAGEMENT</p>
+    <h1>Edit user</h1>
+    <p class="muted">Changing the email updates the sign-in name and invalidates the user’s other sessions.</p>
+    <form method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>First name<input name="first_name" value="{{ request.form.get('first_name', user.first_name) }}" maxlength="100" required autofocus></label>
+      <label>Last name<input name="last_name" value="{{ request.form.get('last_name', user.last_name) }}" maxlength="100" required></label>
+      <label>Email address<input type="email" name="email" value="{{ request.form.get('email', user.email) }}" maxlength="255" required {% if email_managed %}readonly{% endif %}>{% if email_managed %}<small>This administrator email is managed by deployment configuration.</small>{% endif %}</label>
+      <div class="form-actions">
+        <a class="button button-secondary" href="{{ url_for('main.users') }}">Cancel</a>
+        <button class="button button-primary" type="submit"><i class="fa-solid fa-check" aria-hidden="true"></i> Update user</button>
+      </div>
+    </form>
+  </div>
+</section>
+{% endblock %}

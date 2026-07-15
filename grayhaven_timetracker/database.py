@@ -8,14 +8,14 @@ from pathlib import Path
 from typing import Any, cast
 
 from flask import Flask, g
-from sqlalchemy import Engine, create_engine, event, text
+from sqlalchemy import Connection, Engine, create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlcipher3 import dbapi2 as sqlcipher
 
 from .models import Base
 
 SQLITE_HEADER = b"SQLite format 3\x00"
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 
 class DatabaseError(RuntimeError):
@@ -84,10 +84,84 @@ def build_engine(path: Path, passphrase: str) -> Engine:
     return engine
 
 
+def migrate_schema(connection: Connection) -> None:
+    """Advance supported older schemas without exposing decrypted data."""
+    version = connection.execute(
+        text("SELECT value FROM application_metadata WHERE key = 'schema_version'")
+    ).scalar_one_or_none()
+    if version is None:
+        connection.execute(
+            text(
+                "INSERT INTO application_metadata (key, value) "
+                "VALUES ('schema_version', :version)"
+            ),
+            {"version": SCHEMA_VERSION},
+        )
+        return
+    if version == "1":
+        user_columns = {
+            row[1]
+            for row in connection.exec_driver_sql(
+                "PRAGMA table_info(user_account)"
+            ).fetchall()
+        }
+        if "password_change_required" not in user_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE user_account ADD COLUMN "
+                "password_change_required BOOLEAN NOT NULL DEFAULT 0"
+            )
+        contract_columns = {
+            row[1]
+            for row in connection.exec_driver_sql(
+                "PRAGMA table_info(contract)"
+            ).fetchall()
+        }
+        if "report_token_hash" not in contract_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE contract ADD COLUMN report_token_hash VARCHAR(64)"
+            )
+        if "report_expires_at" not in contract_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE contract ADD COLUMN report_expires_at DATETIME"
+            )
+        client_columns = {
+            row[1]
+            for row in connection.exec_driver_sql(
+                "PRAGMA table_info(client)"
+            ).fetchall()
+        }
+        if "report_password_hash" not in client_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE client ADD COLUMN report_password_hash VARCHAR(512)"
+            )
+        if "report_password_version" not in client_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE client ADD COLUMN "
+                "report_password_version INTEGER NOT NULL DEFAULT 1"
+            )
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_contract_report_token_hash "
+            "ON contract (report_token_hash) WHERE report_token_hash IS NOT NULL"
+        )
+        connection.execute(
+            text(
+                "UPDATE application_metadata SET value = :version "
+                "WHERE key = 'schema_version'"
+            ),
+            {"version": SCHEMA_VERSION},
+        )
+        return
+    if version != SCHEMA_VERSION:
+        raise DatabaseError(
+            f"Database schema {version} is not supported by schema {SCHEMA_VERSION}"
+        )
+
+
 def initialize_database(engine: Engine) -> None:
-    """Create the initial schema and install database integrity guards."""
+    """Create or migrate the schema and install database integrity guards."""
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
+        migrate_schema(connection)
         connection.execute(
             text(
                 """
@@ -140,18 +214,71 @@ def initialize_database(engine: Engine) -> None:
         )
         connection.execute(
             text(
-                "INSERT OR IGNORE INTO application_metadata (key, value) "
-                "VALUES ('schema_version', :version)"
-            ),
-            {"version": SCHEMA_VERSION},
-        )
-        version = connection.execute(
-            text("SELECT value FROM application_metadata WHERE key = 'schema_version'")
-        ).scalar_one()
-        if version != SCHEMA_VERSION:
-            raise DatabaseError(
-                f"Database schema {version} is not supported by schema {SCHEMA_VERSION}"
+                """
+                CREATE TRIGGER IF NOT EXISTS time_entry_overlap_insert_guard
+                BEFORE INSERT ON time_entry
+                WHEN EXISTS (
+                  SELECT 1 FROM time_entry AS existing
+                  WHERE existing.user_id = NEW.user_id
+                    AND NEW.started_at < COALESCE(
+                      existing.stopped_at, '9999-12-31 23:59:59.999999'
+                    )
+                    AND COALESCE(
+                      NEW.stopped_at, '9999-12-31 23:59:59.999999'
+                    ) > existing.started_at
+                )
+                BEGIN
+                  SELECT RAISE(ABORT, 'time entries for one user cannot overlap');
+                END
+                """
             )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TRIGGER IF NOT EXISTS time_entry_overlap_update_guard
+                BEFORE UPDATE OF user_id, started_at, stopped_at ON time_entry
+                WHEN EXISTS (
+                  SELECT 1 FROM time_entry AS existing
+                  WHERE existing.id != OLD.id
+                    AND existing.user_id = NEW.user_id
+                    AND NEW.started_at < COALESCE(
+                      existing.stopped_at, '9999-12-31 23:59:59.999999'
+                    )
+                    AND COALESCE(
+                      NEW.stopped_at, '9999-12-31 23:59:59.999999'
+                    ) > existing.started_at
+                )
+                BEGIN
+                  SELECT RAISE(ABORT, 'time entries for one user cannot overlap');
+                END
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TRIGGER IF NOT EXISTS client_report_password_version_insert_guard
+                BEFORE INSERT ON client
+                WHEN NEW.report_password_version < 1
+                BEGIN
+                  SELECT RAISE(ABORT, 'report password version must be positive');
+                END
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TRIGGER IF NOT EXISTS client_report_password_version_update_guard
+                BEFORE UPDATE OF report_password_version ON client
+                WHEN NEW.report_password_version < 1
+                BEGIN
+                  SELECT RAISE(ABORT, 'report password version must be positive');
+                END
+                """
+            )
+        )
 
 
 def verify_cipher_integrity(engine: Engine) -> None:

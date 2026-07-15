@@ -2,19 +2,30 @@
 {% block title %}Users · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block content %}
 <section class="page-heading">
-  <div><p class="eyebrow">ACCESS MANAGEMENT</p><h1>Users</h1><p class="muted">Create accounts, control access, and promote or demote administrators.</p></div>
+  <div><p class="eyebrow">ACCESS MANAGEMENT</p><h1>Users</h1><p class="muted">Create accounts, correct identities, recover passwords, and control access.</p></div>
   {% if can('user:add') %}<a class="button button-primary" href="{{ url_for('main.new_user') }}"><i class="fa-solid fa-user-plus" aria-hidden="true"></i> Add user</a>{% endif %}
 </section>
 <section class="panel user-directory">
   <div class="table-scroll">
     <table class="data-table user-table">
-      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Password</th><th>Actions</th></tr></thead>
       <tbody>
       {% for user in users %}
         <tr>
-          <td>{{ user.full_name }}</td><td>{{ user.email }}</td><td>{{ 'Administrator' if user.is_admin else 'Standard user' }}</td>
+          <td>{{ user.full_name }}{% if user.id == logged_user.id %}<small class="table-note">Current account</small>{% endif %}</td>
+          <td>{{ user.email }}</td>
+          <td>{{ 'Administrator' if user.is_admin else 'Standard user' }}</td>
           <td><span class="status-pill {{ 'status-enabled' if user.is_enabled else 'status-disabled' }}">{{ 'Enabled' if user.is_enabled else 'Disabled' }}</span></td>
-          <td><div class="row-actions">{% if user.id != logged_user.id and can('user:edit') %}<form method="post" action="{{ url_for('main.toggle_user_admin', user_id=user.id) }}" data-confirm="{{ 'Demote this administrator to a standard user?' if user.is_admin else 'Promote this user to administrator?' }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary table-button" type="submit">{{ 'Demote' if user.is_admin else 'Promote' }}</button></form><form method="post" action="{{ url_for('main.toggle_user_enabled', user_id=user.id) }}" data-confirm="{{ 'Disable this user and stop any active timer?' if user.is_enabled else 'Enable this user?' }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary table-button" type="submit">{{ 'Disable' if user.is_enabled else 'Enable' }}</button></form>{% else %}<span class="muted">Current account</span>{% endif %}</div></td>
+          <td>{% if user.password_change_required %}<span class="status-pill status-warning">Change required</span>{% else %}<span class="muted">Current</span>{% endif %}</td>
+          <td>
+            <div class="row-actions">
+              {% if can('user:edit') %}<a class="button button-secondary table-button" href="{{ url_for('main.edit_user', user_id=user.id) }}">Edit</a>{% endif %}
+              {% if user.id != logged_user.id %}
+                {% if can('user:password_reset') %}<form method="post" action="{{ url_for('main.reset_user_password', user_id=user.id) }}" data-confirm="Reset this user’s password and invalidate all existing sessions?"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary table-button" type="submit">Reset password</button></form>{% endif %}
+                {% if can('user:edit') %}<form method="post" action="{{ url_for('main.toggle_user_admin', user_id=user.id) }}" data-confirm="{{ 'Demote this administrator to a standard user?' if user.is_admin else 'Promote this user to administrator?' }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary table-button" type="submit">{{ 'Demote' if user.is_admin else 'Promote' }}</button></form><form method="post" action="{{ url_for('main.toggle_user_enabled', user_id=user.id) }}" data-confirm="{{ 'Disable this user and stop any active timer?' if user.is_enabled else 'Enable this user?' }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary table-button" type="submit">{{ 'Disable' if user.is_enabled else 'Enable' }}</button></form>{% endif %}
+              {% endif %}
+            </div>
+          </td>
         </tr>
       {% endfor %}
       </tbody>

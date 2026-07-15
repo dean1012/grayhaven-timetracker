@@ -8,6 +8,7 @@
     <h1>{{ contract.name }}</h1>
     <p class="muted">{{ contract.client.name }} · completed sessions can be corrected or removed.</p>
   </div>
+  {% if can('time_entry:add_own') or can('time_entry:add_any') %}<a class="button button-primary" href="{{ url_for('main.new_time_entry', contract_id=contract.id) }}"><i class="fa-solid fa-plus" aria-hidden="true"></i> Add session</a>{% endif %}
 </section>
 <section class="panel session-directory">
   <div class="table-scroll">

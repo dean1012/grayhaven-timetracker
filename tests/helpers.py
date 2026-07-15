@@ -85,6 +85,7 @@ class AppTestCase(unittest.TestCase):
         logging.disable(logging.CRITICAL)
         routes.login_limiter = LoginLimiter()
         routes.login_ip_limiter = LoginLimiter(limit=50)
+        routes.shared_report_limiter = LoginLimiter()
         self.client = self.app.test_client()
 
     def tearDown(self) -> None:

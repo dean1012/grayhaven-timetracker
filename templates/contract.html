@@ -4,12 +4,30 @@
 <section class="page-heading">
   <div><a class="back-link" href="{{ url_for('main.client', client_id=contract.client.id) }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> {{ contract.client.name }}</a><p class="eyebrow">CONTRACT</p><h1>{{ contract.name }}</h1><p class="muted">{{ format_money(contract.hourly_rate) }} per hour · all time is billable</p></div>
   <div class="heading-actions">
+    {% if can('contract:edit') %}<a class="button button-secondary" href="{{ url_for('main.edit_contract', contract_id=contract.id) }}"><i class="fa-solid fa-pen" aria-hidden="true"></i> Edit</a>{% endif %}
     {% if can('time_entry:view_own') or can('time_entry:view_any') %}<a class="button button-secondary" href="{{ url_for('main.contract_sessions', contract_id=contract.id) }}"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> Sessions</a>{% endif %}
     {% if can('report:view') %}<a class="button button-secondary" target="_blank" rel="noopener noreferrer" href="{{ url_for('main.report_view', contract_id=contract.id) }}"><i class="fa-solid fa-eye" aria-hidden="true"></i> View report</a>{% endif %}
     {% if can('report:generate') %}<a class="button button-primary" href="{{ url_for('main.report_pdf', contract_id=contract.id) }}"><i class="fa-solid fa-file-pdf" aria-hidden="true"></i> Generate report</a>{% endif %}
   </div>
 </section>
 {% if active_entry %}{% include "active_timer.html" %}{% endif %}
+{% if can('report:share') %}
+<section class="panel share-panel">
+  <div>
+    <p class="eyebrow">CLIENT ACCESS</p>
+    <h2>Live report link</h2>
+    {% if report_link_active %}<p class="muted"><span class="status-pill status-enabled">Active</span> {% if report_link_expiration %}Expires {{ report_link_expiration }}.{% else %}No expiration; active until revoked.{% endif %} The current link cannot be recovered because only its hash is stored.</p>{% elif report_link_expired %}<p class="muted"><span class="status-pill status-warning">Expired</span> Generate a replacement link to restore client access.</p>{% else %}<p class="muted">Give a client a private, account-free view protected by both the private link and the client’s separate report password. Contact details remain excluded.</p>{% endif %}
+  </div>
+  <div class="share-controls">
+    <form method="post" action="{{ url_for('main.create_report_link', contract_id=contract.id) }}" class="share-form" {% if report_link_active %}data-confirm="Replace the active link? The current client link will stop working immediately."{% endif %}>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Expiration<select name="expires_in_days"><option value="90">90 days</option><option value="7">7 days</option><option value="30">30 days</option><option value="365">365 days</option><option value="never">No expiration</option></select></label>
+      <button class="button button-primary" type="submit"><i class="fa-solid fa-link" aria-hidden="true"></i> {{ 'Replace link' if report_link_active else 'Generate link' }}</button>
+    </form>
+    {% if report_link_active or report_link_expired %}<form method="post" action="{{ url_for('main.revoke_report_link', contract_id=contract.id) }}" data-confirm="Revoke this client report link?"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary" type="submit">Revoke</button></form>{% endif %}
+  </div>
+</section>
+{% endif %}
 <section class="panel task-panel">
   <div class="panel-heading"><div><p class="eyebrow">WORK BREAKDOWN</p><h2>Tasks &amp; subtasks</h2></div>{% if can('task:add') %}<form method="post" action="{{ url_for('main.new_task', contract_id=contract.id) }}" class="inline-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="name" maxlength="200" placeholder="New task name" required><button class="button button-primary" type="submit"><i class="fa-solid fa-plus" aria-hidden="true"></i> Add task</button></form>{% endif %}</div>
   {% for task in contract.tasks %}

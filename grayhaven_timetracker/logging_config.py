@@ -24,6 +24,8 @@ class JsonFormatter(logging.Formatter):
             "actor_id",
             "client_id",
             "contract_id",
+            "task_id",
+            "subtask_id",
             "time_entry_id",
             "email",
             "ip",

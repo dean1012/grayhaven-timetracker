@@ -12,10 +12,13 @@ from .auth import current_user
 
 REPORT_VIEW = "report:view"
 REPORT_GENERATE = "report:generate"
+REPORT_SHARE = "report:share"
 CLIENT_ADD = "client:add"
 CLIENT_VIEW = "client:view"
+CLIENT_EDIT = "client:edit"
 CONTRACT_ADD = "contract:add"
 CONTRACT_VIEW = "contract:view"
+CONTRACT_EDIT = "contract:edit"
 TASK_ADD = "task:add"
 TASK_VIEW = "task:view"
 TASK_EDIT = "task:edit"
@@ -24,6 +27,8 @@ TIMER_START = "timer:start"
 TIMER_STOP = "timer:stop"
 TIME_ENTRY_VIEW_OWN = "time_entry:view_own"
 TIME_ENTRY_VIEW_ANY = "time_entry:view_any"
+TIME_ENTRY_ADD_OWN = "time_entry:add_own"
+TIME_ENTRY_ADD_ANY = "time_entry:add_any"
 TIME_ENTRY_EDIT_OWN = "time_entry:edit_own"
 TIME_ENTRY_EDIT_ANY = "time_entry:edit_any"
 TIME_ENTRY_DELETE_OWN = "time_entry:delete_own"
@@ -31,16 +36,20 @@ TIME_ENTRY_DELETE_ANY = "time_entry:delete_any"
 USER_ADD = "user:add"
 USER_VIEW = "user:view"
 USER_EDIT = "user:edit"
+USER_PASSWORD_RESET = "user:password_reset"  # noqa: S105
 
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "admin": frozenset(
         {
             REPORT_VIEW,
             REPORT_GENERATE,
+            REPORT_SHARE,
             CLIENT_ADD,
             CLIENT_VIEW,
+            CLIENT_EDIT,
             CONTRACT_ADD,
             CONTRACT_VIEW,
+            CONTRACT_EDIT,
             TASK_ADD,
             TASK_VIEW,
             TASK_EDIT,
@@ -49,6 +58,8 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             TIMER_STOP,
             TIME_ENTRY_VIEW_OWN,
             TIME_ENTRY_VIEW_ANY,
+            TIME_ENTRY_ADD_OWN,
+            TIME_ENTRY_ADD_ANY,
             TIME_ENTRY_EDIT_OWN,
             TIME_ENTRY_EDIT_ANY,
             TIME_ENTRY_DELETE_OWN,
@@ -56,6 +67,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             USER_ADD,
             USER_VIEW,
             USER_EDIT,
+            USER_PASSWORD_RESET,
         }
     ),
     "user": frozenset(
@@ -69,6 +81,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             TIMER_START,
             TIMER_STOP,
             TIME_ENTRY_VIEW_OWN,
+            TIME_ENTRY_ADD_OWN,
             TIME_ENTRY_EDIT_OWN,
             TIME_ENTRY_DELETE_OWN,
         }
