@@ -6,16 +6,16 @@
   <a class="back-link" href="{{ url_for('main.contract', contract_id=contract.id) if editing else url_for('main.client', client_id=client.id) }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> {{ 'Back to contract' if editing else 'Back to client' }}</a>
   <div class="panel form-panel">
     <p class="eyebrow">{{ client.name|upper }}</p>
-    <h1>{{ 'Edit contract' if editing else 'Add contract' }}</h1>
-    <form method="post" class="form-stack">
+    <h1>{{ 'Edit Contract' if editing else 'Add Contract' }}</h1>
+    <form method="post" class="form-stack" autocomplete="off" data-protonpass-ignore="true">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label>Contract name<input name="name" value="{{ request.form.get('name', contract.name if editing else '') }}" maxlength="200" required autofocus></label>
-      <label>Contract contact name<input name="contact_name" value="{{ request.form.get('contact_name', contract.contact_name if editing else '') }}" maxlength="200" required></label>
-      <label>Contract contact email<input type="email" name="contact_email" value="{{ request.form.get('contact_email', contract.contact_email if editing else '') }}" maxlength="255" required></label>
+      <label>Contract name<input name="name" value="{{ request.form.get('name', contract.name if editing else '') }}" maxlength="200" required autofocus autocomplete="off" data-protonpass-ignore="true"></label>
+      <label>Contract contact name<input name="contact_name" value="{{ request.form.get('contact_name', contract.contact_name if editing else '') }}" maxlength="200" required autocomplete="off" data-protonpass-ignore="true"></label>
+      <label>Contract contact email<input type="email" name="contact_email" value="{{ request.form.get('contact_email', contract.contact_email if editing else '') }}" maxlength="255" required autocomplete="off" data-protonpass-ignore="true"></label>
       {% if editing %}
       <label>Billable hourly rate<span class="readonly-value">{{ format_money(contract.hourly_rate) }} per hour</span><small>The original billable rate is immutable so historical and live reporting remain consistent.</small></label>
       {% else %}
-      <label>Billable hourly rate<input type="number" name="hourly_rate" value="{{ request.form.get('hourly_rate', '') }}" min="0" max="1000000" step="0.01" required></label>
+      <label>Billable hourly rate<input type="number" name="hourly_rate" value="{{ request.form.get('hourly_rate', '') }}" min="0" max="1000000" step="0.01" required autocomplete="off" data-protonpass-ignore="true"></label>
       {% endif %}
       <div class="form-actions">
         <a class="button button-secondary" href="{{ url_for('main.contract', contract_id=contract.id) if editing else url_for('main.client', client_id=client.id) }}">Cancel</a>

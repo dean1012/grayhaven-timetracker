@@ -7,7 +7,7 @@
     <h1>{{ contract.name }}</h1>
     <p class="muted">Copy this private link before leaving the page. The token is stored only as a hash and cannot be displayed again.</p>
     <div class="secret-value"><a href="{{ report_url }}" target="_blank" rel="noopener noreferrer">{{ report_url }}</a></div>
-    {% if report_password %}<h2>Client report password</h2><p class="muted">This existing client did not yet have a report password. Securely give this generated password to the client; it will not be displayed again.</p><div class="secret-value">{{ report_password }}</div>{% else %}<p class="muted">The client must enter their existing report password after opening the link. If that password was not retained, reset it from the client page.</p>{% endif %}
+    {% if report_password %}<h2>Client Report Password</h2><p class="muted">This existing client did not yet have a report password. Securely give this generated password to the client; it will not be displayed again.</p><div class="secret-value">{{ report_password }}</div>{% else %}<p class="muted">The client must enter their existing report password after opening the link. If that password was not retained, reset it from the client page.</p>{% endif %}
     <p class="muted">{% if expires_at %}This link expires {{ expires_at }}.{% else %}This link does not expire and remains active until an administrator revokes or replaces it.{% endif %}</p>
     <div class="form-actions"><a class="button button-primary" href="{{ url_for('main.contract', contract_id=contract.id) }}">Done</a></div>
   </div>

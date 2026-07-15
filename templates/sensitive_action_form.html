@@ -11,7 +11,7 @@
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Current password<input type="password" name="current_password" maxlength="1024" required autocomplete="current-password" autofocus></label>
-      {% if totp_required %}<label>Authenticator code<input name="totp" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7" required autocomplete="one-time-code"></label>{% endif %}
+      {% if totp_required %}<label>Authenticator code<input name="totp" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7" required autocomplete="off" data-protonpass-ignore="true"></label>{% endif %}
       <div class="form-actions"><a class="button button-secondary" href="{{ cancel_url }}">Cancel</a><button class="button button-primary" type="submit"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> {{ submit_label }}</button></div>
     </form>
   </div>

@@ -4,26 +4,26 @@
 <section class="page-heading">
   <div>
     <p class="eyebrow">ADMINISTRATION</p>
-    <h1>Audit log</h1>
+    <h1>Audit Log</h1>
     <p class="muted">Append-only history of application, user, public report, and system activity.</p>
   </div>
 </section>
 <section class="panel audit-directory">
-  <form method="get" class="audit-filters">
+  <form method="get" class="audit-filters" autocomplete="off" data-protonpass-ignore="true">
     <label>Source
-      <select name="source">
+      <select name="source" autocomplete="off" data-protonpass-ignore="true">
         <option value="">All sources</option>
         {% for source in ('admin', 'user', 'public', 'system') %}<option value="{{ source }}" {% if source_filter == source %}selected{% endif %}>{{ source|title }}</option>{% endfor %}
       </select>
     </label>
     <label>Action
-      <select name="event">
+      <select name="event" autocomplete="off" data-protonpass-ignore="true">
         <option value="">All actions</option>
         {% for event in events %}<option value="{{ event }}" {% if event_filter == event %}selected{% endif %}>{{ event.replace('_', ' ')|title }}</option>{% endfor %}
       </select>
     </label>
     <label>Actor
-      <select name="actor">
+      <select name="actor" autocomplete="off" data-protonpass-ignore="true">
         <option value="">All actors</option>
         {% for actor in actors %}<option value="{{ actor.id }}" {% if actor_filter == actor.id|string %}selected{% endif %}>{{ actor.full_name }} · {{ actor.email }}</option>{% endfor %}
       </select>

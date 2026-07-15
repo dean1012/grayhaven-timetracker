@@ -6,10 +6,10 @@
     <p class="eyebrow">USER CREATED</p>
     <h1>{{ user.full_name }}</h1>
     <p class="muted">Securely give both items below to the user before leaving this page. They will not be displayed again.</p>
-    <h2>Temporary password</h2>
+    <h2>Temporary Password</h2>
     <div class="secret-value">{{ temporary_password }}</div>
     <p class="muted">The user must replace this password immediately after signing in.</p>
-    <h2>Authenticator setup</h2>
+    <h2>Authenticator Setup</h2>
     <p class="muted">Have the user scan this QR code or enter the secret manually.</p>
     <img class="totp-qr" src="{{ qr_code }}" alt="Authenticator setup QR code for {{ user.full_name }}">
     <div class="secret-value">{{ secret }}</div>

@@ -26,7 +26,7 @@
       Open contract
     </a>
     {% endif %}
-    <form method="post" action="{{ url_for('main.stop_timer', entry_id=active_entry.id) }}">
+    <form method="post" action="{{ url_for('main.stop_timer', entry_id=active_entry.id) }}" autocomplete="off" data-protonpass-ignore="true">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="next" value="{{ request.path }}">
       <button class="button button-stop" type="submit">
