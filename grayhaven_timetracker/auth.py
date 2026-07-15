@@ -164,6 +164,7 @@ def login_required(view: Callable[P, R]) -> Callable[P, R]:  # noqa: UP047
 
 
 def safe_next_url(value: str | None) -> str | None:
+    """Accept only local absolute paths for post-action redirects."""
     if not value:
         return None
     decoded = unquote(value)

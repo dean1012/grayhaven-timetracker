@@ -70,6 +70,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
 
 def register_request_logging(app: Flask) -> None:
+    """Attach structured access logging while suppressing healthy probe noise."""
     access_logger = logging.getLogger("grayhaven_timetracker.access")
 
     @app.before_request
@@ -99,6 +100,8 @@ def register_request_logging(app: Flask) -> None:
 
 
 def register_security_headers(app: Flask) -> None:
+    """Attach browser security and response-cache controls."""
+
     @app.after_request
     def security_headers(response: Response) -> Response:
         response.headers["Content-Security-Policy"] = (
@@ -124,6 +127,8 @@ def register_security_headers(app: Flask) -> None:
 
 
 def register_error_handlers(app: Flask) -> None:
+    """Render stable public error pages without exposing internal details."""
+
     def error_page(status: int, message: str) -> tuple[str, int]:
         return (
             render_template("error.html", status=status, message=message),

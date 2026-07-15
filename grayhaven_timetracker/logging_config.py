@@ -9,6 +9,8 @@ from typing import Any
 
 
 class JsonFormatter(logging.Formatter):
+    """Serialize approved log context as one compact JSON object per line."""
+
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
             "timestamp": datetime.now(UTC).isoformat(),
@@ -41,6 +43,7 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging() -> None:
+    """Install the process-wide structured standard-error handler."""
     handler = logging.StreamHandler()
     handler.setFormatter(JsonFormatter())
     root = logging.getLogger()

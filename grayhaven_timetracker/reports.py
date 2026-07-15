@@ -46,8 +46,15 @@ PIE_COLORS = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Report data model
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class ReportSession:
+    """One immutable session row at the report snapshot time."""
+
     user_name: str
     label: str
     started_at: datetime
@@ -59,6 +66,8 @@ class ReportSession:
 
 @dataclass(frozen=True)
 class ReportGroup:
+    """Aggregated duration and cost for one task or subtask label."""
+
     label: str
     seconds: int
     cost: Decimal
@@ -67,6 +76,8 @@ class ReportGroup:
 
 @dataclass(frozen=True)
 class PieSlice:
+    """HTML chart geometry and display values for one report group."""
+
     label: str
     path: str
     color: str
@@ -76,6 +87,8 @@ class PieSlice:
 
 @dataclass(frozen=True)
 class ContractReport:
+    """Complete shared representation used by the HTML and PDF reports."""
+
     contract: Contract
     generated_at: datetime
     timezone: ZoneInfo
@@ -84,6 +97,11 @@ class ContractReport:
     pie_slices: tuple[PieSlice, ...]
     total_seconds: int
     total_cost: Decimal
+
+
+# ---------------------------------------------------------------------------
+# Calculation and formatting
+# ---------------------------------------------------------------------------
 
 
 def utc_now() -> datetime:
@@ -141,6 +159,7 @@ def format_money(value: Decimal) -> str:
 
 
 def _pie_path(start_angle: float, end_angle: float) -> str:
+    """Build an SVG sector path, including the full-circle special case."""
     center = 100.0
     radius = 86.0
     start_x = center + radius * math.cos(start_angle)
@@ -191,6 +210,11 @@ def _build_pie_slices(groups: tuple[ReportGroup, ...]) -> tuple[PieSlice, ...]:
     return tuple(slices)
 
 
+# ---------------------------------------------------------------------------
+# Report assembly and rendering
+# ---------------------------------------------------------------------------
+
+
 def build_contract_report(
     database: Session,
     contract: Contract,
@@ -198,6 +222,7 @@ def build_contract_report(
     *,
     snapshot_at: datetime | None = None,
 ) -> ContractReport:
+    """Snapshot a contract's sessions and reconcile grouped billing totals."""
     generated_at = snapshot_at or utc_now()
     timezone_info = ZoneInfo(display_timezone)
     entries = database.scalars(
@@ -283,6 +308,7 @@ def build_contract_report(
 def build_pdf(
     report: ContractReport, branding_path: Path, contact_url: str
 ) -> io.BytesIO:
+    """Render a contract report as a branded, paginated PDF in memory."""
     buffer = io.BytesIO()
     page_size = landscape(letter)
     document = SimpleDocTemplate(

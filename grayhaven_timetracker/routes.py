@@ -195,6 +195,11 @@ def register_routes(app: Flask) -> None:
         }
 
 
+# ---------------------------------------------------------------------------
+# Service and authentication routes
+# ---------------------------------------------------------------------------
+
+
 @main.get("/branding/<path:filename>")
 def branding_asset(filename: str) -> Any:
     branding_path = Path(cast(str, current_app.config["BRANDING_PATH"])).resolve()
@@ -276,6 +281,11 @@ def logout() -> Any:
     audit("logout", user_id=user.id if user else None, ip=request.remote_addr)
     session.clear()
     return redirect(url_for("main.login"))
+
+
+# ---------------------------------------------------------------------------
+# Client, contract, and task routes
+# ---------------------------------------------------------------------------
 
 
 @main.get("/")
@@ -507,6 +517,11 @@ def delete_subtask(subtask_id: int) -> Any:
     return redirect(url_for("main.contract", contract_id=contract_id))
 
 
+# ---------------------------------------------------------------------------
+# Timer and session routes
+# ---------------------------------------------------------------------------
+
+
 @main.post("/timer/start")
 @permission_required(TIMER_START)
 def start_timer() -> Any:
@@ -717,6 +732,11 @@ def delete_time_entry(entry_id: int) -> Any:
     return redirect(url_for("main.contract_sessions", contract_id=contract_id))
 
 
+# ---------------------------------------------------------------------------
+# Profile and user administration routes
+# ---------------------------------------------------------------------------
+
+
 @main.get("/profile")
 @login_required
 def profile() -> str:
@@ -919,6 +939,11 @@ def toggle_user_admin(user_id: int) -> Any:
         abort(409, "At least one enabled administrator is required.")
     audit("user_role_changed", user_id=user.id)
     return redirect(url_for("main.users"))
+
+
+# ---------------------------------------------------------------------------
+# Reporting routes
+# ---------------------------------------------------------------------------
 
 
 @main.get("/reports/<int:contract_id>")

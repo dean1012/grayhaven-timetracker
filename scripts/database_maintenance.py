@@ -22,8 +22,13 @@ from grayhaven_timetracker.database import (
     sql_literal,
 )
 
+# ---------------------------------------------------------------------------
+# Secret, file, and path safety
+# ---------------------------------------------------------------------------
+
 
 def read_secret(path: Path) -> str:
+    """Read and minimally validate one SQLCipher passphrase file."""
     try:
         secret = path.read_text(encoding="utf-8").rstrip("\r\n")
     except OSError as exc:
@@ -63,6 +68,7 @@ def discard_database_file(path: Path) -> None:
 
 
 def verify_database(database: Path, key_file: Path) -> None:
+    """Verify an existing regular file's encryption and logical integrity."""
     require_regular_file(database, "Database")
     passphrase = read_secret(key_file)
     connection = connect_sqlcipher(database, passphrase)
@@ -98,7 +104,13 @@ def restore_database(backup: Path, database: Path) -> None:
         discard_database_file(temporary)
 
 
+# ---------------------------------------------------------------------------
+# Maintenance operations
+# ---------------------------------------------------------------------------
+
+
 def rotate_key(database: Path, old_key_file: Path, new_key_file: Path) -> Path:
+    """Rotate a database key with a verified, atomically published recovery copy."""
     require_regular_file(database, "Database")
     if not database_is_encrypted(database):
         raise DatabaseError("Refusing to rekey a plaintext SQLite database")
@@ -143,6 +155,7 @@ def rotate_key(database: Path, old_key_file: Path, new_key_file: Path) -> Path:
 
 
 def encrypt_plaintext(database: Path, key_file: Path) -> Path:
+    """Replace a regular plaintext SQLite file with a verified encrypted copy."""
     require_regular_file(database, "Database")
     with database.open("rb") as database_file:
         if database_file.read(len(SQLITE_HEADER)) != SQLITE_HEADER:
@@ -243,7 +256,13 @@ def create_backup(database: Path, key_file: Path, output: Path) -> None:
         discard_database_file(temporary)
 
 
+# ---------------------------------------------------------------------------
+# Command-line interface
+# ---------------------------------------------------------------------------
+
+
 def parser() -> argparse.ArgumentParser:
+    """Build the maintenance command-line parser."""
     command_parser = argparse.ArgumentParser(
         description="Maintain the Grayhaven Time Tracker SQLCipher database"
     )
@@ -274,6 +293,7 @@ def parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """Dispatch one maintenance command and return a shell-friendly status."""
     arguments = parser().parse_args()
     try:
         if arguments.command == "verify":
