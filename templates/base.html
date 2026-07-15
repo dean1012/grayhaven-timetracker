@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#1C1F24">
+  <meta name="robots" content="noindex, nofollow">
   <title>{% block title %}Grayhaven Systems LLC Time Tracker{% endblock %}</title>
   <link rel="icon" type="image/x-icon" href="{{ url_for('main.branding_asset', filename='favicon.ico') }}">
   <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('main.branding_asset', filename='favicon-32.png') }}">
@@ -21,7 +22,7 @@
         <span class="brand-product">Time Tracker</span>
       </a>
       {% if logged_user %}
-      <nav class="app-nav" aria-label="Application navigation">
+      <nav class="app-nav desktop-nav" aria-label="Application navigation">
         <a href="{{ url_for('main.dashboard') }}" {% if request.endpoint == 'main.dashboard' %}aria-current="page"{% endif %}><i class="fa-solid fa-gauge-high" aria-hidden="true"></i> Dashboard</a>
         <a href="{{ url_for('main.profile') }}" {% if request.endpoint == 'main.profile' %}aria-current="page"{% endif %}><i class="fa-solid fa-user" aria-hidden="true"></i> Profile</a>
         {% if can('user:view') %}<a href="{{ url_for('main.users') }}" {% if request.endpoint in ('main.users', 'main.new_user') %}aria-current="page"{% endif %}><i class="fa-solid fa-users" aria-hidden="true"></i> Users</a>{% endif %}
@@ -30,6 +31,18 @@
           <button class="nav-button" type="submit"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Sign out</button>
         </form>
       </nav>
+      <details class="mobile-nav">
+        <summary class="mobile-nav-toggle" aria-label="Application menu"><i class="fa-solid fa-bars" aria-hidden="true"></i><span class="mobile-nav-label">Menu</span></summary>
+        <nav class="mobile-nav-links" aria-label="Application navigation">
+          <a href="{{ url_for('main.dashboard') }}" {% if request.endpoint == 'main.dashboard' %}aria-current="page"{% endif %}><i class="fa-solid fa-gauge-high" aria-hidden="true"></i> Dashboard</a>
+          <a href="{{ url_for('main.profile') }}" {% if request.endpoint == 'main.profile' %}aria-current="page"{% endif %}><i class="fa-solid fa-user" aria-hidden="true"></i> Profile</a>
+          {% if can('user:view') %}<a href="{{ url_for('main.users') }}" {% if request.endpoint in ('main.users', 'main.new_user') %}aria-current="page"{% endif %}><i class="fa-solid fa-users" aria-hidden="true"></i> Users</a>{% endif %}
+          <form method="post" action="{{ url_for('main.logout') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="nav-button" type="submit"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Sign out</button>
+          </form>
+        </nav>
+      </details>
       {% endif %}
     </div>
   </header>
