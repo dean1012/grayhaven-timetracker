@@ -13,6 +13,10 @@ RUN groupadd --system --gid 10001 app \
 COPY requirements.txt .
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
+# The application never invokes Perl. Remove the minimal interpreter inherited
+# from Debian so unrelated, currently unpatched CPAN modules are not reachable.
+RUN dpkg --purge --force-remove-essential perl-base
+
 ARG APP_VERSION=0.1.0-dev
 ENV APP_VERSION=${APP_VERSION}
 

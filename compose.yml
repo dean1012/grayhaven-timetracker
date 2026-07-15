@@ -19,6 +19,14 @@ services:
       TRUSTED_PROXY_COUNT: "0"
       TZ: ${TZ:-America/Chicago}
     user: "${UID:-1000}:${GID:-1000}"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    pids_limit: 128
     ports:
       - "127.0.0.1:8000:8000"
     volumes:

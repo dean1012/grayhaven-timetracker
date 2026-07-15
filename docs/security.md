@@ -72,6 +72,9 @@ the application in this release.
   rejection.
 - Pin application builds and review dependency and base-image updates before
   deployment.
+- Run the container with a read-only root filesystem, no Linux capabilities,
+  no privilege escalation, a bounded process count, and a constrained
+  temporary filesystem.
 
 [Back to top](#security-model)
 
