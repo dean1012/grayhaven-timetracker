@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ app_version }}">
   <script src="{{ url_for('static', filename='app.js') }}?v={{ app_version }}" defer></script>
 </head>
-<body class="{% block body_class %}{% endblock %}">
+<body class="app-body {% block body_class %}{% endblock %}">
   {% if logged_user %}
   <header class="app-header">
     <div class="app-header-inner">
@@ -48,15 +48,17 @@
     </div>
   </header>
   {% endif %}
-  <main class="page-shell">
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% if messages %}
-      <div class="flash-stack">
-        {% for category, message in messages %}<div class="flash flash-{{ category }}" role="status">{{ message }}</div>{% endfor %}
-      </div>
-      {% endif %}
-    {% endwith %}
-    {% block content %}{% endblock %}
+  <main class="app-viewport">
+    <div class="page-shell">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="flash-stack">
+          {% for category, message in messages %}<div class="flash flash-{{ category }}" role="status">{{ message }}</div>{% endfor %}
+        </div>
+        {% endif %}
+      {% endwith %}
+      {% block content %}{% endblock %}
+    </div>
   </main>
   <footer class="app-footer"><strong class="app-footer-confidential">CONFIDENTIAL</strong><span>Build {{ app_version }}</span></footer>
 </body>

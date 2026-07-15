@@ -2,7 +2,7 @@
 {% block title %}Dashboard · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block content %}
 <section class="page-heading">
-  <div><p class="eyebrow">OPERATIONS OVERVIEW</p><h1>Clients &amp; Contracts</h1><p class="muted">Select a client or contract to manage work and record billable time.</p></div>
+  <div><p class="eyebrow">OPERATIONS OVERVIEW</p><h1>Clients &amp; Contracts</h1></div>
   {% if can('client:add') %}<a class="button button-primary" href="{{ url_for('main.new_client') }}"><i class="fa-solid fa-plus" aria-hidden="true"></i> Add Client</a>{% endif %}
 </section>
 {% if active_entry %}{% include "active_timer.html" %}{% endif %}

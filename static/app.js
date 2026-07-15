@@ -234,7 +234,13 @@ async function reconcileLiveReport() {
       setLiveReportStatus("Reconnecting", "reconnecting");
       return;
     }
+    const currentViewport = article.querySelector(".report-viewport");
+    const scrollTop = currentViewport instanceof HTMLElement ? currentViewport.scrollTop : 0;
     article.replaceWith(replacement);
+    const replacementViewport = replacement.querySelector(".report-viewport");
+    if (replacementViewport instanceof HTMLElement) {
+      replacementViewport.scrollTop = scrollTop;
+    }
     updateLiveReportCounters();
     setLiveReportStatus("Live", "live");
   } catch {

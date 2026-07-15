@@ -2,7 +2,7 @@
 {% block title %}Users · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block content %}
 <section class="page-heading">
-  <div><p class="eyebrow">ACCESS MANAGEMENT</p><h1>Users</h1><p class="muted">Create accounts, correct identities, recover passwords, and control access.</p></div>
+  <div><p class="eyebrow">ACCESS MANAGEMENT</p><h1>Users</h1></div>
   {% if can('user:add') %}<a class="button button-primary" href="{{ url_for('main.new_user') }}"><i class="fa-solid fa-user-plus" aria-hidden="true"></i> Add user</a>{% endif %}
 </section>
 <section class="panel user-directory">
