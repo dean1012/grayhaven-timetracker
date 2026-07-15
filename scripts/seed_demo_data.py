@@ -3,14 +3,21 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
 
 from grayhaven_timetracker import create_app
 from grayhaven_timetracker.database import session_scope
-from grayhaven_timetracker.models import Client, Contract, Subtask, Task, TimeEntry, User
+from grayhaven_timetracker.models import (
+    Client,
+    Contract,
+    Subtask,
+    Task,
+    TimeEntry,
+    User,
+)
 
 
 def main() -> int:
@@ -37,7 +44,7 @@ def main() -> int:
         discovery = Task(contract=contract, name="Discovery")
         server = Subtask(task=discovery, name="Server 1")
         implementation = Task(contract=contract, name="Implementation")
-        now = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+        now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
         database.add_all(
             [
                 client,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
-from typing import ClassVar
 
 from sqlalchemy import (
     Boolean,
@@ -26,7 +25,7 @@ class Base(DeclarativeBase):
 
 class User(Base):
     __tablename__ = "user_account"
-    __table_args__: ClassVar[tuple[CheckConstraint, ...]] = (
+    __table_args__ = (
         CheckConstraint("role IN ('admin', 'user')", name="ck_user_role"),
         CheckConstraint("length(trim(email)) > 3", name="ck_user_email"),
         CheckConstraint("length(trim(first_name)) > 0", name="ck_user_first_name"),
@@ -61,7 +60,7 @@ class User(Base):
 
 class Client(Base):
     __tablename__ = "client"
-    __table_args__: ClassVar[tuple[CheckConstraint, ...]] = (
+    __table_args__ = (
         CheckConstraint("length(trim(name)) > 0", name="ck_client_name"),
         CheckConstraint(
             "length(trim(contact_name)) > 0", name="ck_client_contact_name"
@@ -83,7 +82,7 @@ class Client(Base):
 
 class Contract(Base):
     __tablename__ = "contract"
-    __table_args__: ClassVar[tuple[CheckConstraint, ...]] = (
+    __table_args__ = (
         CheckConstraint("length(trim(name)) > 0", name="ck_contract_name"),
         CheckConstraint(
             "length(trim(contact_name)) > 0", name="ck_contract_contact_name"
@@ -116,9 +115,7 @@ class Contract(Base):
 
 class Task(Base):
     __tablename__ = "task"
-    __table_args__: ClassVar[tuple[CheckConstraint, ...]] = (
-        CheckConstraint("length(trim(name)) > 0", name="ck_task_name"),
-    )
+    __table_args__ = (CheckConstraint("length(trim(name)) > 0", name="ck_task_name"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     contract_id: Mapped[int] = mapped_column(
@@ -135,7 +132,7 @@ class Task(Base):
 
 class Subtask(Base):
     __tablename__ = "subtask"
-    __table_args__: ClassVar[tuple[CheckConstraint, ...]] = (
+    __table_args__ = (
         CheckConstraint("length(trim(name)) > 0", name="ck_subtask_name"),
     )
 

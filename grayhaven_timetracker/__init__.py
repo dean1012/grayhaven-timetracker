@@ -51,7 +51,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     trusted_proxies = int(app.config.get("TRUSTED_PROXY_COUNT", 0))
     if trusted_proxies:
-        app.wsgi_app = ProxyFix(
+        app.wsgi_app = ProxyFix(  # type: ignore[method-assign]
             app.wsgi_app,
             x_for=trusted_proxies,
             x_proto=trusted_proxies,

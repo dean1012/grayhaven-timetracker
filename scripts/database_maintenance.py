@@ -4,18 +4,18 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import suppress
 import os
 import shutil
 import sys
-from datetime import datetime, timezone
+from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlcipher3 import dbapi2 as sqlcipher
 
 from grayhaven_timetracker.database import (
-    DatabaseError,
     SQLITE_HEADER,
+    DatabaseError,
     connect_sqlcipher,
     database_is_encrypted,
     sql_literal,
@@ -67,7 +67,7 @@ def rotate_key(database: Path, old_key_file: Path, new_key_file: Path) -> Path:
     if old_key == new_key:
         raise DatabaseError("The old and new SQLCipher passphrases must differ")
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     backup = database.with_name(f"{database.name}.pre-rekey-{timestamp}")
     connection = connect_sqlcipher(database, old_key)
     try:
@@ -99,7 +99,7 @@ def encrypt_plaintext(database: Path, key_file: Path) -> Path:
             raise DatabaseError("Source database is not plaintext SQLite")
 
     passphrase = read_secret(key_file)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     backup = database.with_name(f"{database.name}.pre-migration-encrypted-{timestamp}")
     temporary = database.with_name(f".{database.name}.encrypted.tmp")
     temporary.unlink(missing_ok=True)

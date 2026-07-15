@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import cast
 
 from argon2 import Type, extract_parameters
@@ -16,12 +16,12 @@ from .config import ConfigurationError
 from .models import ApplicationMetadata, User
 
 BOOTSTRAP_EMAIL_KEY = "bootstrap_admin_email"
-BOOTSTRAP_PASSWORD_KEY = "bootstrap_admin_password_fingerprint"
+BOOTSTRAP_PASSWORD_KEY = "bootstrap_admin_password_fingerprint"  # noqa: S105
 BOOTSTRAP_TOTP_KEY = "bootstrap_admin_totp_fingerprint"
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+    return datetime.now(UTC).replace(tzinfo=None, microsecond=0)
 
 
 def _fingerprint(value: str) -> str:
@@ -116,8 +116,7 @@ def reconcile_initial_admin(app: Flask, database: Session) -> None:
             or prior_password_fingerprint != password_fingerprint
         )
         totp_changed_in_config = (
-            prior_bootstrap_email != email
-            or prior_totp_fingerprint != totp_fingerprint
+            prior_bootstrap_email != email or prior_totp_fingerprint != totp_fingerprint
         )
         authentication_changed = False
         if password_changed_in_config and user.password_hash != password_hash:

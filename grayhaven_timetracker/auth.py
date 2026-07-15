@@ -17,7 +17,7 @@ import pyotp
 import qrcode
 from argon2 import PasswordHasher, Type
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
-from flask import abort, g, redirect, request, session, url_for
+from flask import g, redirect, request, session, url_for
 from sqlalchemy import select
 
 from .database import get_session
@@ -34,9 +34,7 @@ password_hasher = PasswordHasher(
     salt_len=16,
     type=Type.ID,
 )
-dummy_password_hash = password_hasher.hash(
-    "Grayhaven-Dummy-Password-Hash-Only-000000!"
-)
+dummy_password_hash = password_hasher.hash("Grayhaven-Dummy-Password-Hash-Only-000000!")
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -73,7 +71,9 @@ def password_error(password: str) -> str | None:
         return "Password must contain a lowercase letter."
     if not any(character.isdigit() for character in password):
         return "Password must contain a number."
-    if not any(not character.isalnum() and not character.isspace() for character in password):
+    if not any(
+        not character.isalnum() and not character.isspace() for character in password
+    ):
         return "Password must contain a special character."
     return None
 
@@ -95,7 +95,9 @@ def verify_password(password_hash: str, password: str) -> bool:
 
 
 def verify_password_constant_time(user: User | None, password: str) -> bool:
-    return verify_password(user.password_hash if user else dummy_password_hash, password)
+    return verify_password(
+        user.password_hash if user else dummy_password_hash, password
+    )
 
 
 def valid_totp_secret(secret: str) -> bool:
@@ -150,7 +152,7 @@ def load_current_user() -> None:
     g.current_user = user
 
 
-def login_required(view: Callable[P, R]) -> Callable[P, R]:
+def login_required(view: Callable[P, R]) -> Callable[P, R]:  # noqa: UP047
     @wraps(view)
     def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
         if current_user() is None:
@@ -165,7 +167,12 @@ def safe_next_url(value: str | None) -> str | None:
     if not value:
         return None
     parsed = urlsplit(value)
-    if parsed.scheme or parsed.netloc or not value.startswith("/") or value.startswith("//"):
+    if (
+        parsed.scheme
+        or parsed.netloc
+        or not value.startswith("/")
+        or value.startswith("//")
+    ):
         return None
     return value
 

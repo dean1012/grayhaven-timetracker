@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from datetime import UTC, datetime
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -42,7 +42,6 @@ from .auth import (
     qr_data_uri,
     required_text,
     safe_next_url,
-    valid_totp_secret,
     verify_password,
     verify_password_constant_time,
     verify_totp,
@@ -89,7 +88,7 @@ login_ip_limiter = LoginLimiter(limit=50)
 
 
 def now_utc() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+    return datetime.now(UTC).replace(tzinfo=None, microsecond=0)
 
 
 def audit(event: str, **fields: Any) -> None:
@@ -107,12 +106,12 @@ def get_or_404(model: type[Any], identifier: int) -> Any:
     return item
 
 
-def time_entry_allowed(entry: TimeEntry, own_permission: str, any_permission: str) -> bool:
+def time_entry_allowed(
+    entry: TimeEntry, own_permission: str, any_permission: str
+) -> bool:
     """Authorize a time entry using the future-facing own/any permission split."""
     user = cast(User, current_user())
-    return can(any_permission) or (
-        entry.user_id == user.id and can(own_permission)
-    )
+    return can(any_permission) or (entry.user_id == user.id and can(own_permission))
 
 
 def parse_assignment(value: str, contract_id: int) -> tuple[Task, Subtask | None]:
@@ -152,7 +151,7 @@ def local_datetime_to_utc(
     candidates: list[datetime] = []
     for fold in (0, 1):
         local = parsed.replace(tzinfo=zone, fold=fold)
-        utc_value = local.astimezone(timezone.utc)
+        utc_value = local.astimezone(UTC)
         round_trip = utc_value.astimezone(zone).replace(tzinfo=None)
         if round_trip == parsed and utc_value not in candidates:
             candidates.append(utc_value)
@@ -160,7 +159,7 @@ def local_datetime_to_utc(
         raise ValueError(f"{label} does not exist because of daylight saving time.")
     if len(candidates) > 1:
         if original_utc is not None:
-            original = original_utc.replace(tzinfo=timezone.utc)
+            original = original_utc.replace(tzinfo=UTC)
             if original in candidates:
                 return original_utc.replace(microsecond=0)
         raise ValueError(
@@ -173,7 +172,7 @@ def local_datetime_to_utc(
 def datetime_local_value(value: datetime, timezone_name: str) -> str:
     """Format a stored UTC timestamp for a datetime-local input."""
     return (
-        value.replace(tzinfo=timezone.utc)
+        value.replace(tzinfo=UTC)
         .astimezone(ZoneInfo(timezone_name))
         .strftime("%Y-%m-%dT%H:%M:%S")
     )
@@ -240,7 +239,9 @@ def login() -> Any:
     if user is None or not user.is_enabled or not password_valid:
         login_limiter.record_failure(rate_key)
         login_ip_limiter.record_failure(ip)
-        reason = "disabled" if user is not None and not user.is_enabled else "credentials"
+        reason = (
+            "disabled" if user is not None and not user.is_enabled else "credentials"
+        )
         audit("login_rejected", email=email, ip=ip, reason=reason)
         flash("The sign-in information was not accepted.", "error")
         return render_template("login.html"), 401
@@ -263,7 +264,9 @@ def login() -> Any:
     session["user_id"] = user.id
     session["session_version"] = user.session_version
     audit("login_succeeded", user_id=user.id, ip=ip)
-    return redirect(safe_next_url(request.args.get("next")) or url_for("main.dashboard"))
+    return redirect(
+        safe_next_url(request.args.get("next")) or url_for("main.dashboard")
+    )
 
 
 @main.post("/logout")
@@ -278,11 +281,13 @@ def logout() -> Any:
 @main.get("/")
 @permission_required(CLIENT_VIEW)
 def dashboard() -> str:
-    clients = get_session().scalars(
-        select(Client)
-        .options(selectinload(Client.contracts))
-        .order_by(Client.name)
-    ).all()
+    clients = (
+        get_session()
+        .scalars(
+            select(Client).options(selectinload(Client.contracts)).order_by(Client.name)
+        )
+        .all()
+    )
     active_entry = get_session().scalar(
         select(TimeEntry)
         .where(
@@ -301,9 +306,7 @@ def dashboard() -> str:
         clients=clients,
         active_entry=active_entry,
         active_elapsed_seconds=(
-            duration_seconds(active_entry.started_at, now_utc())
-            if active_entry
-            else 0
+            duration_seconds(active_entry.started_at, now_utc()) if active_entry else 0
         ),
         current_contract_id=None,
     )
@@ -406,9 +409,7 @@ def contract(contract_id: int) -> str:
         contract=item,
         active_entry=active_entry,
         active_elapsed_seconds=(
-            duration_seconds(active_entry.started_at, now_utc())
-            if active_entry
-            else 0
+            duration_seconds(active_entry.started_at, now_utc()) if active_entry else 0
         ),
         current_contract_id=item.id,
     )
@@ -586,9 +587,7 @@ def contract_sessions(contract_id: int) -> str:
         .order_by(TimeEntry.started_at.desc(), TimeEntry.id.desc())
     )
     if not can(TIME_ENTRY_VIEW_ANY):
-        statement = statement.where(
-            TimeEntry.user_id == cast(User, current_user()).id
-        )
+        statement = statement.where(TimeEntry.user_id == cast(User, current_user()).id)
     entries = get_session().scalars(statement).all()
     snapshot_at = now_utc()
     session_rows = [
@@ -600,13 +599,9 @@ def contract_sessions(contract_id: int) -> str:
                 entry.stopped_at or max(snapshot_at, entry.started_at),
             ),
             "can_edit": entry.stopped_at is not None
-            and time_entry_allowed(
-                entry, TIME_ENTRY_EDIT_OWN, TIME_ENTRY_EDIT_ANY
-            ),
+            and time_entry_allowed(entry, TIME_ENTRY_EDIT_OWN, TIME_ENTRY_EDIT_ANY),
             "can_delete": entry.stopped_at is not None
-            and time_entry_allowed(
-                entry, TIME_ENTRY_DELETE_OWN, TIME_ENTRY_DELETE_ANY
-            ),
+            and time_entry_allowed(entry, TIME_ENTRY_DELETE_OWN, TIME_ENTRY_DELETE_ANY),
         }
         for entry in entries
     ]
@@ -653,9 +648,7 @@ def edit_time_entry(entry_id: int) -> Any:
             tasks=tasks,
             timezone_name=timezone_name,
             start_value=datetime_local_value(entry.started_at, timezone_name),
-            end_value=datetime_local_value(
-                cast(datetime, entry.stopped_at), timezone_name
-            ),
+            end_value=datetime_local_value(entry.stopped_at, timezone_name),
         )
     try:
         task, subtask = parse_assignment(
@@ -677,9 +670,7 @@ def edit_time_entry(entry_id: int) -> Any:
             raise ValueError("End time cannot be earlier than start time.")
     except (OverflowError, ValueError) as exc:
         flash(str(exc), "error")
-        return redirect(
-            url_for("main.edit_time_entry", entry_id=entry.id), code=303
-        )
+        return redirect(url_for("main.edit_time_entry", entry_id=entry.id), code=303)
     entry.task = task
     entry.subtask = subtask
     entry.started_at = started_at
@@ -707,9 +698,7 @@ def delete_time_entry(entry_id: int) -> Any:
     )
     if entry is None:
         abort(404)
-    if not time_entry_allowed(
-        entry, TIME_ENTRY_DELETE_OWN, TIME_ENTRY_DELETE_ANY
-    ):
+    if not time_entry_allowed(entry, TIME_ENTRY_DELETE_OWN, TIME_ENTRY_DELETE_ANY):
         abort(403)
     if entry.stopped_at is None:
         abort(409, "Stop an active timer before deleting it.")
@@ -831,9 +820,11 @@ def disable_totp() -> Any:
 @main.get("/users")
 @permission_required(USER_VIEW)
 def users() -> str:
-    user_list = get_session().scalars(
-        select(User).order_by(User.last_name, User.first_name)
-    ).all()
+    user_list = (
+        get_session()
+        .scalars(select(User).order_by(User.last_name, User.first_name))
+        .all()
+    )
     return render_template("users.html", users=user_list)
 
 

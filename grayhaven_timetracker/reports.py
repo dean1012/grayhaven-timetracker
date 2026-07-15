@@ -5,8 +5,8 @@ from __future__ import annotations
 import io
 import math
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
+from datetime import UTC, datetime
+from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from pathlib import Path
 from xml.sax.saxutils import escape, quoteattr
 from zoneinfo import ZoneInfo
@@ -87,7 +87,7 @@ class ContractReport:
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+    return datetime.now(UTC).replace(tzinfo=None, microsecond=0)
 
 
 def duration_seconds(started_at: datetime, ended_at: datetime) -> int:
@@ -106,8 +106,7 @@ def allocate_session_costs(
     if not durations:
         return ()
     exact_cents = [
-        Decimal(seconds * hourly_rate_cents) / Decimal(3600)
-        for seconds in durations
+        Decimal(seconds * hourly_rate_cents) / Decimal(3600) for seconds in durations
     ]
     allocated_cents = [
         int(value.to_integral_value(rounding=ROUND_FLOOR)) for value in exact_cents
@@ -133,7 +132,7 @@ def format_duration(seconds: int) -> str:
 
 
 def format_datetime(value: datetime, display_timezone: ZoneInfo) -> str:
-    localized = value.replace(tzinfo=timezone.utc).astimezone(display_timezone)
+    localized = value.replace(tzinfo=UTC).astimezone(display_timezone)
     return localized.strftime("%Y-%m-%d %I:%M:%S %p %Z")
 
 
@@ -238,7 +237,7 @@ def build_contract_report(
         )
 
     session_costs = [Decimal(0)] * len(session_data)
-    for label, indexes in group_session_indexes.items():
+    for indexes in group_session_indexes.values():
         allocated = allocate_session_costs(
             [session_data[index][4] for index in indexes],
             contract.hourly_rate_cents,
@@ -380,15 +379,14 @@ def build_pdf(
         "Duration",
         "Equivalent cost",
     ]
-    summary_group_rows: list[list[object]] = []
-    for group in report.groups:
-        summary_group_rows.append(
-            [
-                Paragraph(escape(group.label), body),
-                format_duration(group.seconds),
-                format_money(group.cost),
-            ]
-        )
+    summary_group_rows: list[list[object]] = [
+        [
+            Paragraph(escape(group.label), body),
+            format_duration(group.seconds),
+            format_money(group.cost),
+        ]
+        for group in report.groups
+    ]
     if not report.groups:
         summary_group_rows.append(["No time recorded", "0:00:00", "$0.00"])
     total_row: list[object] = [
@@ -406,9 +404,7 @@ def build_pdf(
         colWidths=[4.3 * inch, 1.1 * inch, 1.35 * inch],
         repeatRows=1,
     )
-    preview_table.setStyle(
-        _pdf_table_style(highlight_last_row=not has_continuation)
-    )
+    preview_table.setStyle(_pdf_table_style(highlight_last_row=not has_continuation))
 
     chart = Drawing(220, 205)
     pie = Pie()
@@ -528,23 +524,23 @@ def _pdf_table_style(
     font_size: int = 8, *, highlight_last_row: bool = False
 ) -> TableStyle:
     commands: list[tuple[object, ...]] = [
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2A2F36")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#E6EAF0")),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("FONTSIZE", (0, 0), (-1, -1), font_size),
-            ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#BBC7D3")),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("ALIGN", (-2, 1), (-1, -1), "RIGHT"),
-            (
-                "ROWBACKGROUNDS",
-                (0, 1),
-                (-1, -2 if highlight_last_row else -1),
-                [colors.white, colors.HexColor("#F2F5F7")],
-            ),
-            ("LEFTPADDING", (0, 0), (-1, -1), 5),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-            ("TOPPADDING", (0, 0), (-1, -1), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2A2F36")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#E6EAF0")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), font_size),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#BBC7D3")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (-2, 1), (-1, -1), "RIGHT"),
+        (
+            "ROWBACKGROUNDS",
+            (0, 1),
+            (-1, -2 if highlight_last_row else -1),
+            [colors.white, colors.HexColor("#F2F5F7")],
+        ),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
     ]
     if highlight_last_row:
         commands.extend(

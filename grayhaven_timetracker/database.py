@@ -9,7 +9,6 @@ from typing import Any, cast
 
 from flask import Flask, g
 from sqlalchemy import Engine, create_engine, event, text
-from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session, sessionmaker
 from sqlcipher3 import dbapi2 as sqlcipher
 
@@ -147,10 +146,7 @@ def initialize_database(engine: Engine) -> None:
             {"version": SCHEMA_VERSION},
         )
         version = connection.execute(
-            text(
-                "SELECT value FROM application_metadata "
-                "WHERE key = 'schema_version'"
-            )
+            text("SELECT value FROM application_metadata WHERE key = 'schema_version'")
         ).scalar_one()
         if version != SCHEMA_VERSION:
             raise DatabaseError(
@@ -161,10 +157,14 @@ def initialize_database(engine: Engine) -> None:
 def verify_cipher_integrity(engine: Engine) -> None:
     """Verify SQLCipher page authentication and SQLite logical integrity."""
     with engine.connect() as connection:
-        cipher_errors = list(connection.exec_driver_sql("PRAGMA cipher_integrity_check"))
+        cipher_errors = list(
+            connection.exec_driver_sql("PRAGMA cipher_integrity_check")
+        )
         if cipher_errors:
             raise DatabaseError("SQLCipher page integrity validation failed")
-        sqlite_result = connection.exec_driver_sql("PRAGMA integrity_check").scalar_one()
+        sqlite_result = connection.exec_driver_sql(
+            "PRAGMA integrity_check"
+        ).scalar_one()
         if sqlite_result != "ok":
             raise DatabaseError("SQLite logical integrity validation failed")
 

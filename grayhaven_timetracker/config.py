@@ -13,8 +13,7 @@ class ConfigurationError(RuntimeError):
 
 
 DEFAULT_CONTACT_URL = (
-    "https://calendar.proton.me/"
-    "bookings#HmPL_I2j-XCVf8y4lj2ikbmIGhzdlHxXJ7MnBngp-i8="
+    "https://calendar.proton.me/bookings#HmPL_I2j-XCVf8y4lj2ikbmIGhzdlHxXJ7MnBngp-i8="
 )
 
 
@@ -24,6 +23,7 @@ def _read_secret(name: str, *, required: bool = True) -> str | None:
     direct_value = os.environ.get(name)
     if file_value and direct_value:
         raise ConfigurationError(f"Set only one of {name} and {name}_FILE")
+    value: str | None
     if file_value:
         try:
             value = Path(file_value).read_text(encoding="utf-8").rstrip("\r\n")
@@ -136,7 +136,9 @@ def validate_branding(path: str) -> None:
         "fonts/inter-600.ttf",
         "fonts/inter-700.ttf",
     )
-    missing = [asset for asset in required_assets if not (branding_path / asset).is_file()]
+    missing = [
+        asset for asset in required_assets if not (branding_path / asset).is_file()
+    ]
     if missing:
         raise ConfigurationError(
             "Required runtime branding assets are missing: " + ", ".join(missing)
