@@ -30,6 +30,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
+from .audit import record_audit_event
 from .auth import (
     LoginLimiter,
     current_user,
@@ -53,6 +54,7 @@ from .bootstrap import BOOTSTRAP_EMAIL_KEY
 from .database import get_session, health_check
 from .models import (
     ApplicationMetadata,
+    AuditEvent,
     Client,
     Contract,
     Subtask,
@@ -61,6 +63,7 @@ from .models import (
     User,
 )
 from .permissions import (
+    AUDIT_VIEW,
     CLIENT_ADD,
     CLIENT_EDIT,
     CLIENT_VIEW,
@@ -104,7 +107,10 @@ logger = logging.getLogger("grayhaven_timetracker.audit")
 login_limiter = LoginLimiter()
 login_ip_limiter = LoginLimiter(limit=50)
 shared_report_limiter = LoginLimiter()
+sensitive_action_limiter = LoginLimiter()
 REPORT_LINK_EXPIRATION_DAYS = frozenset({7, 30, 90, 365})
+AUDIT_SOURCES = frozenset({"admin", "user", "public", "system"})
+AUDIT_PAGE_SIZE = 50
 
 
 def now_utc() -> datetime:
@@ -112,7 +118,34 @@ def now_utc() -> datetime:
 
 
 def audit(event: str, **fields: Any) -> None:
-    logger.info(event.replace("_", " "), extra={"event": event, **fields})
+    """Persist and emit a safe semantic event without disrupting its action."""
+    database = get_session()
+    actor = current_user()
+    actor_id = fields.pop("actor_id", None)
+    if actor is None:
+        candidate_id = actor_id if isinstance(actor_id, int) else fields.get("user_id")
+        if isinstance(candidate_id, int):
+            actor = database.get(User, candidate_id)
+    ip_address = fields.pop("ip", None) or request.remote_addr
+    try:
+        record_audit_event(
+            database,
+            event,
+            source=actor.role if actor else "public",
+            actor=actor,
+            ip_address=str(ip_address) if ip_address else None,
+            method=request.method,
+            path=request.path,
+            user_agent=request.user_agent.string,
+            details=fields,
+        )
+        database.commit()
+    except Exception:
+        database.rollback()
+        logger.exception(
+            "audit persistence failed",
+            extra={"event": "audit_persistence_failed"},
+        )
 
 
 def report_token_hash(token: str) -> str:
@@ -127,6 +160,31 @@ def shared_report_access_allowed(client: Client) -> bool:
         and session.get("shared_report_password_version")
         == client.report_password_version
     )
+
+
+def sensitive_action_credentials_valid(user: User) -> bool:
+    """Reauthenticate an administrator before a credential rotation."""
+    password_valid = verify_password(
+        user.password_hash, request.form.get("current_password", "")
+    )
+    totp_valid = not user.totp_secret or verify_totp(
+        user.totp_secret, request.form.get("totp", "")
+    )
+    return password_valid and totp_valid
+
+
+def sensitive_action_rate_key(user: User) -> str:
+    """Scope administrator reauthentication limits to actor and source IP."""
+    return f"{user.id}|{request.remote_addr or 'unknown'}"
+
+
+def shared_report_url(token: str) -> str:
+    """Build a share URL from the configured origin or a trusted request Host."""
+    path = url_for("main.shared_report", token=token)
+    public_base_url = current_app.config.get("PUBLIC_BASE_URL")
+    if public_base_url:
+        return f"{public_base_url}{path}"
+    return url_for("main.shared_report", token=token, _external=True)
 
 
 def form_text(name: str, label: str, maximum: int) -> str:
@@ -459,17 +517,51 @@ def edit_client(client_id: int) -> Any:
     return redirect(url_for("main.client", client_id=item.id))
 
 
-@main.post("/clients/<int:client_id>/report-password/reset")
+@main.route("/clients/<int:client_id>/report-password/reset", methods=["GET", "POST"])
 @permission_required(REPORT_SHARE)
 def reset_client_report_password(client_id: int) -> Any:
     item = cast(Client, get_or_404(Client, client_id))
+    actor = cast(User, current_user())
+    confirmation = {
+        "eyebrow": "REPORT PASSWORD RESET",
+        "title": item.name,
+        "description": (
+            "Generate a new client report password and immediately invalidate "
+            "existing report sessions across this client's contracts."
+        ),
+        "submit_label": "Reset report password",
+        "cancel_url": url_for("main.client", client_id=item.id),
+        "totp_required": bool(actor.totp_secret),
+    }
+    if request.method != "POST":
+        return render_template("sensitive_action_form.html", **confirmation)
+    rate_key = sensitive_action_rate_key(actor)
+    if sensitive_action_limiter.blocked(rate_key):
+        audit(
+            "client_report_password_reset_rate_limited",
+            actor_id=actor.id,
+            client_id=item.id,
+            ip=request.remote_addr,
+        )
+        abort(429)
+    if not sensitive_action_credentials_valid(actor):
+        sensitive_action_limiter.record_failure(rate_key)
+        audit(
+            "client_report_password_reset_rejected",
+            actor_id=actor.id,
+            client_id=item.id,
+            ip=request.remote_addr,
+        )
+        flash("The administrator credentials were not accepted.", "error")
+        return render_template("sensitive_action_form.html", **confirmation), 400
+    sensitive_action_limiter.clear(rate_key)
     report_password = generate_temporary_password()
     item.report_password_hash = hash_password(report_password)
     item.report_password_version += 1
     get_session().commit()
     audit(
         "client_report_password_reset",
-        actor_id=cast(User, current_user()).id,
+        actor_id=actor.id,
         client_id=item.id,
     )
     return render_template(
@@ -1213,6 +1305,99 @@ def users() -> str:
     return render_template("users.html", users=user_list)
 
 
+@main.get("/audit")
+@permission_required(AUDIT_VIEW)
+def audit_log() -> str:
+    """Render a filtered, paginated view of the immutable audit trail."""
+    source_filter = request.args.get("source", "").strip()
+    event_filter = request.args.get("event", "").strip()
+    actor_filter = request.args.get("actor", "").strip()
+    page_value = request.args.get("page", "1").strip()
+    if source_filter and source_filter not in AUDIT_SOURCES:
+        abort(400)
+    if event_filter and (
+        len(event_filter) > 100
+        or not event_filter.isascii()
+        or not event_filter.replace("_", "").isalnum()
+    ):
+        abort(400)
+    try:
+        page = int(page_value)
+        actor_id = int(actor_filter) if actor_filter else None
+    except ValueError:
+        abort(400)
+    if page < 1 or (actor_id is not None and actor_id < 1):
+        abort(400)
+
+    conditions = []
+    if source_filter:
+        conditions.append(AuditEvent.source == source_filter)
+    if event_filter:
+        conditions.append(AuditEvent.event == event_filter)
+    if actor_id is not None:
+        conditions.append(AuditEvent.actor_user_id == actor_id)
+
+    database = get_session()
+    total = int(
+        database.scalar(select(func.count(AuditEvent.id)).where(*conditions)) or 0
+    )
+    page_count = max(1, (total + AUDIT_PAGE_SIZE - 1) // AUDIT_PAGE_SIZE)
+    if page > page_count:
+        abort(404)
+    events = database.scalars(
+        select(AuditEvent.event).distinct().order_by(AuditEvent.event)
+    ).all()
+    actors = database.scalars(
+        select(User).order_by(User.last_name, User.first_name, User.id)
+    ).all()
+    items = database.scalars(
+        select(AuditEvent)
+        .where(*conditions)
+        .order_by(AuditEvent.occurred_at.desc(), AuditEvent.id.desc())
+        .offset((page - 1) * AUDIT_PAGE_SIZE)
+        .limit(AUDIT_PAGE_SIZE)
+    ).all()
+    query_parameters: dict[str, Any] = {
+        key: value
+        for key, value in {
+            "source": source_filter,
+            "event": event_filter,
+            "actor": actor_filter,
+        }.items()
+        if value
+    }
+    audit(
+        "audit_log_viewed",
+        page=page,
+        source_filter=source_filter or "all",
+        event_filter=event_filter or "all",
+        actor_filter=actor_id,
+    )
+    return render_template(
+        "audit_log.html",
+        items=items,
+        events=events,
+        actors=actors,
+        source_filter=source_filter,
+        event_filter=event_filter,
+        actor_filter=actor_filter,
+        page=page,
+        page_count=page_count,
+        total=total,
+        timezone_info=ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"])),
+        previous_url=(
+            url_for("main.audit_log", page=page - 1, **query_parameters)
+            if page > 1
+            else None
+        ),
+        next_url=(
+            url_for("main.audit_log", page=page + 1, **query_parameters)
+            if page < page_count
+            else None
+        ),
+    )
+
+
 @main.route("/users/new", methods=["GET", "POST"])
 @permission_required(USER_ADD)
 def new_user() -> Any:
@@ -1312,13 +1497,46 @@ def edit_user(user_id: int) -> Any:
     return redirect(url_for("main.users"))
 
 
-@main.post("/users/<int:user_id>/reset-password")
+@main.route("/users/<int:user_id>/reset-password", methods=["GET", "POST"])
 @permission_required(USER_PASSWORD_RESET)
 def reset_user_password(user_id: int) -> Any:
     actor = cast(User, current_user())
     user = cast(User, get_or_404(User, user_id))
     if user.id == actor.id:
         abort(409, "Use the profile page to change your current password.")
+    confirmation = {
+        "eyebrow": "PASSWORD RESET",
+        "title": user.full_name,
+        "description": (
+            "Generate a one-time password, invalidate the user's existing "
+            "sessions, and require a password change after sign-in."
+        ),
+        "submit_label": "Reset user password",
+        "cancel_url": url_for("main.users"),
+        "totp_required": bool(actor.totp_secret),
+    }
+    if request.method != "POST":
+        return render_template("sensitive_action_form.html", **confirmation)
+    rate_key = sensitive_action_rate_key(actor)
+    if sensitive_action_limiter.blocked(rate_key):
+        audit(
+            "user_password_reset_rate_limited",
+            actor_id=actor.id,
+            user_id=user.id,
+            ip=request.remote_addr,
+        )
+        abort(429)
+    if not sensitive_action_credentials_valid(actor):
+        sensitive_action_limiter.record_failure(rate_key)
+        audit(
+            "user_password_reset_rejected",
+            actor_id=actor.id,
+            user_id=user.id,
+            ip=request.remote_addr,
+        )
+        flash("The administrator credentials were not accepted.", "error")
+        return render_template("sensitive_action_form.html", **confirmation), 400
+    sensitive_action_limiter.clear(rate_key)
     temporary_password = generate_temporary_password()
     user.password_hash = hash_password(temporary_password)
     user.password_change_required = True
@@ -1419,7 +1637,7 @@ def create_report_link(contract_id: int) -> Any:
     return render_template(
         "report_link_created.html",
         contract=contract_item,
-        report_url=url_for("main.shared_report", token=token, _external=True),
+        report_url=shared_report_url(token),
         report_password=report_password,
         expires_at=(
             format_datetime(

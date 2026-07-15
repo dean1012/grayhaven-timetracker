@@ -81,11 +81,12 @@ class AppTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
-        self.app = create_app(test_config(self.root))
         logging.disable(logging.CRITICAL)
+        self.app = create_app(test_config(self.root))
         routes.login_limiter = LoginLimiter()
         routes.login_ip_limiter = LoginLimiter(limit=50)
         routes.shared_report_limiter = LoginLimiter()
+        routes.sensitive_action_limiter = LoginLimiter()
         self.client = self.app.test_client()
 
     def tearDown(self) -> None:

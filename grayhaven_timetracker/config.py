@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import unicodedata
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -15,6 +16,10 @@ class ConfigurationError(RuntimeError):
 DEFAULT_CONTACT_URL = (
     "https://calendar.proton.me/bookings#HmPL_I2j-XCVf8y4lj2ikbmIGhzdlHxXJ7MnBngp-i8="
 )
+
+
+def _contains_control(value: str) -> bool:
+    return any(unicodedata.category(character).startswith("C") for character in value)
 
 
 def _read_secret(name: str, *, required: bool = True) -> str | None:
@@ -56,6 +61,24 @@ def _read_int(name: str, default: int, *, minimum: int = 0) -> int:
     if value < minimum:
         raise ConfigurationError(f"{name} must be at least {minimum}")
     return value
+
+
+def _read_trusted_hosts() -> list[str]:
+    """Parse the explicit browser Host allowlist used by Flask."""
+    raw = os.environ.get("TRUSTED_HOSTS", "localhost,127.0.0.1")
+    hosts = [host.strip() for host in raw.split(",") if host.strip()]
+    if not hosts or any(
+        host == "*"
+        or "://" in host
+        or any(character in "/@?#\\" for character in host)
+        or any(character.isspace() for character in host)
+        or _contains_control(host)
+        for host in hosts
+    ):
+        raise ConfigurationError(
+            "TRUSTED_HOSTS must contain comma-separated hostnames without URLs"
+        )
+    return hosts
 
 
 def environment_config() -> dict[str, Any]:
@@ -100,6 +123,7 @@ def environment_config() -> dict[str, Any]:
             "INITIAL_ADMIN_TOTP_SECRET", required=False
         ),
         "MAX_CONTENT_LENGTH": 1024 * 1024,
+        "PUBLIC_BASE_URL": os.environ.get("PUBLIC_BASE_URL", "").rstrip("/") or None,
         "SECRET_KEY": secret_key,
         "SESSION_COOKIE_HTTPONLY": True,
         "SESSION_COOKIE_NAME": "grayhaven_timetracker_session",
@@ -107,6 +131,7 @@ def environment_config() -> dict[str, Any]:
         "SESSION_COOKIE_SECURE": _read_bool("SESSION_COOKIE_SECURE", False),
         "SQLCIPHER_PASSPHRASE": sqlcipher_passphrase,
         "TRUSTED_PROXY_COUNT": _read_int("TRUSTED_PROXY_COUNT", 0),
+        "TRUSTED_HOSTS": _read_trusted_hosts(),
         "WTF_CSRF_TIME_LIMIT": 3600,
     }
 
@@ -147,6 +172,69 @@ def validate_branding(path: str) -> None:
 
 def validate_contact_url(value: str) -> None:
     """Require a complete HTTPS contact link for HTML and PDF reports."""
-    parsed = urlsplit(value)
-    if parsed.scheme != "https" or not parsed.netloc:
+    try:
+        parsed = urlsplit(value)
+        _ = parsed.port
+    except ValueError as exc:
+        raise ConfigurationError("CONTACT_URL must be an absolute HTTPS URL") from exc
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or "\\" in value
+        or _contains_control(value)
+    ):
         raise ConfigurationError("CONTACT_URL must be an absolute HTTPS URL")
+
+
+def validate_public_base_url(value: str | None) -> None:
+    """Require a canonical HTTPS origin when an external base URL is set."""
+    if value is None:
+        return
+    try:
+        parsed = urlsplit(value)
+        _ = parsed.port
+    except ValueError as exc:
+        raise ConfigurationError("PUBLIC_BASE_URL must be an HTTPS origin") from exc
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or "\\" in value
+        or _contains_control(value)
+    ):
+        raise ConfigurationError("PUBLIC_BASE_URL must be an HTTPS origin")
+
+
+def validate_public_deployment(
+    public_base_url: str | None,
+    session_cookie_secure: bool,
+    trusted_hosts: list[str] | None,
+) -> None:
+    """Fail closed when an external origin lacks matching browser protections."""
+    if public_base_url is None:
+        return
+    if not session_cookie_secure:
+        raise ConfigurationError(
+            "SESSION_COOKIE_SECURE must be enabled when PUBLIC_BASE_URL is set"
+        )
+    hostname = urlsplit(public_base_url).hostname
+    if hostname is None:
+        raise ConfigurationError("PUBLIC_BASE_URL must be an HTTPS origin")
+    matches_host = any(
+        hostname == pattern
+        or (
+            pattern.startswith(".")
+            and (hostname == pattern[1:] or hostname.endswith(pattern))
+        )
+        for pattern in trusted_hosts or []
+    )
+    if not matches_host:
+        raise ConfigurationError(
+            "PUBLIC_BASE_URL hostname must be included in TRUSTED_HOSTS"
+        )

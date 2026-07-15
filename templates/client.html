@@ -10,7 +10,7 @@
   </div>
   <div class="heading-actions">
     {% if can('client:edit') %}<a class="button button-secondary" href="{{ url_for('main.edit_client', client_id=client.id) }}"><i class="fa-solid fa-pen" aria-hidden="true"></i> Edit client</a>{% endif %}
-    {% if can('report:share') %}<form method="post" action="{{ url_for('main.reset_client_report_password', client_id=client.id) }}" data-confirm="Generate a new client report password? Existing client report sessions will lose access immediately."><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary" type="submit"><i class="fa-solid fa-key" aria-hidden="true"></i> Reset report password</button></form>{% endif %}
+    {% if can('report:share') %}<a class="button button-secondary" href="{{ url_for('main.reset_client_report_password', client_id=client.id) }}"><i class="fa-solid fa-key" aria-hidden="true"></i> Reset report password</a>{% endif %}
     {% if can('contract:add') %}<a class="button button-primary" href="{{ url_for('main.new_contract', client_id=client.id) }}"><i class="fa-solid fa-plus" aria-hidden="true"></i> Add contract</a>{% endif %}
   </div>
 </section>

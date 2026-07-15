@@ -13,6 +13,7 @@ import pyotp
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
+from grayhaven_timetracker.audit import record_audit_event
 from grayhaven_timetracker.auth import hash_password, verify_password
 from grayhaven_timetracker.bootstrap import reconcile_initial_admin
 from grayhaven_timetracker.config import (
@@ -20,6 +21,8 @@ from grayhaven_timetracker.config import (
     environment_config,
     validate_branding,
     validate_contact_url,
+    validate_public_base_url,
+    validate_public_deployment,
     validate_timezone,
 )
 from grayhaven_timetracker.database import (
@@ -30,7 +33,7 @@ from grayhaven_timetracker.database import (
     session_scope,
     sql_literal,
 )
-from grayhaven_timetracker.models import Subtask, Task, TimeEntry, User
+from grayhaven_timetracker.models import AuditEvent, Subtask, Task, TimeEntry, User
 from tests.helpers import (
     ADMIN_EMAIL,
     ADMIN_PASSWORD_HASH,
@@ -57,7 +60,9 @@ class ConfigurationTests(unittest.TestCase):
             {
                 "SESSION_COOKIE_SECURE": "yes",
                 "TRUSTED_PROXY_COUNT": "2",
+                "TRUSTED_HOSTS": "time.example.invalid,.internal.example.invalid",
                 "TZ": "UTC",
+                "PUBLIC_BASE_URL": "https://time.example.invalid/",
             }
         )
         with patch.dict(os.environ, values, clear=True):
@@ -66,6 +71,11 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(config["TRUSTED_PROXY_COUNT"], 2)
         self.assertTrue(config["SESSION_COOKIE_SECURE"])
         self.assertEqual(config["DATABASE_PATH"], "/app/data/timetracker.sqlite3")
+        self.assertEqual(config["PUBLIC_BASE_URL"], "https://time.example.invalid")
+        self.assertEqual(
+            config["TRUSTED_HOSTS"],
+            ["time.example.invalid", ".internal.example.invalid"],
+        )
 
     def test_environment_config_reads_secret_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -92,6 +102,9 @@ class ConfigurationTests(unittest.TestCase):
             {"SESSION_COOKIE_SECURE": "sometimes"},
             {"TRUSTED_PROXY_COUNT": "invalid"},
             {"TRUSTED_PROXY_COUNT": "-1"},
+            {"TRUSTED_HOSTS": "https://example.invalid"},
+            {"TRUSTED_HOSTS": "*"},
+            {"TRUSTED_HOSTS": "time\u202e.example.invalid"},
         ]
         for additions in cases:
             values = self.required_environment()
@@ -122,11 +135,48 @@ class ConfigurationTests(unittest.TestCase):
     def test_validators_accept_and_reject_expected_values(self) -> None:
         validate_timezone("America/Chicago")
         validate_contact_url("https://example.invalid/contact")
+        validate_public_base_url("https://time.example.invalid")
+        validate_public_base_url(None)
+        validate_public_deployment(
+            "https://time.example.invalid",
+            True,
+            ["time.example.invalid"],
+        )
+        validate_public_deployment(
+            "https://time.example.invalid", True, [".example.invalid"]
+        )
+        validate_public_deployment(None, False, None)
         with self.assertRaises(ConfigurationError):
             validate_timezone("Not/A-Timezone")
-        for url in ("http://example.invalid", "relative", ""):
+        for url in (
+            "http://example.invalid",
+            "relative",
+            "",
+            "https://user:password@example.invalid",
+            "https://example.invalid:invalid",
+            "https://example.invalid/contact\u202e",
+        ):
             with self.subTest(url=url), self.assertRaises(ConfigurationError):
                 validate_contact_url(url)
+        for url in (
+            "http://time.example.invalid",
+            "https://user@example.invalid",
+            "https://time.example.invalid/path",
+            "https://time.example.invalid?query=value",
+            "https://time.example.invalid:invalid",
+            "https://time.example.invalid\\@evil.invalid",
+            "https://time\u202e.example.invalid",
+        ):
+            with self.subTest(url=url), self.assertRaises(ConfigurationError):
+                validate_public_base_url(url)
+        with self.assertRaises(ConfigurationError):
+            validate_public_deployment(
+                "https://time.example.invalid", False, ["time.example.invalid"]
+            )
+        with self.assertRaises(ConfigurationError):
+            validate_public_deployment(
+                "https://time.example.invalid", True, ["other.example.invalid"]
+            )
 
     def test_branding_validation_requires_every_runtime_asset(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -211,7 +261,7 @@ class DatabaseAndModelTests(AppTestCase):
                 )
             )
 
-        initialize_database(engine)
+        prior_schema = initialize_database(engine)
 
         with engine.connect() as connection:
             user_columns = {
@@ -235,13 +285,19 @@ class DatabaseAndModelTests(AppTestCase):
             admin_count = connection.exec_driver_sql(
                 "SELECT count(*) FROM user_account WHERE email = ?", (ADMIN_EMAIL,)
             ).scalar_one()
+            audit_table = connection.exec_driver_sql(
+                "SELECT count(*) FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'audit_event'"
+            ).scalar_one()
         self.assertIn("password_change_required", user_columns)
         self.assertIn("report_token_hash", contract_columns)
         self.assertIn("report_expires_at", contract_columns)
         self.assertIn("report_password_hash", client_columns)
         self.assertIn("report_password_version", client_columns)
-        self.assertEqual(version, "2")
+        self.assertEqual(prior_schema, "1")
+        self.assertEqual(version, "3")
         self.assertEqual(admin_count, 1)
+        self.assertEqual(audit_table, 1)
 
     def test_database_guards_active_timer_subtask_and_last_admin(self) -> None:
         seed = self.seed_contract()
@@ -301,6 +357,44 @@ class DatabaseAndModelTests(AppTestCase):
             self.assertEqual(task.contract.hourly_rate_cents, 5500)
             self.assertEqual(entry.contract.id, seed.contract_id)
 
+    def test_audit_events_are_sanitized_and_database_immutable(self) -> None:
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            item = record_audit_event(
+                database,
+                "test_action",
+                source="admin",
+                actor=admin,
+                details={
+                    "safe": "visible\u202e",
+                    "temporary_password": "must-not-be-stored",
+                },
+            )
+            database.flush()
+            item_id = item.id
+            self.assertEqual(item.details, {"safe": "visible�"})
+
+        with session_scope(self.app) as database:
+            item = database.get(AuditEvent, item_id)
+            assert item is not None
+            item.event = "changed"
+            with self.assertRaises(IntegrityError):
+                database.flush()
+            database.rollback()
+
+            item = database.get(AuditEvent, item_id)
+            assert item is not None
+            database.delete(item)
+            with self.assertRaises(IntegrityError):
+                database.flush()
+            database.rollback()
+
+        malformed = AuditEvent(details_json="[]")
+        self.assertEqual(malformed.details, {})
+        malformed.details_json = "not-json"
+        self.assertEqual(malformed.details, {})
+
 
 class BootstrapTests(AppTestCase):
     def test_unchanged_bootstrap_preserves_in_app_authentication_changes(self) -> None:
@@ -311,11 +405,12 @@ class BootstrapTests(AppTestCase):
             admin.password_hash = replacement
             admin.totp_secret = pyotp.random_base32()
         with session_scope(self.app) as database:
-            reconcile_initial_admin(self.app, database)
+            result = reconcile_initial_admin(self.app, database)
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
             assert admin is not None
             self.assertEqual(admin.password_hash, replacement)
             self.assertNotEqual(admin.totp_secret, ADMIN_TOTP_SECRET)
+            self.assertEqual(result, "unchanged")
 
     def test_changed_bootstrap_authentication_updates_and_invalidates_sessions(
         self,
@@ -329,10 +424,11 @@ class BootstrapTests(AppTestCase):
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
             assert admin is not None
             prior_version = admin.session_version
-            reconcile_initial_admin(self.app, database)
+            result = reconcile_initial_admin(self.app, database)
             self.assertTrue(verify_password(admin.password_hash, new_password))
             self.assertEqual(admin.totp_secret, new_secret)
             self.assertEqual(admin.session_version, prior_version + 1)
+            self.assertEqual(result, "updated")
 
     def test_new_bootstrap_email_creates_another_administrator(self) -> None:
         self.app.config.update(
@@ -343,10 +439,11 @@ class BootstrapTests(AppTestCase):
             }
         )
         with session_scope(self.app) as database:
-            reconcile_initial_admin(self.app, database)
+            result = reconcile_initial_admin(self.app, database)
             users = database.scalars(select(User).order_by(User.id)).all()
             self.assertEqual(len(users), 2)
             self.assertTrue(all(user.is_admin for user in users))
+            self.assertEqual(result, "created")
 
     def test_bootstrap_rejects_invalid_configuration_and_can_be_skipped(self) -> None:
         self.app.config["INITIAL_ADMIN_PASSWORD_HASH"] = "invalid"
@@ -358,7 +455,7 @@ class BootstrapTests(AppTestCase):
             reconcile_initial_admin(self.app, database)
         self.app.config["SKIP_BOOTSTRAP"] = True
         with session_scope(self.app) as database:
-            reconcile_initial_admin(self.app, database)
+            self.assertEqual(reconcile_initial_admin(self.app, database), "skipped")
 
 
 if __name__ == "__main__":

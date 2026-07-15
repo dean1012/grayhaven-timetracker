@@ -26,6 +26,7 @@
         <a href="{{ url_for('main.dashboard') }}" {% if request.endpoint == 'main.dashboard' %}aria-current="page"{% endif %}><i class="fa-solid fa-gauge-high" aria-hidden="true"></i> Dashboard</a>
         <a href="{{ url_for('main.profile') }}" {% if request.endpoint == 'main.profile' %}aria-current="page"{% endif %}><i class="fa-solid fa-user" aria-hidden="true"></i> Profile</a>
         {% if can('user:view') %}<a href="{{ url_for('main.users') }}" {% if request.endpoint in ('main.users', 'main.new_user') %}aria-current="page"{% endif %}><i class="fa-solid fa-users" aria-hidden="true"></i> Users</a>{% endif %}
+        {% if can('audit:view') %}<a href="{{ url_for('main.audit_log') }}" {% if request.endpoint == 'main.audit_log' %}aria-current="page"{% endif %}><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Audit</a>{% endif %}
         <form method="post" action="{{ url_for('main.logout') }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <button class="nav-button" type="submit"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Sign out</button>
@@ -37,6 +38,7 @@
           <a href="{{ url_for('main.dashboard') }}" {% if request.endpoint == 'main.dashboard' %}aria-current="page"{% endif %}><i class="fa-solid fa-gauge-high" aria-hidden="true"></i> Dashboard</a>
           <a href="{{ url_for('main.profile') }}" {% if request.endpoint == 'main.profile' %}aria-current="page"{% endif %}><i class="fa-solid fa-user" aria-hidden="true"></i> Profile</a>
           {% if can('user:view') %}<a href="{{ url_for('main.users') }}" {% if request.endpoint in ('main.users', 'main.new_user') %}aria-current="page"{% endif %}><i class="fa-solid fa-users" aria-hidden="true"></i> Users</a>{% endif %}
+          {% if can('audit:view') %}<a href="{{ url_for('main.audit_log') }}" {% if request.endpoint == 'main.audit_log' %}aria-current="page"{% endif %}><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Audit</a>{% endif %}
           <form method="post" action="{{ url_for('main.logout') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button class="nav-button" type="submit"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Sign out</button>

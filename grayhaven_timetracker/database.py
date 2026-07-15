@@ -15,7 +15,7 @@ from sqlcipher3 import dbapi2 as sqlcipher
 from .models import Base
 
 SQLITE_HEADER = b"SQLite format 3\x00"
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 
 class DatabaseError(RuntimeError):
@@ -84,8 +84,8 @@ def build_engine(path: Path, passphrase: str) -> Engine:
     return engine
 
 
-def migrate_schema(connection: Connection) -> None:
-    """Advance supported older schemas without exposing decrypted data."""
+def migrate_schema(connection: Connection) -> str | None:
+    """Advance supported older schemas and return the prior schema, if changed."""
     version = connection.execute(
         text("SELECT value FROM application_metadata WHERE key = 'schema_version'")
     ).scalar_one_or_none()
@@ -97,7 +97,8 @@ def migrate_schema(connection: Connection) -> None:
             ),
             {"version": SCHEMA_VERSION},
         )
-        return
+        return "new"
+    prior_version = version
     if version == "1":
         user_columns = {
             row[1]
@@ -148,137 +149,140 @@ def migrate_schema(connection: Connection) -> None:
                 "UPDATE application_metadata SET value = :version "
                 "WHERE key = 'schema_version'"
             ),
+            {"version": "2"},
+        )
+        version = "2"
+    if version == "2":
+        # Base.metadata.create_all creates the new audit table before migration;
+        # the schema marker advances only after that operation succeeds.
+        connection.execute(
+            text(
+                "UPDATE application_metadata SET value = :version "
+                "WHERE key = 'schema_version'"
+            ),
             {"version": SCHEMA_VERSION},
         )
-        return
+        version = SCHEMA_VERSION
     if version != SCHEMA_VERSION:
         raise DatabaseError(
             f"Database schema {version} is not supported by schema {SCHEMA_VERSION}"
         )
+    return prior_version if prior_version != SCHEMA_VERSION else None
 
 
-def initialize_database(engine: Engine) -> None:
+def initialize_database(engine: Engine) -> str | None:
     """Create or migrate the schema and install database integrity guards."""
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
-        migrate_schema(connection)
-        connection.execute(
-            text(
-                """
-                CREATE TRIGGER IF NOT EXISTS time_entry_subtask_insert_guard
-                BEFORE INSERT ON time_entry
-                WHEN NEW.subtask_id IS NOT NULL
-                  AND NOT EXISTS (
-                    SELECT 1 FROM subtask
-                    WHERE id = NEW.subtask_id AND task_id = NEW.task_id
-                  )
-                BEGIN
-                  SELECT RAISE(ABORT, 'subtask does not belong to task');
-                END
-                """
-            )
-        )
-        connection.execute(
-            text(
-                """
-                CREATE TRIGGER IF NOT EXISTS enabled_admin_update_guard
-                BEFORE UPDATE OF role, is_enabled ON user_account
-                WHEN OLD.role = 'admin'
-                  AND OLD.is_enabled = 1
-                  AND (NEW.role != 'admin' OR NEW.is_enabled = 0)
-                  AND NOT EXISTS (
-                    SELECT 1 FROM user_account
-                    WHERE id != OLD.id AND role = 'admin' AND is_enabled = 1
-                  )
-                BEGIN
-                  SELECT RAISE(ABORT, 'at least one enabled administrator is required');
-                END
-                """
-            )
-        )
-        connection.execute(
-            text(
-                """
-                CREATE TRIGGER IF NOT EXISTS time_entry_subtask_update_guard
-                BEFORE UPDATE OF task_id, subtask_id ON time_entry
-                WHEN NEW.subtask_id IS NOT NULL
-                  AND NOT EXISTS (
-                    SELECT 1 FROM subtask
-                    WHERE id = NEW.subtask_id AND task_id = NEW.task_id
-                  )
-                BEGIN
-                  SELECT RAISE(ABORT, 'subtask does not belong to task');
-                END
-                """
-            )
-        )
-        connection.execute(
-            text(
-                """
-                CREATE TRIGGER IF NOT EXISTS time_entry_overlap_insert_guard
-                BEFORE INSERT ON time_entry
-                WHEN EXISTS (
-                  SELECT 1 FROM time_entry AS existing
-                  WHERE existing.user_id = NEW.user_id
-                    AND NEW.started_at < COALESCE(
-                      existing.stopped_at, '9999-12-31 23:59:59.999999'
-                    )
-                    AND COALESCE(
-                      NEW.stopped_at, '9999-12-31 23:59:59.999999'
-                    ) > existing.started_at
+        prior_schema = migrate_schema(connection)
+        triggers = (
+            """
+            CREATE TRIGGER IF NOT EXISTS time_entry_subtask_insert_guard
+            BEFORE INSERT ON time_entry
+            WHEN NEW.subtask_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM subtask
+                WHERE id = NEW.subtask_id AND task_id = NEW.task_id
+              )
+            BEGIN
+              SELECT RAISE(ABORT, 'subtask does not belong to task');
+            END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS enabled_admin_update_guard
+            BEFORE UPDATE OF role, is_enabled ON user_account
+            WHEN OLD.role = 'admin'
+              AND OLD.is_enabled = 1
+              AND (NEW.role != 'admin' OR NEW.is_enabled = 0)
+              AND NOT EXISTS (
+                SELECT 1 FROM user_account
+                WHERE id != OLD.id AND role = 'admin' AND is_enabled = 1
+              )
+            BEGIN
+              SELECT RAISE(ABORT, 'at least one enabled administrator is required');
+            END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS time_entry_subtask_update_guard
+            BEFORE UPDATE OF task_id, subtask_id ON time_entry
+            WHEN NEW.subtask_id IS NOT NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM subtask
+                WHERE id = NEW.subtask_id AND task_id = NEW.task_id
+              )
+            BEGIN
+              SELECT RAISE(ABORT, 'subtask does not belong to task');
+            END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS time_entry_overlap_insert_guard
+            BEFORE INSERT ON time_entry
+            WHEN EXISTS (
+              SELECT 1 FROM time_entry AS existing
+              WHERE existing.user_id = NEW.user_id
+                AND NEW.started_at < COALESCE(
+                  existing.stopped_at, '9999-12-31 23:59:59.999999'
                 )
-                BEGIN
-                  SELECT RAISE(ABORT, 'time entries for one user cannot overlap');
-                END
-                """
+                AND COALESCE(
+                  NEW.stopped_at, '9999-12-31 23:59:59.999999'
+                ) > existing.started_at
             )
-        )
-        connection.execute(
-            text(
-                """
-                CREATE TRIGGER IF NOT EXISTS time_entry_overlap_update_guard
-                BEFORE UPDATE OF user_id, started_at, stopped_at ON time_entry
-                WHEN EXISTS (
-                  SELECT 1 FROM time_entry AS existing
-                  WHERE existing.id != OLD.id
-                    AND existing.user_id = NEW.user_id
-                    AND NEW.started_at < COALESCE(
-                      existing.stopped_at, '9999-12-31 23:59:59.999999'
-                    )
-                    AND COALESCE(
-                      NEW.stopped_at, '9999-12-31 23:59:59.999999'
-                    ) > existing.started_at
+            BEGIN
+              SELECT RAISE(ABORT, 'time entries for one user cannot overlap');
+            END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS time_entry_overlap_update_guard
+            BEFORE UPDATE OF user_id, started_at, stopped_at ON time_entry
+            WHEN EXISTS (
+              SELECT 1 FROM time_entry AS existing
+              WHERE existing.id != OLD.id
+                AND existing.user_id = NEW.user_id
+                AND NEW.started_at < COALESCE(
+                  existing.stopped_at, '9999-12-31 23:59:59.999999'
                 )
-                BEGIN
-                  SELECT RAISE(ABORT, 'time entries for one user cannot overlap');
-                END
-                """
+                AND COALESCE(
+                  NEW.stopped_at, '9999-12-31 23:59:59.999999'
+                ) > existing.started_at
             )
+            BEGIN
+              SELECT RAISE(ABORT, 'time entries for one user cannot overlap');
+            END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS client_report_password_version_insert_guard
+            BEFORE INSERT ON client
+            WHEN NEW.report_password_version < 1
+            BEGIN
+              SELECT RAISE(ABORT, 'report password version must be positive');
+            END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS client_report_password_version_update_guard
+            BEFORE UPDATE OF report_password_version ON client
+            WHEN NEW.report_password_version < 1
+            BEGIN
+              SELECT RAISE(ABORT, 'report password version must be positive');
+            END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS audit_event_update_guard
+            BEFORE UPDATE ON audit_event
+            BEGIN
+              SELECT RAISE(ABORT, 'audit events are immutable');
+            END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS audit_event_delete_guard
+            BEFORE DELETE ON audit_event
+            BEGIN
+              SELECT RAISE(ABORT, 'audit events are immutable');
+            END
+            """,
         )
-        connection.execute(
-            text(
-                """
-                CREATE TRIGGER IF NOT EXISTS client_report_password_version_insert_guard
-                BEFORE INSERT ON client
-                WHEN NEW.report_password_version < 1
-                BEGIN
-                  SELECT RAISE(ABORT, 'report password version must be positive');
-                END
-                """
-            )
-        )
-        connection.execute(
-            text(
-                """
-                CREATE TRIGGER IF NOT EXISTS client_report_password_version_update_guard
-                BEFORE UPDATE OF report_password_version ON client
-                WHEN NEW.report_password_version < 1
-                BEGIN
-                  SELECT RAISE(ABORT, 'report password version must be positive');
-                END
-                """
-            )
-        )
+        for trigger in triggers:
+            connection.execute(text(trigger))
+    return prior_schema
 
 
 def verify_cipher_integrity(engine: Engine) -> None:
@@ -309,11 +313,12 @@ def init_app(app: Flask) -> None:
     path = Path(cast(str, app.config["DATABASE_PATH"]))
     passphrase = cast(str, app.config["SQLCIPHER_PASSPHRASE"])
     engine = build_engine(path, passphrase)
-    initialize_database(engine)
+    prior_schema = initialize_database(engine)
     verify_cipher_integrity(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     app.extensions["database_engine"] = engine
     app.extensions["database_session_factory"] = factory
+    app.extensions["database_prior_schema"] = prior_schema
 
     @app.before_request
     def open_database_session() -> None:

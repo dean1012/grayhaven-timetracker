@@ -167,7 +167,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .timer-elapsed { min-width: 7rem; color: var(--soft-white); font-size: 1.35rem; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
 .status-running { display: inline-flex; align-items: center; gap: .35rem; color: #9be1c6; background: rgb(63 182 139 / 15%); }
 .status-running i { font-size: .42rem; }
-.contract-directory, .user-directory, .session-directory { padding: 1.7rem; }
+.contract-directory, .user-directory, .session-directory, .audit-directory { padding: 1.7rem; }
 .share-panel { display: flex; align-items: end; justify-content: space-between; gap: 2rem; margin-bottom: 1.5rem; padding: 1.4rem 1.7rem; }
 .share-panel > div:first-child { max-width: 760px; }
 .share-panel p:last-child { margin-bottom: 0; }
@@ -177,6 +177,24 @@ small { color: var(--cool-grey); font-weight: 400; }
 .table-scroll { overflow-x: auto; }
 .session-table { min-width: 1040px; }
 .user-table { min-width: 1180px; }
+.audit-table { min-width: 1320px; }
+.audit-table td, .audit-table th { text-align: left !important; }
+.audit-table code { color: var(--cool-grey); overflow-wrap: anywhere; }
+.audit-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: 1rem; margin-bottom: 1.25rem; }
+.audit-filter-actions { display: flex; gap: .65rem; }
+.audit-summary, .pagination { display: flex; align-items: center; justify-content: space-between; gap: 1rem; color: var(--cool-grey); font-size: .82rem; }
+.audit-summary { padding: .8rem 0; border-top: 1px solid var(--charcoal-border); }
+.pagination { margin-top: 1.25rem; }
+.audit-source { min-width: 4.5rem; text-align: center; }
+.audit-source-admin { color: #9be1c6; background: rgb(63 182 139 / 15%); }
+.audit-source-user { color: #a9d8f3; background: rgb(88 172 224 / 15%); }
+.audit-source-public { color: #f1cf87; background: rgb(210 159 48 / 15%); }
+.audit-source-system { color: #c7bded; background: rgb(132 112 190 / 16%); }
+.audit-request-method { display: inline-block; min-width: 3.5rem; color: var(--primary-accent); font-size: .72rem; font-weight: 700; }
+.audit-details { display: grid; gap: .25rem; margin: 0; font-size: .76rem; }
+.audit-details div { display: grid; grid-template-columns: minmax(6rem, auto) minmax(0, 1fr); gap: .5rem; }
+.audit-details dt { color: var(--cool-grey); }
+.audit-details dd { margin: 0; overflow-wrap: anywhere; }
 .table-note { display: block; margin-top: .15rem; }
 .report-detail .data-table { min-width: 1020px; }
 .error-state { max-width: 720px; margin: 7rem auto; padding: 3rem; text-align: center; }
@@ -251,13 +269,16 @@ small { color: var(--cool-grey); font-weight: 400; }
   .panel-heading { align-items: stretch; flex-direction: column; }
   .inline-form { width: 100%; }
   .inline-form input { width: auto; min-width: 0; flex: 1; }
-  .client-card, .task-panel, .contract-directory, .user-directory, .session-directory, .report-panel { padding: 1.25rem; }
+  .client-card, .task-panel, .contract-directory, .user-directory, .session-directory, .audit-directory, .report-panel { padding: 1.25rem; }
   .contract-row { align-items: flex-start; flex-wrap: wrap; }
   .contract-row .rate { margin-left: auto; }
   .contract-row-detailed .contract-identity { min-width: 100%; }
   .contact-line { align-items: flex-start; flex-wrap: wrap; overflow-wrap: anywhere; }
   .active-timer { align-items: stretch; flex-direction: column; gap: 1rem; }
   .share-panel { align-items: stretch; flex-direction: column; }
+  .audit-filters { grid-template-columns: 1fr; }
+  .audit-filter-actions { flex-wrap: wrap; }
+  .audit-filter-actions .button { flex: 1; }
   .share-controls { align-items: stretch; flex-wrap: wrap; }
   .active-timer-actions { flex-wrap: wrap; }
   .timer-elapsed { margin-right: auto; text-align: left; }
@@ -302,7 +323,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 @media (width <=400px) {
   :root { --container-padding: .8rem; }
   h1 { font-size: 1.75rem; }
-  .client-card, .task-panel, .contract-directory, .user-directory, .session-directory, .form-panel, .report-panel { padding: 1rem; }
+  .client-card, .task-panel, .contract-directory, .user-directory, .session-directory, .audit-directory, .form-panel, .report-panel { padding: 1rem; }
   .inline-form, .subtask-add { align-items: stretch; flex-direction: column; }
   .inline-form .button { width: 100%; }
   .active-timer-context { align-items: flex-start; flex-direction: column; }

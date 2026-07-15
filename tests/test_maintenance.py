@@ -341,8 +341,9 @@ class DemoSeedTests(AppTestCase):
 class StructuredLoggingTests(unittest.TestCase):
     def test_json_formatter_includes_context_and_exception(self) -> None:
         formatter = JsonFormatter()
+        token = "A" * 43
         try:
-            raise ValueError("test exception")
+            raise ValueError(f"failure at /shared/reports/{token}")
         except ValueError:
             exception = sys.exc_info()
         record = logging.LogRecord(
@@ -351,16 +352,22 @@ class StructuredLoggingTests(unittest.TestCase):
             pathname=__file__,
             lineno=1,
             msg="Rejected %s",
-            args=("request",),
+            args=(f"/shared/reports/{token}",),
             exc_info=exception,
         )
         record.event = "test_event"
         record.user_id = 7
+        record.user_agent = "spoof\u202eagent"
         payload = json.loads(formatter.format(record))
-        self.assertEqual(payload["message"], "Rejected request")
+        self.assertEqual(payload["message"], "Rejected /shared/reports/[redacted]")
         self.assertEqual(payload["event"], "test_event")
         self.assertEqual(payload["user_id"], 7)
-        self.assertIn("ValueError: test exception", payload["exception"])
+        self.assertEqual(payload["user_agent"], "spoof�agent")
+        self.assertIn(
+            "ValueError: failure at /shared/reports/[redacted]",
+            payload["exception"],
+        )
+        self.assertNotIn(token, json.dumps(payload))
 
     def test_configure_logging_installs_json_root_handler(self) -> None:
         root = logging.getLogger()

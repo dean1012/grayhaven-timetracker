@@ -7,12 +7,14 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pyotp
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 from grayhaven_timetracker import routes
+from grayhaven_timetracker.audit import record_audit_event
 from grayhaven_timetracker.auth import LoginLimiter, verify_password
 from grayhaven_timetracker.database import get_session, session_scope
 from grayhaven_timetracker.models import (
+    AuditEvent,
     Client,
     Contract,
     Subtask,
@@ -93,6 +95,16 @@ class AuthenticationRouteTests(AppTestCase):
             data={"email": ADMIN_EMAIL, "password": "x" * 1024},
         )
         self.assertEqual(response.status_code, 413)
+        with session_scope(self.app) as database:
+            statuses = set(
+                database.scalars(
+                    select(AuditEvent.status_code).where(
+                        AuditEvent.event == "http_request",
+                        AuditEvent.path == "/login",
+                    )
+                )
+            )
+        self.assertTrue({400, 413}.issubset(statuses))
 
 
 class SecurityAndErrorRouteTests(AppTestCase):
@@ -109,6 +121,14 @@ class SecurityAndErrorRouteTests(AppTestCase):
         self.assertEqual(health.headers["Cache-Control"], "no-store")
         self.assertEqual(self.client.get("/missing").status_code, 404)
         self.assertEqual(self.client.post("/health").status_code, 405)
+        self.app.config["TRUSTED_HOSTS"] = ["example.invalid"]
+        untrusted = self.client.get("/login", base_url="https://evil.invalid")
+        self.assertEqual(untrusted.status_code, 400)
+        self.assertEqual(untrusted.headers["X-Frame-Options"], "DENY")
+        self.assertEqual(
+            self.client.get("/login", base_url="https://example.invalid").status_code,
+            200,
+        )
 
     def test_health_failure_and_database_error_return_generic_pages(self) -> None:
         self.app.config["PROPAGATE_EXCEPTIONS"] = False
@@ -142,6 +162,100 @@ class SecurityAndErrorRouteTests(AppTestCase):
         response.close()
         self.assertEqual(self.client.get("/branding/escape.svg").status_code, 404)
         self.assertEqual(self.client.get("/branding/missing.svg").status_code, 404)
+
+
+class AuditRouteTests(AppTestCase):
+    def test_anonymous_page_scanning_does_not_expand_the_audit_database(self) -> None:
+        with session_scope(self.app) as database:
+            before = database.scalar(select(func.count(AuditEvent.id)))
+        self.assertEqual(self.client.get("/login").status_code, 200)
+        self.assertEqual(self.client.get("/missing").status_code, 404)
+        with session_scope(self.app) as database:
+            after = database.scalar(select(func.count(AuditEvent.id)))
+        self.assertEqual(after, before)
+
+    def test_admin_can_filter_and_paginate_append_only_audit_history(self) -> None:
+        self.login()
+        self.assertEqual(self.client.get("/").status_code, 200)
+        response = self.client.get("/audit")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Append-only history", response.data)
+        self.assertIn(b"Application Started", response.data)
+        self.assertIn(b"Login Succeeded", response.data)
+
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            events = database.scalars(select(AuditEvent).order_by(AuditEvent.id)).all()
+            self.assertTrue(any(item.event == "application_started" for item in events))
+            self.assertTrue(
+                any(
+                    item.event == "login_succeeded"
+                    and item.actor_user_id == admin.id
+                    and item.source == "admin"
+                    for item in events
+                )
+            )
+            self.assertTrue(
+                any(
+                    item.event == "http_request"
+                    and item.path == "/"
+                    and item.status_code == 200
+                    for item in events
+                )
+            )
+            for index in range(55):
+                record_audit_event(
+                    database,
+                    "pagination_test",
+                    source="system",
+                    details={"sequence": index},
+                )
+            admin_id = admin.id
+
+        filtered = self.client.get("/audit?source=system&event=pagination_test&page=2")
+        self.assertEqual(filtered.status_code, 200)
+        self.assertIn(b"Page 2 of 2", filtered.data)
+        self.assertEqual(
+            self.client.get(f"/audit?actor={admin_id}").status_code,
+            200,
+        )
+        for query in (
+            "source=invalid",
+            "event=invalid/event",
+            "actor=invalid",
+            "actor=0",
+            "page=0",
+            "page=999",
+        ):
+            with self.subTest(query=query):
+                self.assertIn(
+                    self.client.get(f"/audit?{query}").status_code, {400, 404}
+                )
+
+    def test_standard_user_cannot_view_audit_history(self) -> None:
+        user = self.create_user()
+        standard_client = self.app.test_client()
+        self.login(
+            standard_client,
+            email=user.email,
+            password="Standard-User-Test-Password-0001!",
+            totp_secret=user.totp_secret or "",
+        )
+        dashboard = standard_client.get("/")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertNotIn(b'href="/audit"', dashboard.data)
+        self.assertEqual(standard_client.get("/audit").status_code, 403)
+        with session_scope(self.app) as database:
+            self.assertTrue(
+                database.scalar(
+                    select(func.count(AuditEvent.id)).where(
+                        AuditEvent.event == "http_request",
+                        AuditEvent.actor_user_id == user.id,
+                        AuditEvent.source == "user",
+                    )
+                )
+            )
 
 
 class ClientContractTaskRouteTests(AppTestCase):
@@ -252,12 +366,34 @@ class ClientContractTaskRouteTests(AppTestCase):
         self.assertEqual(self.client.get("/clients/9999/edit").status_code, 404)
         self.assertEqual(self.client.get("/contracts/9999/edit").status_code, 404)
         replacement_password = "Replacement-Report-Password-For-Test-0001!"
+        self.assertEqual(
+            self.client.get(f"/clients/{client_id}/report-password/reset").status_code,
+            200,
+        )
+        routes.sensitive_action_limiter = LoginLimiter(limit=1)
+        rejected_reset = self.client.post(
+            f"/clients/{client_id}/report-password/reset",
+            data={"current_password": "wrong", "totp": "000000"},
+        )
+        self.assertEqual(rejected_reset.status_code, 400)
+        self.assertEqual(
+            self.client.post(
+                f"/clients/{client_id}/report-password/reset",
+                data={"current_password": "wrong", "totp": "000000"},
+            ).status_code,
+            429,
+        )
+        routes.sensitive_action_limiter = LoginLimiter()
         with patch(
             "grayhaven_timetracker.routes.generate_temporary_password",
             return_value=replacement_password,
         ):
             reset_password = self.client.post(
-                f"/clients/{client_id}/report-password/reset"
+                f"/clients/{client_id}/report-password/reset",
+                data={
+                    "current_password": ADMIN_PASSWORD,
+                    "totp": pyotp.TOTP(ADMIN_TOTP_SECRET).now(),
+                },
             )
         self.assertEqual(reset_password.status_code, 200)
         self.assertIn(replacement_password.encode(), reset_password.data)
@@ -674,12 +810,37 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             password=original_password,
             totp_secret=secret,
         )
+        self.assertEqual(
+            self.client.get(f"/users/{user.id}/reset-password").status_code, 200
+        )
+        routes.sensitive_action_limiter = LoginLimiter(limit=1)
+        self.assertEqual(
+            self.client.post(
+                f"/users/{user.id}/reset-password",
+                data={"current_password": "wrong", "totp": "000000"},
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/users/{user.id}/reset-password",
+                data={"current_password": "wrong", "totp": "000000"},
+            ).status_code,
+            429,
+        )
+        routes.sensitive_action_limiter = LoginLimiter()
 
         with patch(
             "grayhaven_timetracker.routes.generate_temporary_password",
             return_value=temporary_password,
         ):
-            reset = self.client.post(f"/users/{user.id}/reset-password")
+            reset = self.client.post(
+                f"/users/{user.id}/reset-password",
+                data={
+                    "current_password": ADMIN_PASSWORD,
+                    "totp": pyotp.TOTP(ADMIN_TOTP_SECRET).now(),
+                },
+            )
         self.assertEqual(reset.status_code, 200)
         self.assertIn(temporary_password.encode(), reset.data)
         self.assertIn("/login", existing_session.get("/").location)
@@ -761,6 +922,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         first_token = "A" * 43
         second_token = "B" * 43
         report_password = "Shared-Report-Password-For-Testing-0001!"
+        self.app.config["PUBLIC_BASE_URL"] = "https://time.example.invalid"
         self.assertEqual(
             self.client.post(
                 f"/contracts/{self.seed.contract_id}/report-link",
@@ -784,6 +946,10 @@ class ReportAndSessionRouteTests(AppTestCase):
             )
         self.assertEqual(created.status_code, 200)
         self.assertIn(first_token.encode(), created.data)
+        self.assertIn(
+            f"https://time.example.invalid/shared/reports/{first_token}".encode(),
+            created.data,
+        )
         self.assertIn(report_password.encode(), created.data)
         self.assertIn(b"does not expire", created.data)
         with session_scope(self.app) as database:
@@ -811,11 +977,20 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertEqual(shared.status_code, 200)
         self.assertIn(b"CLIENT REPORT ACCESS", shared.data)
         self.assertEqual(captured.records[-1].path, "/shared/reports/[redacted]")
+        routes.shared_report_limiter = LoginLimiter(limit=1)
         rejected = anonymous.post(
             f"/shared/reports/{first_token}",
             data={"report_password": "incorrect"},
         )
         self.assertEqual(rejected.status_code, 401)
+        self.assertEqual(
+            anonymous.post(
+                f"/shared/reports/{first_token}",
+                data={"report_password": "incorrect"},
+            ).status_code,
+            429,
+        )
+        routes.shared_report_limiter = LoginLimiter()
         shared = anonymous.post(
             f"/shared/reports/{first_token}",
             data={"report_password": report_password},
@@ -828,6 +1003,7 @@ class ReportAndSessionRouteTests(AppTestCase):
             "grayhaven_timetracker.routes.secrets.token_urlsafe",
             return_value=second_token,
         ):
+            self.app.config["PUBLIC_BASE_URL"] = None
             rotated = self.client.post(
                 f"/contracts/{self.seed.contract_id}/report-link",
                 data={"expires_in_days": "7"},
@@ -845,7 +1021,11 @@ class ReportAndSessionRouteTests(AppTestCase):
             return_value=replacement_password,
         ):
             password_reset = self.client.post(
-                f"/clients/{self.seed.client_id}/report-password/reset"
+                f"/clients/{self.seed.client_id}/report-password/reset",
+                data={
+                    "current_password": ADMIN_PASSWORD,
+                    "totp": pyotp.TOTP(ADMIN_TOTP_SECRET).now(),
+                },
             )
         self.assertEqual(password_reset.status_code, 200)
         password_prompt = anonymous.get(f"/shared/reports/{second_token}")
@@ -881,6 +1061,16 @@ class ReportAndSessionRouteTests(AppTestCase):
             assert contract is not None
             self.assertIsNone(contract.report_token_hash)
             self.assertIsNone(contract.report_expires_at)
+            audit_events = database.scalars(select(AuditEvent)).all()
+            self.assertTrue(
+                any(item.path == "/shared/reports/[redacted]" for item in audit_events)
+            )
+            for item in audit_events:
+                audit_text = f"{item.path or ''}{item.details_json}"
+                self.assertNotIn(first_token, audit_text)
+                self.assertNotIn(second_token, audit_text)
+                self.assertNotIn(report_password, audit_text)
+                self.assertNotIn(replacement_password, audit_text)
         self.assertEqual(anonymous.get("/shared/reports/short").status_code, 404)
 
     def test_session_visibility_ownership_edit_delete_and_active_guards(self) -> None:

@@ -9,6 +9,7 @@ import secrets
 import string
 import threading
 import time
+import unicodedata
 from collections import OrderedDict, deque
 from collections.abc import Callable
 from functools import wraps
@@ -50,7 +51,11 @@ def now_utc_timestamp() -> float:
 
 def normalize_email(value: str) -> str:
     email = value.strip().lower()
-    if len(email) > 255 or not EMAIL_PATTERN.fullmatch(email):
+    if (
+        len(email) > 255
+        or any(unicodedata.category(character).startswith("C") for character in email)
+        or not EMAIL_PATTERN.fullmatch(email)
+    ):
         raise ValueError("Enter a valid email address.")
     return email
 
@@ -59,6 +64,8 @@ def required_text(value: str, label: str, *, maximum: int) -> str:
     normalized = " ".join(value.split())
     if not normalized:
         raise ValueError(f"{label} is required.")
+    if any(unicodedata.category(character).startswith("C") for character in normalized):
+        raise ValueError(f"{label} contains unsupported control characters.")
     if len(normalized) > maximum:
         raise ValueError(f"{label} cannot exceed {maximum} characters.")
     return normalized

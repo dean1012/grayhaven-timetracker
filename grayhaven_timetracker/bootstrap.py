@@ -42,10 +42,10 @@ def _set_metadata(database: Session, key: str, value: str) -> None:
         item.value = value
 
 
-def reconcile_initial_admin(app: Flask, database: Session) -> None:
-    """Create or reconcile the configured administrator by normalized email."""
+def reconcile_initial_admin(app: Flask, database: Session) -> str:
+    """Create or reconcile the configured administrator and return its outcome."""
     if app.config.get("SKIP_BOOTSTRAP"):
-        return
+        return "skipped"
     try:
         email = normalize_email(cast(str, app.config["INITIAL_ADMIN_EMAIL"]))
         first_name = required_text(
@@ -96,6 +96,8 @@ def reconcile_initial_admin(app: Flask, database: Session) -> None:
     prior_totp_fingerprint = _metadata(database, BOOTSTRAP_TOTP_KEY)
 
     user = database.scalar(select(User).where(User.email == email))
+    created = user is None
+    changed = False
     if user is None:
         user = User(
             email=email,
@@ -130,7 +132,16 @@ def reconcile_initial_admin(app: Flask, database: Session) -> None:
             authentication_changed = True
         if authentication_changed:
             user.session_version += 1
+            changed = True
 
+    changed = changed or any(
+        (
+            user.first_name != first_name,
+            user.last_name != last_name,
+            user.role != "admin",
+            not user.is_enabled,
+        )
+    )
     user.first_name = first_name
     user.last_name = last_name
     user.role = "admin"
@@ -139,3 +150,4 @@ def reconcile_initial_admin(app: Flask, database: Session) -> None:
     _set_metadata(database, BOOTSTRAP_EMAIL_KEY, email)
     _set_metadata(database, BOOTSTRAP_PASSWORD_KEY, password_fingerprint)
     _set_metadata(database, BOOTSTRAP_TOTP_KEY, totp_fingerprint)
+    return "created" if created else "updated" if changed else "unchanged"

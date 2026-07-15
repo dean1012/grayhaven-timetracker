@@ -7,21 +7,32 @@ import time
 from datetime import timedelta
 from typing import Any
 
-from flask import Flask, Response, g, render_template, request
+from flask import Flask, Response, g, render_template, request, session
 from flask_wtf.csrf import CSRFError, CSRFProtect
+from werkzeug.exceptions import SecurityError
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from .audit import record_audit_event, safe_audit_path
 from .bootstrap import reconcile_initial_admin
 from .config import (
     DEFAULT_CONTACT_URL,
     environment_config,
     validate_branding,
     validate_contact_url,
+    validate_public_base_url,
+    validate_public_deployment,
     validate_timezone,
 )
-from .database import init_app as init_database
-from .database import rollback_request_session, session_scope
+from .database import (
+    SCHEMA_VERSION,
+    rollback_request_session,
+    session_scope,
+)
+from .database import (
+    init_app as init_database,
+)
 from .logging_config import configure_logging
+from .models import User
 from .routes import register_routes
 
 csrf = CSRFProtect()
@@ -38,6 +49,12 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.config.setdefault("CONTACT_URL", DEFAULT_CONTACT_URL)
     validate_timezone(str(app.config["DISPLAY_TIMEZONE"]))
     validate_contact_url(str(app.config["CONTACT_URL"]))
+    validate_public_base_url(app.config.get("PUBLIC_BASE_URL"))
+    validate_public_deployment(
+        app.config.get("PUBLIC_BASE_URL"),
+        bool(app.config.get("SESSION_COOKIE_SECURE")),
+        app.config.get("TRUSTED_HOSTS"),
+    )
     if not app.config.get("SKIP_BRANDING_VALIDATION"):
         validate_branding(str(app.config["BRANDING_PATH"]))
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
@@ -61,9 +78,30 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     csrf.init_app(app)
     init_database(app)
     with session_scope(app) as database:
-        reconcile_initial_admin(app, database)
+        bootstrap_result = reconcile_initial_admin(app, database)
+        prior_schema = app.extensions.get("database_prior_schema")
+        if prior_schema is not None:
+            record_audit_event(
+                database,
+                "database_initialized",
+                source="system",
+                details={"prior_schema": prior_schema, "schema": SCHEMA_VERSION},
+            )
+        record_audit_event(
+            database,
+            "initial_admin_reconciled",
+            source="system",
+            details={"outcome": bootstrap_result},
+        )
+        record_audit_event(
+            database,
+            "application_started",
+            source="system",
+            details={"version": app.config["APP_VERSION"]},
+        )
     register_request_logging(app)
     register_routes(app)
+    register_request_auditing(app)
     register_security_headers(app)
     register_error_handlers(app)
     return app
@@ -101,6 +139,66 @@ def register_request_logging(app: Flask) -> None:
                 "user_agent": request.user_agent.string[:512],
             },
         )
+        return response
+
+
+def register_request_auditing(app: Flask) -> None:
+    """Persist authenticated actions and security-relevant public actions."""
+    audit_logger = logging.getLogger("grayhaven_timetracker.audit")
+
+    @app.after_request
+    def persist_request_audit(response: Response) -> Response:
+        if request.endpoint in {"main.health", "main.branding_asset", "static"}:
+            return response
+
+        database = getattr(g, "database_session", None)
+        owns_database = database is None
+        if database is None:
+            factory = app.extensions["database_session_factory"]
+            database = factory()
+        typed_database = database
+        actor = getattr(g, "current_user", None)
+        if actor is None:
+            actor_id = session.get("user_id")
+            if isinstance(actor_id, int):
+                actor = typed_database.get(User, actor_id)
+        public_action = (
+            request.endpoint == "main.login" and request.method == "POST"
+        ) or (
+            request.endpoint == "main.shared_report"
+            and response.status_code != 404
+            and (
+                request.method == "POST"
+                or isinstance(session.get("shared_report_client_id"), int)
+            )
+        )
+        if actor is None and not public_action:
+            if owns_database:
+                typed_database.close()
+            return response
+        try:
+            record_audit_event(
+                typed_database,
+                "http_request",
+                source=actor.role if actor else "public",
+                actor=actor,
+                ip_address=request.remote_addr,
+                method=request.method,
+                path=safe_audit_path(request.path),
+                status_code=response.status_code,
+                user_agent=request.user_agent.string,
+                details={"endpoint": request.endpoint or "unmatched"},
+            )
+            typed_database.commit()
+        except Exception:
+            typed_database.rollback()
+            audit_logger.exception(
+                "audit persistence failed",
+                extra={"event": "audit_persistence_failed"},
+            )
+        finally:
+            if owns_database:
+                typed_database.close()
         return response
 
 
@@ -143,6 +241,10 @@ def register_error_handlers(app: Flask) -> None:
     app.register_error_handler(
         CSRFError,
         lambda _: error_page(400, "The form expired or could not be verified."),
+    )
+    app.register_error_handler(
+        SecurityError,
+        lambda _: ("Bad Request", 400, {"Content-Type": "text/plain; charset=utf-8"}),
     )
     app.register_error_handler(
         400, lambda _: error_page(400, "The request could not be processed.")

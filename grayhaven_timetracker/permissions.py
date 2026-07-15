@@ -10,6 +10,7 @@ from flask import abort, redirect, request, url_for
 
 from .auth import current_user
 
+AUDIT_VIEW = "audit:view"
 REPORT_VIEW = "report:view"
 REPORT_GENERATE = "report:generate"
 REPORT_SHARE = "report:share"
@@ -41,6 +42,7 @@ USER_PASSWORD_RESET = "user:password_reset"  # noqa: S105
 ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "admin": frozenset(
         {
+            AUDIT_VIEW,
             REPORT_VIEW,
             REPORT_GENERATE,
             REPORT_SHARE,

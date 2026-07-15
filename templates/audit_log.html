@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Audit log · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">ADMINISTRATION</p>
+    <h1>Audit log</h1>
+    <p class="muted">Append-only history of application, user, public report, and system activity.</p>
+  </div>
+</section>
+<section class="panel audit-directory">
+  <form method="get" class="audit-filters">
+    <label>Source
+      <select name="source">
+        <option value="">All sources</option>
+        {% for source in ('admin', 'user', 'public', 'system') %}<option value="{{ source }}" {% if source_filter == source %}selected{% endif %}>{{ source|title }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Action
+      <select name="event">
+        <option value="">All actions</option>
+        {% for event in events %}<option value="{{ event }}" {% if event_filter == event %}selected{% endif %}>{{ event.replace('_', ' ')|title }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Actor
+      <select name="actor">
+        <option value="">All actors</option>
+        {% for actor in actors %}<option value="{{ actor.id }}" {% if actor_filter == actor.id|string %}selected{% endif %}>{{ actor.full_name }} · {{ actor.email }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="audit-filter-actions"><a class="button button-secondary" href="{{ url_for('main.audit_log') }}">Clear</a><button class="button button-primary" type="submit"><i class="fa-solid fa-filter" aria-hidden="true"></i> Apply filters</button></div>
+  </form>
+  <div class="audit-summary"><span>{{ total }} event{{ '' if total == 1 else 's' }}</span><span>Page {{ page }} of {{ page_count }}</span></div>
+  <div class="table-scroll">
+    <table class="data-table audit-table">
+      <thead><tr><th>Time</th><th>Source</th><th>Actor</th><th>Action</th><th>Request</th><th>Details</th></tr></thead>
+      <tbody>
+      {% for item in items %}
+        <tr>
+          <td><time datetime="{{ item.occurred_at.isoformat() }}Z">{{ format_datetime(item.occurred_at, timezone_info) }}</time><small class="table-note">#{{ item.id }}</small></td>
+          <td><span class="status-pill audit-source audit-source-{{ item.source }}">{{ item.source|title }}</span></td>
+          <td>{% if item.actor_name %}{{ item.actor_name }}<small class="table-note">{{ item.actor_email }}</small>{% else %}<span class="muted">{{ 'Application' if item.source == 'system' else 'Unauthenticated' }}</span>{% endif %}</td>
+          <td><strong>{{ item.event.replace('_', ' ')|title }}</strong></td>
+          <td>{% if item.method %}<span class="audit-request-method">{{ item.method }}</span> <code>{{ item.path }}</code><small class="table-note">HTTP {{ item.status_code if item.status_code else '—' }}{% if item.ip_address %} · {{ item.ip_address }}{% endif %}</small>{% else %}<span class="muted">System event</span>{% endif %}</td>
+          <td>{% if item.details %}<dl class="audit-details">{% for key, value in item.details.items() %}<div><dt>{{ key.replace('_', ' ') }}</dt><dd>{{ value if value is not none else '—' }}</dd></div>{% endfor %}</dl>{% else %}<span class="muted">—</span>{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6">No audit events match the selected filters.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if previous_url or next_url %}<nav class="pagination" aria-label="Audit log pages">{% if previous_url %}<a class="button button-secondary" href="{{ previous_url }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ page }} of {{ page_count }}</span>{% if next_url %}<a class="button button-secondary" href="{{ next_url }}">Next <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></a>{% else %}<span></span>{% endif %}</nav>{% endif %}
+</section>
+{% endblock %}

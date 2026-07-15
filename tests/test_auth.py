@@ -32,6 +32,8 @@ class InputValidationTests(unittest.TestCase):
                 normalize_email(value)
         with self.assertRaises(ValueError):
             normalize_email("a" * 250 + "@example.com")
+        with self.assertRaises(ValueError):
+            normalize_email("user\u202e@example.com")
 
     def test_required_text_normalizes_and_bounds_values(self) -> None:
         self.assertEqual(
@@ -41,6 +43,8 @@ class InputValidationTests(unittest.TestCase):
             required_text(" \t ", "Name", maximum=20)
         with self.assertRaisesRegex(ValueError, "cannot exceed"):
             required_text("too long", "Name", maximum=3)
+        with self.assertRaisesRegex(ValueError, "control characters"):
+            required_text("unsafe\x00name", "Name", maximum=20)
 
     def test_password_policy_reports_each_requirement(self) -> None:
         cases = {

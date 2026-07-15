@@ -1,9 +1,11 @@
-"""Relational models for clients, contracts, tasks, users, and time entries."""
+"""Relational models for application data and its append-only audit trail."""
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -203,3 +205,43 @@ class ApplicationMetadata(Base):
 
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
+
+
+class AuditEvent(Base):
+    """Immutable, display-safe record of a user, public, or system action."""
+
+    __tablename__ = "audit_event"
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('admin', 'user', 'public', 'system')",
+            name="ck_audit_event_source",
+        ),
+        CheckConstraint("length(trim(event)) > 0", name="ck_audit_event_name"),
+        Index("ix_audit_event_occurred_id", "occurred_at", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime)
+    event: Mapped[str] = mapped_column(String(100), index=True)
+    source: Mapped[str] = mapped_column(String(16), index=True)
+    actor_user_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True
+    )
+    actor_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    actor_name: Mapped[str | None] = mapped_column(String(201), nullable=True)
+    actor_role: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    method: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    details_json: Mapped[str] = mapped_column(Text, default="{}")
+
+    @property
+    def details(self) -> dict[str, Any]:
+        """Return the validated structured details stored with the event."""
+        try:
+            value = json.loads(self.details_json)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return value if isinstance(value, dict) else {}
