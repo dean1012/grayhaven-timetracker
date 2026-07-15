@@ -19,6 +19,8 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
+from reportlab.graphics.shapes import Drawing, String
+from reportlab.graphics.charts.piecharts import Pie
 from reportlab.platypus import (Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
                                 PageBreak, KeepTogether)
 from sqlalchemy import event, text
@@ -506,7 +508,19 @@ def build_pdf(report):
     summary.append(["Total", format_duration(report["total_seconds"]), f"${report['total_cost']:,.2f}"])
     table = Table(summary, colWidths=[3.7 * inch, 1.15 * inch, 1.25 * inch], repeatRows=1)
     table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2A2F36")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#E6EAF0")), ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#BBC7D3")), ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E6EAF0")), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("ALIGN", (1, 1), (-1, -1), "RIGHT"), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("FONTSIZE", (0, 0), (-1, -1), 8)]))
-    story += [table, PageBreak(), Paragraph("Detailed Session Log", styles["Heading1"]), Spacer(1, 0.12 * inch)]
+    chart = Drawing(460, 185)
+    pie = Pie()
+    pie.x = 145
+    pie.y = 10
+    pie.width = 165
+    pie.height = 165
+    pie.data = [data["seconds"] for data in report["grouped"].values()] or [1]
+    pie.labels = [label[:28] for label in report["grouped"].keys()] or ["No time recorded"]
+    pie.sideLabels = True
+    pie.slices.strokeWidth = 0.5
+    chart.add(pie)
+    chart.add(String(0, 174, "Time distribution", fontName="Helvetica-Bold", fontSize=10, fillColor=colors.HexColor("#353B44")))
+    story += [table, Spacer(1, 0.2 * inch), chart, PageBreak(), Paragraph("Detailed Session Log", styles["Heading1"]), Spacer(1, 0.12 * inch)]
     details = [["User", "Task / Subtask", "Start", "End", "Duration", "Cost"]]
     for entry in report["entries"]:
         label = f"{entry.task.name} / {entry.subtask.name}" if entry.subtask else entry.task.name
