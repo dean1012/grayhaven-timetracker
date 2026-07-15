@@ -9,6 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from PIL import Image as PillowImage
 from sqlalchemy import select
 
 from grayhaven_timetracker.database import session_scope
@@ -92,6 +93,12 @@ class ContractReportTests(AppTestCase):
             )
             self.assertEqual(len(report.pie_slices), 2)
             self.assertIn("A 86.000", report.pie_slices[0].path)
+            pdf = build_pdf(
+                report,
+                self.root / "missing-branding",
+                "https://example.invalid/contact",
+            ).getvalue()
+            self.assertTrue(pdf.startswith(b"%PDF-"))
 
     def test_single_group_pie_uses_a_complete_circle(self) -> None:
         seed = self.seed_contract()
@@ -134,6 +141,11 @@ class ContractReportTests(AppTestCase):
 class PdfTests(AppTestCase):
     def test_pdf_contains_two_pages_metadata_and_clickable_contact_link(self) -> None:
         seed = self.seed_contract()
+        branding = self.root / "branding-with-wordmark"
+        branding.mkdir()
+        PillowImage.new("RGB", (265, 63), "white").save(
+            branding / "grayhaven-logo-wordmark-light.png"
+        )
         with session_scope(self.app) as database:
             contract = database.get(Contract, seed.contract_id)
             assert contract is not None
@@ -145,7 +157,7 @@ class PdfTests(AppTestCase):
             )
             data = build_pdf(
                 report,
-                self.root / "missing-branding",
+                branding,
                 "https://example.invalid/contact",
             ).getvalue()
         self.assertTrue(data.startswith(b"%PDF-"))

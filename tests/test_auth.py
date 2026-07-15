@@ -147,6 +147,12 @@ class LoginLimiterTests(unittest.TestCase):
         self.assertFalse(limiter.blocked("one", now=1))
         self.assertTrue(limiter.blocked("three", now=1))
 
+        # Exercise the defensive size bound even if configuration changes after
+        # the limiter already contains more keys than its new maximum.
+        limiter.maximum_keys = 1
+        self.assertFalse(limiter.blocked("missing", now=1))
+        self.assertEqual(list(limiter._attempts), ["three"])
+
 
 if __name__ == "__main__":
     unittest.main()

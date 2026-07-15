@@ -12,7 +12,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from sqlalchemy import func, select
 
@@ -76,6 +76,42 @@ class DatabaseMaintenanceTests(unittest.TestCase):
             self.assertFalse(
                 self.database.with_name(self.database.name + suffix).exists()
             )
+        with self.assertRaises(DatabaseError):
+            database_maintenance.restore_database(self.database, self.database)
+
+    def test_verify_reports_integrity_and_plaintext_header_failures(self) -> None:
+        self.database.write_bytes(b"representative database bytes")
+        connection = MagicMock()
+        connection.execute.return_value.fetchall.return_value = [("failure",)]
+        connection.execute.return_value.fetchone.return_value = ("ok",)
+        with (
+            patch.object(
+                database_maintenance,
+                "connect_sqlcipher",
+                return_value=connection,
+            ),
+            self.assertRaises(DatabaseError),
+        ):
+            database_maintenance.verify_database(self.database, self.old_key_file)
+        connection.close.assert_called_once_with()
+
+        connection = MagicMock()
+        connection.execute.return_value.fetchall.return_value = []
+        connection.execute.return_value.fetchone.return_value = ("ok",)
+        with (
+            patch.object(
+                database_maintenance,
+                "connect_sqlcipher",
+                return_value=connection,
+            ),
+            patch.object(
+                database_maintenance,
+                "database_is_encrypted",
+                return_value=False,
+            ),
+            self.assertRaises(DatabaseError),
+        ):
+            database_maintenance.verify_database(self.database, self.old_key_file)
 
     def test_verify_backup_and_key_rotation_preserve_encrypted_data(self) -> None:
         self.create_encrypted_database()
@@ -116,6 +152,12 @@ class DatabaseMaintenanceTests(unittest.TestCase):
         with self.assertRaises(DatabaseError):
             database_maintenance.rotate_key(
                 self.database, self.old_key_file, self.new_key_file
+            )
+        with self.assertRaises(DatabaseError):
+            database_maintenance.create_backup(
+                self.database,
+                self.old_key_file,
+                self.root / "plaintext-backup.sqlite3",
             )
 
         self.database.unlink()
@@ -207,6 +249,46 @@ class DatabaseMaintenanceTests(unittest.TestCase):
         )
         connection.close()
         self.assertEqual(list(self.root.glob("timetracker.sqlite3.pre-rekey-*")), [])
+
+    def test_failed_post_rekey_verification_restores_the_recovery_copy(self) -> None:
+        self.create_encrypted_database()
+
+        def verification_failure(database: Path, key_file: Path) -> None:
+            if database == self.database and key_file == self.new_key_file:
+                raise DatabaseError("simulated post-rekey verification failure")
+
+        with (
+            patch.object(
+                database_maintenance,
+                "verify_database",
+                side_effect=verification_failure,
+            ),
+            self.assertRaises(DatabaseError),
+        ):
+            database_maintenance.rotate_key(
+                self.database, self.old_key_file, self.new_key_file
+            )
+
+        database_maintenance.verify_database(self.database, self.old_key_file)
+
+    def test_backup_rejects_a_colliding_reserved_temporary_path(self) -> None:
+        self.create_encrypted_database()
+        sidecar = self.database.with_name(self.database.name + "-wal")
+        sidecar.touch()
+        with (
+            patch.object(
+                database_maintenance,
+                "reserve_temporary_path",
+                return_value=sidecar,
+            ),
+            self.assertRaises(DatabaseError),
+        ):
+            database_maintenance.create_backup(
+                self.database,
+                self.old_key_file,
+                self.root / "collision-backup.sqlite3",
+            )
+        self.assertTrue(self.database.is_file())
 
     def test_recovery_operations_refuse_to_overwrite_existing_backups(self) -> None:
         fixed = datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
@@ -358,16 +440,31 @@ class StructuredLoggingTests(unittest.TestCase):
         record.event = "test_event"
         record.user_id = 7
         record.user_agent = "spoof\u202eagent"
+        record.details = {"unsafe\u202ekey": f"/shared/reports/{token}"}
         payload = json.loads(formatter.format(record))
         self.assertEqual(payload["message"], "Rejected /shared/reports/[redacted]")
         self.assertEqual(payload["event"], "test_event")
         self.assertEqual(payload["user_id"], 7)
         self.assertEqual(payload["user_agent"], "spoof�agent")
+        self.assertEqual(
+            payload["details"], {"unsafe�key": "/shared/reports/[redacted]"}
+        )
         self.assertIn(
             "ValueError: failure at /shared/reports/[redacted]",
             payload["exception"],
         )
         self.assertNotIn(token, json.dumps(payload))
+
+        plain_record = logging.LogRecord(
+            name="grayhaven_timetracker.test",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="ordinary event",
+            args=(),
+            exc_info=None,
+        )
+        self.assertNotIn("exception", json.loads(formatter.format(plain_record)))
 
     def test_configure_logging_installs_json_root_handler(self) -> None:
         root = logging.getLogger()

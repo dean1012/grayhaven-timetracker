@@ -5,14 +5,16 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pyotp
+from argon2 import PasswordHasher
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
+from grayhaven_timetracker import create_app
 from grayhaven_timetracker.audit import record_audit_event
 from grayhaven_timetracker.auth import hash_password, verify_password
 from grayhaven_timetracker.bootstrap import reconcile_initial_admin
@@ -29,9 +31,13 @@ from grayhaven_timetracker.database import (
     DatabaseError,
     connect_sqlcipher,
     database_is_encrypted,
+    dispose_app_database,
     initialize_database,
+    migrate_schema,
+    rollback_request_session,
     session_scope,
     sql_literal,
+    verify_cipher_integrity,
 )
 from grayhaven_timetracker.models import AuditEvent, Subtask, Task, TimeEntry, User
 from tests.helpers import (
@@ -39,6 +45,7 @@ from tests.helpers import (
     ADMIN_PASSWORD_HASH,
     ADMIN_TOTP_SECRET,
     AppTestCase,
+    test_config,
 )
 
 
@@ -76,6 +83,11 @@ class ConfigurationTests(unittest.TestCase):
             config["TRUSTED_HOSTS"],
             ["time.example.invalid", ".internal.example.invalid"],
         )
+
+        values["SESSION_COOKIE_SECURE"] = "off"
+        with patch.dict(os.environ, values, clear=True):
+            config = environment_config()
+        self.assertFalse(config["SESSION_COOKIE_SECURE"])
 
     def test_environment_config_reads_secret_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -132,6 +144,23 @@ class ConfigurationTests(unittest.TestCase):
         ):
             environment_config()
 
+        values = self.required_environment()
+        del values["SECRET_KEY"]
+        with (
+            patch.dict(os.environ, values, clear=True),
+            self.assertRaises(ConfigurationError),
+        ):
+            environment_config()
+
+        values = self.required_environment()
+        del values["SQLCIPHER_PASSPHRASE"]
+        values["SQLCIPHER_PASSPHRASE_FILE"] = "/does/not/exist"
+        with (
+            patch.dict(os.environ, values, clear=True),
+            self.assertRaises(ConfigurationError),
+        ):
+            environment_config()
+
     def test_validators_accept_and_reject_expected_values(self) -> None:
         validate_timezone("America/Chicago")
         validate_contact_url("https://example.invalid/contact")
@@ -177,6 +206,8 @@ class ConfigurationTests(unittest.TestCase):
             validate_public_deployment(
                 "https://time.example.invalid", True, ["other.example.invalid"]
             )
+        with self.assertRaises(ConfigurationError):
+            validate_public_deployment("https:///", True, [])
 
     def test_branding_validation_requires_every_runtime_asset(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -201,6 +232,56 @@ class ConfigurationTests(unittest.TestCase):
                 path.touch()
             validate_branding(str(root))
 
+    def test_factory_uses_environment_branding_proxy_and_existing_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            branding = root / "branding"
+            assets = (
+                "grayhaven-logo-wordmark-dark.svg",
+                "grayhaven-logo-wordmark-light.png",
+                "favicon.ico",
+                "favicon-16.png",
+                "favicon-32.png",
+                "apple-touch-icon.png",
+                "fonts/inter-400.ttf",
+                "fonts/inter-500.ttf",
+                "fonts/inter-600.ttf",
+                "fonts/inter-700.ttf",
+            )
+            for asset in assets:
+                path = branding / asset
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            config = test_config(
+                root,
+                SKIP_BRANDING_VALIDATION=False,
+                TRUSTED_PROXY_COUNT=1,
+            )
+            with patch("grayhaven_timetracker.environment_config", return_value=config):
+                first_app = create_app()
+            try:
+                response = first_app.test_client().get(
+                    "/health",
+                    headers={
+                        "X-Forwarded-For": "192.0.2.20",
+                        "X-Forwarded-Host": "time.example.invalid",
+                        "X-Forwarded-Proto": "https",
+                    },
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(
+                    "max-age=31536000",
+                    response.headers["Strict-Transport-Security"],
+                )
+            finally:
+                dispose_app_database(first_app)
+
+            second_app = create_app(config)
+            try:
+                self.assertIsNone(second_app.extensions["database_prior_schema"])
+            finally:
+                dispose_app_database(second_app)
+
 
 class DatabaseAndModelTests(AppTestCase):
     def test_sql_literal_escapes_quotes_and_rejects_nul(self) -> None:
@@ -218,6 +299,21 @@ class DatabaseAndModelTests(AppTestCase):
         plain.write_bytes(b"SQLite format 3\x00" + b"x" * 32)
         self.assertFalse(database_is_encrypted(plain))
         self.assertFalse(database_is_encrypted(self.root / "missing.sqlite3"))
+
+        connection = MagicMock()
+        connection.execute.return_value.fetchone.return_value = None
+        with (
+            patch(
+                "grayhaven_timetracker.database.sqlcipher.connect",
+                return_value=connection,
+            ),
+            self.assertRaises(DatabaseError),
+        ):
+            connect_sqlcipher(
+                self.root / "unsupported.sqlite3",
+                "Another-passphrase-with-at-least-32-characters!",
+            )
+        connection.close.assert_called_once_with()
 
     def test_session_scope_rolls_back_failed_work(self) -> None:
         with self.assertRaises(RuntimeError), session_scope(self.app) as database:
@@ -299,6 +395,79 @@ class DatabaseAndModelTests(AppTestCase):
         self.assertEqual(admin_count, 1)
         self.assertEqual(audit_table, 1)
 
+        # A version-one marker can coexist with already-added columns after a
+        # partially completed rollout; rerunning the migration must be safe.
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE application_metadata SET value = '1' "
+                    "WHERE key = 'schema_version'"
+                )
+            )
+        self.assertEqual(initialize_database(engine), "1")
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE application_metadata SET value = '99' "
+                    "WHERE key = 'schema_version'"
+                )
+            )
+        with self.assertRaises(DatabaseError):
+            initialize_database(engine)
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE application_metadata SET value = '3' "
+                    "WHERE key = 'schema_version'"
+                )
+            )
+
+    def test_version_one_migration_adds_missing_client_report_credentials(self) -> None:
+        connection = MagicMock()
+        connection.execute.return_value.scalar_one_or_none.return_value = "1"
+
+        def column_result(*names: str) -> MagicMock:
+            result = MagicMock()
+            result.fetchall.return_value = [
+                (index, name) for index, name in enumerate(names)
+            ]
+            return result
+
+        connection.exec_driver_sql.side_effect = [
+            column_result("password_change_required"),
+            column_result("report_token_hash", "report_expires_at"),
+            column_result(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
+        ]
+
+        self.assertEqual(migrate_schema(connection), "1")
+        executed_sql = "\n".join(
+            call.args[0] for call in connection.exec_driver_sql.call_args_list
+        )
+        self.assertIn("ADD COLUMN report_password_hash", executed_sql)
+        self.assertIn("ADD COLUMN report_password_version", executed_sql)
+
+    def test_integrity_validation_reports_cipher_and_sqlite_failures(self) -> None:
+        engine = MagicMock()
+        connection = engine.connect.return_value.__enter__.return_value
+        connection.exec_driver_sql.return_value = [("page authentication failed",)]
+        with self.assertRaises(DatabaseError):
+            verify_cipher_integrity(engine)
+
+        cipher_result = MagicMock()
+        cipher_result.__iter__.return_value = iter(())
+        sqlite_result = MagicMock()
+        sqlite_result.scalar_one.return_value = "corrupt"
+        connection.exec_driver_sql.side_effect = [cipher_result, sqlite_result]
+        with self.assertRaises(DatabaseError):
+            verify_cipher_integrity(engine)
+
+        with self.app.app_context():
+            rollback_request_session()
+
     def test_database_guards_active_timer_subtask_and_last_admin(self) -> None:
         seed = self.seed_contract()
         user = self.create_user()
@@ -368,24 +537,33 @@ class DatabaseAndModelTests(AppTestCase):
                 actor=admin,
                 details={
                     "safe": "visible\u202e",
+                    "day": date(2026, 7, 15),
+                    "object": Path("representative"),
                     "temporary_password": "must-not-be-stored",
                 },
             )
             database.flush()
             item_id = item.id
-            self.assertEqual(item.details, {"safe": "visible�"})
+            self.assertEqual(
+                item.details,
+                {
+                    "day": "2026-07-15",
+                    "object": "representative",
+                    "safe": "visible�",
+                },
+            )
 
         with session_scope(self.app) as database:
-            item = database.get(AuditEvent, item_id)
-            assert item is not None
-            item.event = "changed"
+            loaded_item = database.get(AuditEvent, item_id)
+            assert loaded_item is not None
+            loaded_item.event = "changed"
             with self.assertRaises(IntegrityError):
                 database.flush()
             database.rollback()
 
-            item = database.get(AuditEvent, item_id)
-            assert item is not None
-            database.delete(item)
+            reloaded_item = database.get(AuditEvent, item_id)
+            assert reloaded_item is not None
+            database.delete(reloaded_item)
             with self.assertRaises(IntegrityError):
                 database.flush()
             database.rollback()
@@ -446,9 +624,28 @@ class BootstrapTests(AppTestCase):
             self.assertEqual(result, "created")
 
     def test_bootstrap_rejects_invalid_configuration_and_can_be_skipped(self) -> None:
+        original_first_name = self.app.config["INITIAL_ADMIN_FIRST_NAME"]
+        self.app.config["INITIAL_ADMIN_FIRST_NAME"] = ""
+        with session_scope(self.app) as database, self.assertRaises(ConfigurationError):
+            reconcile_initial_admin(self.app, database)
+        self.app.config["INITIAL_ADMIN_FIRST_NAME"] = original_first_name
+
+        self.app.config["INITIAL_ADMIN_PASSWORD_HASH"] = None
+        with session_scope(self.app) as database, self.assertRaises(ConfigurationError):
+            reconcile_initial_admin(self.app, database)
+
         self.app.config["INITIAL_ADMIN_PASSWORD_HASH"] = "invalid"
         with session_scope(self.app) as database, self.assertRaises(ConfigurationError):
             reconcile_initial_admin(self.app, database)
+
+        self.app.config["INITIAL_ADMIN_PASSWORD_HASH"] = PasswordHasher(
+            time_cost=1,
+            memory_cost=1024,
+            parallelism=1,
+        ).hash("weak-parameter-test")
+        with session_scope(self.app) as database, self.assertRaises(ConfigurationError):
+            reconcile_initial_admin(self.app, database)
+
         self.app.config["INITIAL_ADMIN_PASSWORD_HASH"] = ADMIN_PASSWORD_HASH
         self.app.config["INITIAL_ADMIN_TOTP_SECRET"] = "invalid"
         with session_scope(self.app) as database, self.assertRaises(ConfigurationError):

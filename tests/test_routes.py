@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 import pyotp
+from argon2 import PasswordHasher
 from sqlalchemy import func, select, text
 
 from grayhaven_timetracker import routes
@@ -22,6 +25,7 @@ from grayhaven_timetracker.models import (
     TimeEntry,
     User,
 )
+from grayhaven_timetracker.permissions import ROLE_PERMISSIONS
 from grayhaven_timetracker.routes import local_datetime_to_utc
 from tests.helpers import (
     ADMIN_EMAIL,
@@ -46,6 +50,15 @@ class AuthenticationRouteTests(AppTestCase):
             data={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD, "totp": "000000"},
         )
         self.assertEqual(rejected_totp.status_code, 401)
+        weak_hash = PasswordHasher(
+            time_cost=1,
+            memory_cost=1024,
+            parallelism=1,
+        ).hash(ADMIN_PASSWORD)
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.password_hash = weak_hash
         accepted = self.client.post(
             "/login?next=/profile",
             data={
@@ -55,6 +68,10 @@ class AuthenticationRouteTests(AppTestCase):
             },
         )
         self.assertEqual(accepted.location, "/profile")
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            self.assertNotEqual(admin.password_hash, weak_hash)
         self.assertEqual(self.client.get("/login").location, "/")
         self.assertEqual(self.client.post("/logout").status_code, 302)
         self.assertEqual(self.client.get("/profile").status_code, 302)
@@ -79,9 +96,17 @@ class AuthenticationRouteTests(AppTestCase):
         )
         self.assertEqual(first.status_code, 401)
         self.assertEqual(second.status_code, 429)
+        self.assertEqual(
+            self.client.post(
+                "/login",
+                data={"email": "not-an-email", "password": "wrong"},
+            ).status_code,
+            401,
+        )
 
     def test_csrf_and_request_size_fail_closed(self) -> None:
         self.app.config["WTF_CSRF_ENABLED"] = True
+        self.assertEqual(self.client.post("/logout").status_code, 400)
         self.assertEqual(
             self.client.post(
                 "/login", data={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
@@ -108,6 +133,43 @@ class AuthenticationRouteTests(AppTestCase):
 
 
 class SecurityAndErrorRouteTests(AppTestCase):
+    def test_static_assets_cover_template_icons_and_branding_breakpoints(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        stylesheet = (project_root / "static/fontawesome.min.css").read_text(
+            encoding="utf-8"
+        )
+        used_icons: set[str] = set()
+        for template in (project_root / "templates").glob("*.html"):
+            for classes in re.findall(
+                r'class="([^"]*)"', template.read_text(encoding="utf-8")
+            ):
+                used_icons.update(
+                    item
+                    for item in classes.split()
+                    if item.startswith("fa-") and item != "fa-solid"
+                )
+        missing_icons = sorted(
+            icon for icon in used_icons if f".{icon}:before" not in stylesheet
+        )
+        self.assertEqual(missing_icons, [])
+
+        app_stylesheet = (project_root / "static/app.css").read_text(encoding="utf-8")
+        for media_query in (
+            "@media (width <=400px)",
+            "@media (width <=575px)",
+            "@media (width >=640px)",
+            "@media (width >=768px)",
+            "@media (width >=1120px)",
+            "@media (width >=1721px)",
+        ):
+            self.assertIn(media_query, app_stylesheet)
+        self.assertRegex(
+            app_stylesheet,
+            r"(?s)@media \(width >=1721px\).*?"
+            r"\.desktop-nav \{ display: flex; \}.*?"
+            r"\.mobile-nav \{ display: none; \}",
+        )
+
     def test_security_headers_cache_policy_health_and_errors(self) -> None:
         response = self.client.get("/login", base_url="https://example.invalid")
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
@@ -173,6 +235,14 @@ class AuditRouteTests(AppTestCase):
         with session_scope(self.app) as database:
             after = database.scalar(select(func.count(AuditEvent.id)))
         self.assertEqual(after, before)
+
+    def test_audit_persistence_failure_does_not_replace_the_response(self) -> None:
+        self.login()
+        with patch(
+            "grayhaven_timetracker.record_audit_event",
+            side_effect=RuntimeError("simulated audit storage failure"),
+        ):
+            self.assertEqual(self.client.get("/").status_code, 200)
 
     def test_admin_can_filter_and_paginate_append_only_audit_history(self) -> None:
         self.login()
@@ -297,6 +367,9 @@ class ClientContractTaskRouteTests(AppTestCase):
             )
         self.assertEqual(self.client.get(f"/clients/{client_id}").status_code, 200)
         self.assertEqual(self.client.get("/clients/9999").status_code, 404)
+        self.assertEqual(
+            self.client.get(f"/contracts/new/{client_id}").status_code, 200
+        )
         for rate in ("invalid", "-1", "1000000.01"):
             with self.subTest(rate=rate):
                 response = self.client.post(
@@ -338,6 +411,17 @@ class ClientContractTaskRouteTests(AppTestCase):
         self.assertEqual(updated_client.status_code, 302)
         self.assertEqual(
             self.client.get(f"/contracts/{contract_id}/edit").status_code, 200
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/contracts/{contract_id}/edit",
+                data={
+                    "name": "",
+                    "contact_name": "Contact",
+                    "contact_email": "invalid",
+                },
+            ).status_code,
+            400,
         )
         updated_contract = self.client.post(
             f"/contracts/{contract_id}/edit",
@@ -432,6 +516,24 @@ class ClientContractTaskRouteTests(AppTestCase):
             child_id = child.id
         self.assertEqual(
             self.client.post(
+                f"/subtasks/{unused_id}/new", data={"name": ""}
+            ).status_code,
+            302,
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/tasks/{unused_id}/rename", data={"name": ""}
+            ).status_code,
+            302,
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/subtasks/{child_id}/rename", data={"name": ""}
+            ).status_code,
+            302,
+        )
+        self.assertEqual(
+            self.client.post(
                 f"/tasks/{unused_id}/rename", data={"name": "Renamed"}
             ).status_code,
             302,
@@ -502,6 +604,19 @@ class TimerAndPermissionRouteTests(AppTestCase):
             self.client.post(f"/users/{self.user.id}/reset-password").status_code,
             403,
         )
+        with patch.dict(ROLE_PERMISSIONS, {"user": frozenset()}):
+            self.assertEqual(
+                self.client.get(
+                    f"/contracts/{self.seed.contract_id}/sessions/new"
+                ).status_code,
+                403,
+            )
+            self.assertEqual(
+                self.client.get(
+                    f"/contracts/{self.seed.contract_id}/sessions"
+                ).status_code,
+                403,
+            )
         started = self.client.post(
             "/timer/start",
             data={"task_id": self.seed.task_id, "subtask_id": self.seed.subtask_id},
@@ -546,6 +661,13 @@ class TimerAndPermissionRouteTests(AppTestCase):
             data={"task_id": other_id, "subtask_id": self.seed.subtask_id},
         )
         self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            self.client.post(
+                "/timer/start",
+                data={"task_id": other_id, "subtask_id": "invalid"},
+            ).status_code,
+            400,
+        )
 
 
 class ProfileAndUserAdministrationTests(AppTestCase):
@@ -555,6 +677,10 @@ class ProfileAndUserAdministrationTests(AppTestCase):
 
     def test_profile_name_and_password_change_require_valid_inputs(self) -> None:
         self.assertEqual(self.client.get("/profile").status_code, 200)
+        self.assertEqual(
+            self.client.get("/profile/password/change-required").location,
+            "/profile",
+        )
         self.assertEqual(
             self.client.post(
                 "/profile/name", data={"first_name": "", "last_name": "Operator"}
@@ -607,6 +733,15 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             assert admin is not None
             self.assertEqual(admin.first_name, "Updated")
             self.assertTrue(verify_password(admin.password_hash, new_password))
+        with patch(
+            "grayhaven_timetracker.routes.record_audit_event",
+            side_effect=RuntimeError("simulated semantic audit failure"),
+        ):
+            response = self.client.post(
+                "/profile/name",
+                data={"first_name": "Still", "last_name": "Available"},
+            )
+        self.assertEqual(response.status_code, 302)
 
     def test_totp_setup_confirmation_and_disable(self) -> None:
         with session_scope(self.app) as database:
@@ -648,6 +783,10 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             ).status_code,
             302,
         )
+        self.assertEqual(
+            self.client.post("/profile/totp/disable").location,
+            "/profile",
+        )
 
     def test_active_totp_factor_cannot_be_replaced_directly(self) -> None:
         with session_scope(self.app) as database:
@@ -672,6 +811,7 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             self.assertEqual(admin.pending_totp_secret, pending_secret)
 
     def test_user_creation_role_changes_and_disable_stops_timer(self) -> None:
+        self.assertEqual(self.client.get("/users").status_code, 200)
         self.assertEqual(self.client.get("/users/new").status_code, 200)
         invalid = self.client.post(
             "/users/new",
@@ -708,6 +848,18 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             },
         )
         self.assertEqual(duplicate.status_code, 400)
+        with patch(
+            "grayhaven_timetracker.routes.find_user_by_email", return_value=None
+        ):
+            raced_duplicate = self.client.post(
+                "/users/new",
+                data={
+                    "first_name": "Raced",
+                    "last_name": "Duplicate",
+                    "email": "new-user@example.invalid",
+                },
+            )
+        self.assertEqual(raced_duplicate.status_code, 409)
         with session_scope(self.app) as database:
             user = database.scalar(
                 select(User).where(User.email == "new-user@example.invalid")
@@ -754,6 +906,13 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             assert user and entry
             self.assertFalse(user.is_enabled)
             self.assertIsNotNone(entry.stopped_at)
+        self.assertEqual(
+            self.client.post(f"/users/{user_id}/toggle-enabled").status_code, 302
+        )
+        with session_scope(self.app) as database:
+            user = database.get(User, user_id)
+            assert user is not None
+            self.assertTrue(user.is_enabled)
         self.assertEqual(self.client.post("/users/1/toggle-enabled").status_code, 409)
         self.assertEqual(self.client.post("/users/1/toggle-admin").status_code, 409)
 
@@ -770,6 +929,24 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         )
 
         self.assertEqual(self.client.get(f"/users/{user.id}/edit").status_code, 200)
+        duplicate_email = self.client.post(
+            f"/users/{user.id}/edit",
+            data={
+                "first_name": "Duplicate",
+                "last_name": "Identity",
+                "email": ADMIN_EMAIL,
+            },
+        )
+        self.assertEqual(duplicate_email.status_code, 400)
+        unchanged_email = self.client.post(
+            f"/users/{user.id}/edit",
+            data={
+                "first_name": "Unchanged",
+                "last_name": "Email",
+                "email": user.email,
+            },
+        )
+        self.assertEqual(unchanged_email.status_code, 302)
         updated = self.client.post(
             f"/users/{user.id}/edit",
             data={
@@ -921,12 +1098,29 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.login()
         first_token = "A" * 43
         second_token = "B" * 43
+        unusable_token = "Z" * 43
         report_password = "Shared-Report-Password-For-Testing-0001!"
         self.app.config["PUBLIC_BASE_URL"] = "https://time.example.invalid"
+        with session_scope(self.app) as database:
+            contract = database.get(Contract, self.seed.contract_id)
+            assert contract is not None
+            contract.report_token_hash = routes.report_token_hash(unusable_token)
+            contract.client.report_password_hash = None
+        self.assertEqual(
+            self.app.test_client().get(f"/shared/reports/{unusable_token}").status_code,
+            404,
+        )
         self.assertEqual(
             self.client.post(
                 f"/contracts/{self.seed.contract_id}/report-link",
                 data={"expires_in_days": "invalid"},
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/contracts/{self.seed.contract_id}/report-link",
+                data={"expires_in_days": "14"},
             ).status_code,
             400,
         )
@@ -976,7 +1170,10 @@ class ReportAndSessionRouteTests(AppTestCase):
             logging.disable(logging.CRITICAL)
         self.assertEqual(shared.status_code, 200)
         self.assertIn(b"CLIENT REPORT ACCESS", shared.data)
-        self.assertEqual(captured.records[-1].path, "/shared/reports/[redacted]")
+        self.assertEqual(
+            getattr(captured.records[-1], "path", None),
+            "/shared/reports/[redacted]",
+        )
         routes.shared_report_limiter = LoginLimiter(limit=1)
         rejected = anonymous.post(
             f"/shared/reports/{first_token}",
@@ -1152,6 +1349,40 @@ class ReportAndSessionRouteTests(AppTestCase):
             ).status_code,
             200,
         )
+        self.assertEqual(
+            user_client.get("/contracts/9999/sessions/new").status_code,
+            404,
+        )
+        self.assertEqual(
+            user_client.get("/contracts/9999/sessions").status_code,
+            404,
+        )
+        invalid_cases = [
+            {
+                "assignment": "9999",
+                "started_at": "2026-07-14T10:00:00",
+                "stopped_at": "2026-07-14T10:30:00",
+            },
+            {
+                "assignment": f"{self.seed.other_task_id}:{self.seed.subtask_id}",
+                "started_at": "2026-07-14T10:00:00",
+                "stopped_at": "2026-07-14T10:30:00",
+            },
+            {
+                "assignment": str(self.seed.other_task_id),
+                "started_at": "2026-07-14T10:30:00",
+                "stopped_at": "2026-07-14T10:00:00",
+            },
+        ]
+        for data in invalid_cases:
+            with self.subTest(data=data):
+                self.assertEqual(
+                    user_client.post(
+                        f"/contracts/{self.seed.contract_id}/sessions/new",
+                        data=data,
+                    ).status_code,
+                    400,
+                )
         created = user_client.post(
             f"/contracts/{self.seed.contract_id}/sessions/new",
             data={
@@ -1182,6 +1413,20 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertEqual(future.status_code, 400)
 
         self.login()
+        for invalid_user_id in ("invalid", "9999"):
+            with self.subTest(invalid_user_id=invalid_user_id):
+                self.assertEqual(
+                    self.client.post(
+                        f"/contracts/{self.seed.contract_id}/sessions/new",
+                        data={
+                            "user_id": invalid_user_id,
+                            "assignment": str(self.seed.other_task_id),
+                            "started_at": "2026-07-14T10:00:00",
+                            "stopped_at": "2026-07-14T10:30:00",
+                        },
+                    ).status_code,
+                    400,
+                )
         admin_created = self.client.post(
             f"/contracts/{self.seed.contract_id}/sessions/new",
             data={
@@ -1205,8 +1450,23 @@ class ReportAndSessionRouteTests(AppTestCase):
     def test_session_edit_validation_and_admin_access(self) -> None:
         self.login()
         self.assertEqual(
+            self.client.get(f"/contracts/{self.seed.contract_id}/sessions").status_code,
+            200,
+        )
+        self.assertEqual(
             self.client.get(f"/sessions/{self.seed.entry_id}/edit").status_code, 200
         )
+        with session_scope(self.app) as database:
+            task = database.get(Task, self.seed.other_task_id)
+            assert task is not None
+            database.add(
+                TimeEntry(
+                    user_id=self.user.id,
+                    task=task,
+                    started_at=datetime(2026, 7, 15, 14, 0, 0),
+                    stopped_at=datetime(2026, 7, 15, 15, 0, 0),
+                )
+            )
         cases = [
             {
                 "assignment": "invalid",
@@ -1227,6 +1487,16 @@ class ReportAndSessionRouteTests(AppTestCase):
                 "assignment": str(self.seed.task_id),
                 "started_at": "2026-03-08T02:30:00",
                 "stopped_at": "2026-03-08T03:30:00",
+            },
+            {
+                "assignment": str(self.seed.task_id),
+                "started_at": "2099-01-01T10:00:00",
+                "stopped_at": "2099-01-01T10:30:00",
+            },
+            {
+                "assignment": str(self.seed.task_id),
+                "started_at": "2026-07-15T09:15:00",
+                "stopped_at": "2026-07-15T09:45:00",
             },
         ]
         for data in cases:
@@ -1258,6 +1528,13 @@ class ReportAndSessionRouteTests(AppTestCase):
             ),
             original,
         )
+        with self.assertRaises(ValueError):
+            local_datetime_to_utc(
+                "2026-11-01T01:30:00",
+                "Time",
+                "America/Chicago",
+                original_utc=datetime(2026, 11, 1, 5, 30, 0),
+            )
 
 
 if __name__ == "__main__":

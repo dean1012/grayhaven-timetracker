@@ -50,7 +50,17 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .app-nav a:hover, .app-nav a[aria-current="page"], .nav-button:hover { color: var(--primary-accent); }
 .app-nav form { margin: 0; }
 .nav-button { padding: 0; background: none; border: 0; }
-.mobile-nav { display: none; }
+.desktop-nav { display: none; }
+.mobile-nav { position: relative; display: block; flex: 0 0 auto; margin-left: auto; }
+.mobile-nav > summary { list-style: none; }
+.mobile-nav > summary::-webkit-details-marker { display: none; }
+.mobile-nav-toggle { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-width: 44px; min-height: 44px; padding: .55rem .75rem; color: var(--soft-white); border: 1px solid var(--charcoal-border); border-radius: var(--radius); cursor: pointer; }
+.mobile-nav-toggle:focus-visible { outline: 2px solid var(--primary-accent); outline-offset: 3px; }
+.mobile-nav[open] .mobile-nav-toggle { color: var(--primary-accent); border-color: var(--primary-accent); }
+.mobile-nav-links { position: absolute; top: calc(100% + .65rem); right: 0; z-index: 20; display: grid; min-width: 220px; padding: .55rem; background: rgb(28 31 36 / 98%); border: 1px solid var(--charcoal-border); border-radius: var(--radius); box-shadow: var(--panel-shadow); }
+.mobile-nav-links a, .mobile-nav-links .nav-button { display: flex; align-items: center; gap: .65rem; width: 100%; min-height: 44px; padding: .65rem .75rem; color: var(--cool-grey); text-align: left; border-radius: 6px; }
+.mobile-nav-links a:hover, .mobile-nav-links a:focus-visible, .mobile-nav-links a[aria-current="page"], .mobile-nav-links .nav-button:hover, .mobile-nav-links .nav-button:focus-visible { color: var(--primary-accent); background: rgb(88 172 224 / 9%); }
+.mobile-nav-links form { margin: 0; }
 .page-shell { width: min(1680px, calc(100% - var(--container-padding) - var(--container-padding))); margin: 0 auto; padding: 3.3rem 0 5rem; }
 .page-heading { display: flex; align-items: end; justify-content: space-between; gap: 2rem; margin-bottom: 2.4rem; }
 .page-heading.compact { align-items: start; }
@@ -252,17 +262,6 @@ small { color: var(--cool-grey); font-weight: 400; }
   .app-header-inner { height: 68px; }
   .brand img { width: 170px; }
   .brand-product { padding-left: .75rem; font-size: .78rem; }
-  .desktop-nav { display: none; }
-  .mobile-nav { position: relative; display: block; margin-left: auto; }
-  .mobile-nav > summary { list-style: none; }
-  .mobile-nav > summary::-webkit-details-marker { display: none; }
-  .mobile-nav-toggle { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-width: 44px; min-height: 44px; padding: .55rem .75rem; color: var(--soft-white); border: 1px solid var(--charcoal-border); border-radius: var(--radius); cursor: pointer; }
-  .mobile-nav-toggle:focus-visible { outline: 2px solid var(--primary-accent); outline-offset: 3px; }
-  .mobile-nav[open] .mobile-nav-toggle { color: var(--primary-accent); border-color: var(--primary-accent); }
-  .mobile-nav-links { position: absolute; top: calc(100% + .65rem); right: 0; z-index: 20; display: grid; min-width: 220px; padding: .55rem; background: rgb(28 31 36 / 98%); border: 1px solid var(--charcoal-border); border-radius: var(--radius); box-shadow: var(--panel-shadow); }
-  .mobile-nav-links a, .mobile-nav-links .nav-button { display: flex; align-items: center; gap: .65rem; width: 100%; min-height: 44px; padding: .65rem .75rem; color: var(--cool-grey); text-align: left; border-radius: 6px; }
-  .mobile-nav-links a:hover, .mobile-nav-links a:focus-visible, .mobile-nav-links a[aria-current="page"], .mobile-nav-links .nav-button:hover, .mobile-nav-links .nav-button:focus-visible { color: var(--primary-accent); background: rgb(88 172 224 / 9%); }
-  .mobile-nav-links form { margin: 0; }
   .page-shell { padding: 2rem 0 3.5rem; }
   .page-heading { align-items: stretch; flex-direction: column; margin-bottom: 1.7rem; }
   .heading-actions { flex-wrap: wrap; justify-content: flex-start; }
@@ -354,6 +353,8 @@ small { color: var(--cool-grey); font-weight: 400; }
 
 @media (width >=1721px) {
   :root { --container-padding: 4rem; }
+  .desktop-nav { display: flex; }
+  .mobile-nav { display: none; }
   .app-header-inner, .page-shell, .app-footer { max-width: 1760px; }
   .page-shell { padding-top: 4rem; }
   .client-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
