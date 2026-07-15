@@ -7,7 +7,6 @@
   <div class="panel form-panel">
     <p class="eyebrow">CLIENT MANAGEMENT</p>
     <h1>{{ 'Edit Client' if editing else 'Add Client' }}</h1>
-    <p class="muted">Contact details remain internal and are not included in reports.</p>
     <form method="post" class="form-stack" autocomplete="off" data-protonpass-ignore="true">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Client name<input name="name" value="{{ request.form.get('name', client.name if editing else '') }}" maxlength="200" required autofocus autocomplete="off" data-protonpass-ignore="true"></label>
