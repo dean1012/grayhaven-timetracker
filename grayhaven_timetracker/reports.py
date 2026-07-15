@@ -20,6 +20,8 @@ from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import landscape, letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import (
     Image,
@@ -36,15 +38,35 @@ from sqlalchemy.orm import Session, joinedload
 from .models import Contract, Task, TimeEntry
 
 MONEY_QUANTUM = Decimal("0.01")
+BRAND_GUNMETAL = "#2A2F36"
+BRAND_SOFT_WHITE = "#E6EAF0"
+BRAND_COOL_GREY = "#AAB2BF"
+BRAND_PRIMARY_ACCENT = "#58ACE0"
+BRAND_STANDARD_HOVER = "#65B7E6"
+BRAND_ELEVATED_HOVER = "#74C3EC"
+BRAND_LIGHT_SURFACE_ACCENT = "#1F5F87"
+BRAND_PALE_STEEL = "#BBC7D3"
+BRAND_MUTED_DEEP_ACCENT = "#2E8BC0"
+BRAND_DARK_LOGO_CHARCOAL = "#2B333B"
+BRAND_MUTED_EMERALD = "#3FB68B"
+
+# The current PDF palette is centralized here without changing the approved
+# layout. Its printer-focused visual design will be finalized after UAT.
+PDF_BODY_TEXT = "#353B44"
+PDF_ALTERNATE_ROW = "#F2F5F7"
+PDF_FONT_REGULAR = "GrayhavenInter"
+PDF_FONT_BOLD = "GrayhavenInter-Bold"
+PDF_FALLBACK_FONT_REGULAR = "Helvetica"
+PDF_FALLBACK_FONT_BOLD = "Helvetica-Bold"
 PIE_COLORS = (
-    "#58ACE0",
-    "#3FB68B",
-    "#74C3EC",
-    "#2E8BC0",
-    "#AAB2BF",
-    "#1F5F87",
-    "#BBC7D3",
-    "#65B7E6",
+    BRAND_PRIMARY_ACCENT,
+    BRAND_MUTED_EMERALD,
+    BRAND_ELEVATED_HOVER,
+    BRAND_MUTED_DEEP_ACCENT,
+    BRAND_COOL_GREY,
+    BRAND_LIGHT_SURFACE_ACCENT,
+    BRAND_PALE_STEEL,
+    BRAND_STANDARD_HOVER,
 )
 
 
@@ -340,6 +362,7 @@ def build_pdf(
 ) -> io.BytesIO:
     """Render a contract report as a branded, paginated PDF in memory."""
     buffer = io.BytesIO()
+    font_regular, font_bold = _pdf_font_names(branding_path)
     page_size = landscape(letter)
     document = SimpleDocTemplate(
         buffer,
@@ -359,8 +382,8 @@ def build_pdf(
         ParagraphStyle(
             name="GrayhavenTitle",
             parent=styles["Title"],
-            textColor=colors.HexColor("#2B333B"),
-            fontName="Helvetica-Bold",
+            textColor=colors.HexColor(BRAND_DARK_LOGO_CHARCOAL),
+            fontName=font_bold,
             fontSize=24,
             leading=28,
             alignment=0,
@@ -370,8 +393,8 @@ def build_pdf(
         ParagraphStyle(
             name="GrayhavenBody",
             parent=styles["BodyText"],
-            textColor=colors.HexColor("#353B44"),
-            fontName="Helvetica",
+            textColor=colors.HexColor(PDF_BODY_TEXT),
+            fontName=font_regular,
             fontSize=9,
             leading=12,
         )
@@ -408,7 +431,13 @@ def build_pdf(
         TableStyle(
             [
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("LINEBELOW", (0, 0), (-1, -1), 0.8, colors.HexColor("#58ACE0")),
+                (
+                    "LINEBELOW",
+                    (0, 0),
+                    (-1, -1),
+                    0.8,
+                    colors.HexColor(BRAND_PRIMARY_ACCENT),
+                ),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
             ]
         )
@@ -460,7 +489,13 @@ def build_pdf(
         colWidths=[4.3 * inch, 1.1 * inch, 1.35 * inch],
         repeatRows=1,
     )
-    preview_table.setStyle(_pdf_table_style(highlight_last_row=not has_continuation))
+    preview_table.setStyle(
+        _pdf_table_style(
+            font_regular,
+            font_bold,
+            highlight_last_row=not has_continuation,
+        )
+    )
 
     chart = Drawing(220, 205)
     pie = Pie()
@@ -475,16 +510,16 @@ def build_pdf(
     for index, group in enumerate(chart_groups):
         pie.slices[index].fillColor = colors.HexColor(group.color)
     if not chart_groups:
-        pie.slices[0].fillColor = colors.HexColor("#AAB2BF")
+        pie.slices[0].fillColor = colors.HexColor(BRAND_COOL_GREY)
     chart.add(pie)
     chart.add(
         String(
             0,
             194,
             "Time distribution",
-            fontName="Helvetica-Bold",
+            fontName=font_bold,
             fontSize=10,
-            fillColor=colors.HexColor("#353B44"),
+            fillColor=colors.HexColor(PDF_BODY_TEXT),
         )
     )
     overview = Table([[preview_table, chart]], colWidths=[6.8 * inch, 3.1 * inch])
@@ -501,7 +536,13 @@ def build_pdf(
             colWidths=[7.3 * inch, 1.1 * inch, 1.35 * inch],
             repeatRows=1,
         )
-        continuation_table.setStyle(_pdf_table_style(highlight_last_row=True))
+        continuation_table.setStyle(
+            _pdf_table_style(
+                font_regular,
+                font_bold,
+                highlight_last_row=True,
+            )
+        )
         story.extend(
             [
                 Spacer(1, 0.18 * inch),
@@ -515,7 +556,8 @@ def build_pdf(
             Spacer(1, 0.18 * inch),
             Paragraph(
                 "Questions or concerns? "
-                f'<a href={quoteattr(contact_url)} color="#1F5F87">'
+                f"<a href={quoteattr(contact_url)} "
+                f'color="{BRAND_LIGHT_SURFACE_ACCENT}">'
                 "Schedule a meeting with us</a>, and we will be happy to help.",
                 body,
             ),
@@ -554,15 +596,15 @@ def build_pdf(
         ],
         repeatRows=1,
     )
-    detail_table.setStyle(_pdf_table_style(font_size=7))
+    detail_table.setStyle(_pdf_table_style(font_regular, font_bold, font_size=7))
     story.append(detail_table)
 
     def footer(page_canvas: Canvas, _: object) -> None:
         page_canvas.saveState()
-        page_canvas.setStrokeColor(colors.HexColor("#58ACE0"))
+        page_canvas.setStrokeColor(colors.HexColor(BRAND_PRIMARY_ACCENT))
         page_canvas.line(0.55 * inch, 0.34 * inch, 10.45 * inch, 0.34 * inch)
-        page_canvas.setFillColor(colors.HexColor("#1F5F87"))
-        page_canvas.setFont("Helvetica-Bold", 7)
+        page_canvas.setFillColor(colors.HexColor(BRAND_LIGHT_SURFACE_ACCENT))
+        page_canvas.setFont(font_bold, 7)
         page_canvas.drawString(
             0.55 * inch,
             0.19 * inch,
@@ -577,21 +619,26 @@ def build_pdf(
 
 
 def _pdf_table_style(
-    font_size: int = 8, *, highlight_last_row: bool = False
+    font_regular: str,
+    font_bold: str,
+    font_size: int = 8,
+    *,
+    highlight_last_row: bool = False,
 ) -> TableStyle:
     commands: list[tuple[object, ...]] = [
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2A2F36")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#E6EAF0")),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(BRAND_GUNMETAL)),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(BRAND_SOFT_WHITE)),
+        ("FONTNAME", (0, 0), (-1, 0), font_bold),
+        ("FONTNAME", (0, 1), (-1, -1), font_regular),
         ("FONTSIZE", (0, 0), (-1, -1), font_size),
-        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#BBC7D3")),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor(BRAND_PALE_STEEL)),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("ALIGN", (-2, 1), (-1, -1), "RIGHT"),
         (
             "ROWBACKGROUNDS",
             (0, 1),
             (-1, -2 if highlight_last_row else -1),
-            [colors.white, colors.HexColor("#F2F5F7")],
+            [colors.white, colors.HexColor(PDF_ALTERNATE_ROW)],
         ),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
@@ -601,8 +648,28 @@ def _pdf_table_style(
     if highlight_last_row:
         commands.extend(
             [
-                ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E6EAF0")),
-                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                (
+                    "BACKGROUND",
+                    (0, -1),
+                    (-1, -1),
+                    colors.HexColor(BRAND_SOFT_WHITE),
+                ),
+                ("FONTNAME", (0, -1), (-1, -1), font_bold),
             ]
         )
     return TableStyle(commands)
+
+
+def _pdf_font_names(branding_path: Path) -> tuple[str, str]:
+    """Register local Inter fonts when available and return PDF font names."""
+    regular_path = branding_path / "fonts" / "inter-400.ttf"
+    bold_path = branding_path / "fonts" / "inter-700.ttf"
+    if not regular_path.is_file() or not bold_path.is_file():
+        return PDF_FALLBACK_FONT_REGULAR, PDF_FALLBACK_FONT_BOLD
+
+    registered = set(pdfmetrics.getRegisteredFontNames())
+    if PDF_FONT_REGULAR not in registered:
+        pdfmetrics.registerFont(TTFont(PDF_FONT_REGULAR, str(regular_path)))
+    if PDF_FONT_BOLD not in registered:
+        pdfmetrics.registerFont(TTFont(PDF_FONT_BOLD, str(bold_path)))
+    return PDF_FONT_REGULAR, PDF_FONT_BOLD
