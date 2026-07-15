@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block content %}
+<section class="page-heading"><div><p class="eyebrow">OPERATIONS OVERVIEW</p><h1>Contracts</h1><p class="muted">Select a contract to manage tasks and record billable time.</p></div>{% if logged_user.is_admin %}<a class="button button-primary" href="{{ url_for('new_client') }}"><i class="fa-solid fa-plus" aria-hidden="true"></i> Add client</a>{% endif %}</section>
+{% if not clients %}<div class="empty-state panel"><i class="fa-solid fa-folder-open" aria-hidden="true"></i><h2>No clients yet</h2><p>Create your first client to begin tracking contract time.</p></div>{% endif %}
+<div class="client-grid">
+{% for client in clients %}
+  <article class="client-card panel"><div class="card-heading"><div><p class="eyebrow">CLIENT</p><h2>{{ client.name }}</h2></div><i class="fa-solid fa-building" aria-hidden="true"></i></div><p class="contact-line"><i class="fa-solid fa-address-card" aria-hidden="true"></i> {{ client.contact_name }} <span>·</span> <a href="mailto:{{ client.contact_email }}">{{ client.contact_email }}</a></p><div class="contract-list">{% for contract in client.contracts %}<a class="contract-row" href="{{ url_for('contract', contract_id=contract.id) }}"><span><i class="fa-solid fa-file-signature" aria-hidden="true"></i>{{ contract.name }}</span><span class="rate">${{ '%.2f'|format(contract.hourly_rate) }}/hr <i class="fa-solid fa-chevron-right" aria-hidden="true"></i></span></a>{% else %}<p class="muted">No contracts created.</p>{% endfor %}</div>{% if logged_user.is_admin %}<a class="text-link" href="{{ url_for('new_contract', client_id=client.id) }}"><i class="fa-solid fa-plus" aria-hidden="true"></i> Add contract</a>{% endif %}</article>
+{% endfor %}
+</div>
+{% endblock %}
+

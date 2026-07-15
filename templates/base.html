@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Grayhaven Systems LLC Time Tracker{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='fontawesome.min.css') }}?v=20260715">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v=20260715">
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header-inner">
+      <a class="brand" href="{{ url_for('dashboard') }}" aria-label="Grayhaven Systems LLC time tracker home">
+        <img src="{{ url_for('branding_asset', filename='grayhaven-logo-wordmark-dark.svg') }}" alt="Grayhaven Systems LLC">
+        <span class="brand-product">Time Tracker</span>
+      </a>
+      {% if logged_user %}
+      <nav class="app-nav" aria-label="Application navigation">
+        <a href="{{ url_for('dashboard') }}" {% if request.endpoint == 'dashboard' %}aria-current="page"{% endif %}><i class="fa-solid fa-gauge-high" aria-hidden="true"></i> Dashboard</a>
+        <a href="{{ url_for('profile') }}" {% if request.endpoint == 'profile' %}aria-current="page"{% endif %}><i class="fa-solid fa-user" aria-hidden="true"></i> Profile</a>
+        {% if logged_user.is_admin %}<a href="{{ url_for('users') }}" {% if request.endpoint in ('users', 'new_user') %}aria-current="page"{% endif %}><i class="fa-solid fa-users" aria-hidden="true"></i> Users</a>{% endif %}
+        <form method="post" action="{{ url_for('logout') }}"><button class="nav-button" type="submit"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Sign out</button></form>
+      </nav>
+      {% endif %}
+    </div>
+  </header>
+  <main class="page-shell">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}<div class="flash-stack">{% for category, message in messages %}<div class="flash flash-{{ category }}" role="status">{{ message }}</div>{% endfor %}</div>{% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="app-footer"><span>Grayhaven Systems LLC Time Tracker</span><span>Build {{ app_version }}</span></footer>
+</body>
+</html>

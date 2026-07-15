@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Grayhaven Systems LLC - Contract Time Report | {{ report.contract.client.name }} | {{ report.contract.name }}{% endblock %}
+{% block content %}
+<section class="report-page">
+  <div class="report-header"><img src="{{ url_for('branding_asset', filename='grayhaven-logo-wordmark-dark.svg') }}" alt="Grayhaven Systems LLC"><div class="report-meta"><p class="eyebrow">CONFIDENTIAL</p><p>Contract Time Report</p></div></div>
+  <div class="report-title"><p class="eyebrow">{{ report.contract.client.name }}</p><h1>{{ report.contract.name }}</h1><p class="muted">All billable time · ${{ '%.2f'|format(report.contract.hourly_rate) }} per hour</p></div>
+  <section class="report-summary panel"><div class="summary-card"><span>Total duration</span><strong>{{ format_duration(report.total_seconds) }}</strong></div><div class="summary-card"><span>Equivalent cost</span><strong>${{ '%.2f'|format(report.total_cost) }}</strong></div></section>
+  <section class="panel"><div class="panel-heading"><div><p class="eyebrow">SUMMARY</p><h2>Time by task and subtask</h2></div></div><table class="data-table"><thead><tr><th>Task / subtask</th><th>Duration</th><th>Equivalent cost</th></tr></thead><tbody>{% for label, data in report.grouped.items() %}<tr><td>{{ label }}</td><td>{{ format_duration(data.seconds) }}</td><td>${{ '%.2f'|format(data.cost) }}</td></tr>{% else %}<tr><td colspan="3">No completed time has been recorded.</td></tr>{% endfor %}</tbody></table></section>
+  <section class="panel report-detail"><div class="panel-heading"><div><p class="eyebrow">DETAIL</p><h2>Session log</h2></div></div><table class="data-table"><thead><tr><th>User</th><th>Task / subtask</th><th>Start</th><th>End</th><th>Duration</th><th>Cost</th></tr></thead><tbody>{% for entry in report.entries %}<tr><td>{{ entry.user.full_name }}</td><td>{{ entry.task.name }}{% if entry.subtask %} / {{ entry.subtask.name }}{% endif %}</td><td>{{ format_datetime(entry.started_at, report.timezone) }}</td><td>{{ format_datetime(entry.effective_end, report.timezone) }}{% if not entry.stopped_at %} <span class="live-label">active snapshot</span>{% endif %}</td><td>{{ format_duration(entry.seconds) }}</td><td>${{ '%.2f'|format((entry.seconds * report.contract.hourly_rate_cents) / 360000) }}</td></tr>{% else %}<tr><td colspan="6">No sessions have been recorded.</td></tr>{% endfor %}</tbody></table></section>
+  <hr><p class="confidential">CONFIDENTIAL</p>
+</section>
+{% endblock %}
