@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, cast
+from zoneinfo import ZoneInfo
 
 import pyotp
 from flask import (
@@ -58,6 +59,12 @@ from .permissions import (
     TASK_ADD,
     TASK_DELETE,
     TASK_EDIT,
+    TIME_ENTRY_DELETE_ANY,
+    TIME_ENTRY_DELETE_OWN,
+    TIME_ENTRY_EDIT_ANY,
+    TIME_ENTRY_EDIT_OWN,
+    TIME_ENTRY_VIEW_ANY,
+    TIME_ENTRY_VIEW_OWN,
     TIMER_START,
     TIMER_STOP,
     USER_ADD,
@@ -98,6 +105,78 @@ def get_or_404(model: type[Any], identifier: int) -> Any:
     if item is None:
         abort(404)
     return item
+
+
+def time_entry_allowed(entry: TimeEntry, own_permission: str, any_permission: str) -> bool:
+    """Authorize a time entry using the future-facing own/any permission split."""
+    user = cast(User, current_user())
+    return can(any_permission) or (
+        entry.user_id == user.id and can(own_permission)
+    )
+
+
+def parse_assignment(value: str, contract_id: int) -> tuple[Task, Subtask | None]:
+    """Resolve one task or subtask assignment constrained to a contract."""
+    parts = value.split(":")
+    if len(parts) not in {1, 2} or not all(part.isdigit() for part in parts):
+        raise ValueError("Select a valid task or subtask.")
+    task = get_session().get(Task, int(parts[0]))
+    if task is None or task.contract_id != contract_id:
+        raise ValueError("Select a valid task or subtask.")
+    subtask: Subtask | None = None
+    if len(parts) == 2:
+        subtask = get_session().get(Subtask, int(parts[1]))
+        if subtask is None or subtask.task_id != task.id:
+            raise ValueError("Select a valid task or subtask.")
+    return task, subtask
+
+
+def local_datetime_to_utc(
+    value: str,
+    label: str,
+    timezone_name: str,
+    *,
+    original_utc: datetime | None = None,
+) -> datetime:
+    """Parse a browser local datetime and reject DST gaps or ambiguities."""
+    parsed: datetime | None = None
+    for date_format in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M"):
+        try:
+            parsed = datetime.strptime(value, date_format)
+            break
+        except ValueError:
+            continue
+    if parsed is None:
+        raise ValueError(f"{label} must include a valid date and time.")
+    zone = ZoneInfo(timezone_name)
+    candidates: list[datetime] = []
+    for fold in (0, 1):
+        local = parsed.replace(tzinfo=zone, fold=fold)
+        utc_value = local.astimezone(timezone.utc)
+        round_trip = utc_value.astimezone(zone).replace(tzinfo=None)
+        if round_trip == parsed and utc_value not in candidates:
+            candidates.append(utc_value)
+    if not candidates:
+        raise ValueError(f"{label} does not exist because of daylight saving time.")
+    if len(candidates) > 1:
+        if original_utc is not None:
+            original = original_utc.replace(tzinfo=timezone.utc)
+            if original in candidates:
+                return original_utc.replace(microsecond=0)
+        raise ValueError(
+            f"{label} is ambiguous because of daylight saving time; "
+            "choose a time outside the repeated hour."
+        )
+    return candidates[0].replace(tzinfo=None, microsecond=0)
+
+
+def datetime_local_value(value: datetime, timezone_name: str) -> str:
+    """Format a stored UTC timestamp for a datetime-local input."""
+    return (
+        value.replace(tzinfo=timezone.utc)
+        .astimezone(ZoneInfo(timezone_name))
+        .strftime("%Y-%m-%dT%H:%M:%S")
+    )
 
 
 def register_routes(app: Flask) -> None:
@@ -481,6 +560,172 @@ def stop_timer(entry_id: int) -> Any:
     return redirect(
         destination or url_for("main.contract", contract_id=entry.task.contract_id)
     )
+
+
+@main.get("/contracts/<int:contract_id>/sessions")
+@login_required
+def contract_sessions(contract_id: int) -> str:
+    if not (can(TIME_ENTRY_VIEW_OWN) or can(TIME_ENTRY_VIEW_ANY)):
+        abort(403)
+    contract_item = get_session().scalar(
+        select(Contract)
+        .where(Contract.id == contract_id)
+        .options(selectinload(Contract.client))
+    )
+    if contract_item is None:
+        abort(404)
+    statement = (
+        select(TimeEntry)
+        .join(TimeEntry.task)
+        .where(Task.contract_id == contract_id)
+        .options(
+            selectinload(TimeEntry.user),
+            selectinload(TimeEntry.task),
+            selectinload(TimeEntry.subtask),
+        )
+        .order_by(TimeEntry.started_at.desc(), TimeEntry.id.desc())
+    )
+    if not can(TIME_ENTRY_VIEW_ANY):
+        statement = statement.where(
+            TimeEntry.user_id == cast(User, current_user()).id
+        )
+    entries = get_session().scalars(statement).all()
+    snapshot_at = now_utc()
+    session_rows = [
+        {
+            "entry": entry,
+            "ended_at": entry.stopped_at or max(snapshot_at, entry.started_at),
+            "seconds": duration_seconds(
+                entry.started_at,
+                entry.stopped_at or max(snapshot_at, entry.started_at),
+            ),
+            "can_edit": entry.stopped_at is not None
+            and time_entry_allowed(
+                entry, TIME_ENTRY_EDIT_OWN, TIME_ENTRY_EDIT_ANY
+            ),
+            "can_delete": entry.stopped_at is not None
+            and time_entry_allowed(
+                entry, TIME_ENTRY_DELETE_OWN, TIME_ENTRY_DELETE_ANY
+            ),
+        }
+        for entry in entries
+    ]
+    return render_template(
+        "sessions.html",
+        contract=contract_item,
+        session_rows=session_rows,
+        show_users=can(TIME_ENTRY_VIEW_ANY),
+        timezone_info=ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"])),
+    )
+
+
+@main.route("/sessions/<int:entry_id>/edit", methods=["GET", "POST"])
+@login_required
+def edit_time_entry(entry_id: int) -> Any:
+    database = get_session()
+    entry = database.scalar(
+        select(TimeEntry)
+        .where(TimeEntry.id == entry_id)
+        .options(
+            selectinload(TimeEntry.task).selectinload(Task.contract),
+            selectinload(TimeEntry.subtask),
+            selectinload(TimeEntry.user),
+        )
+    )
+    if entry is None:
+        abort(404)
+    if not time_entry_allowed(entry, TIME_ENTRY_EDIT_OWN, TIME_ENTRY_EDIT_ANY):
+        abort(403)
+    if entry.stopped_at is None:
+        abort(409, "Stop an active timer before editing it.")
+    contract_id = entry.task.contract_id
+    tasks = database.scalars(
+        select(Task)
+        .where(Task.contract_id == contract_id)
+        .options(selectinload(Task.subtasks))
+        .order_by(Task.id)
+    ).all()
+    timezone_name = cast(str, current_app.config["DISPLAY_TIMEZONE"])
+    if request.method != "POST":
+        return render_template(
+            "session_form.html",
+            entry=entry,
+            tasks=tasks,
+            timezone_name=timezone_name,
+            start_value=datetime_local_value(entry.started_at, timezone_name),
+            end_value=datetime_local_value(
+                cast(datetime, entry.stopped_at), timezone_name
+            ),
+        )
+    try:
+        task, subtask = parse_assignment(
+            request.form.get("assignment", ""), contract_id
+        )
+        started_at = local_datetime_to_utc(
+            request.form.get("started_at", ""),
+            "Start time",
+            timezone_name,
+            original_utc=entry.started_at,
+        )
+        stopped_at = local_datetime_to_utc(
+            request.form.get("stopped_at", ""),
+            "End time",
+            timezone_name,
+            original_utc=entry.stopped_at,
+        )
+        if stopped_at < started_at:
+            raise ValueError("End time cannot be earlier than start time.")
+    except (OverflowError, ValueError) as exc:
+        flash(str(exc), "error")
+        return redirect(
+            url_for("main.edit_time_entry", entry_id=entry.id), code=303
+        )
+    entry.task = task
+    entry.subtask = subtask
+    entry.started_at = started_at
+    entry.stopped_at = stopped_at
+    database.commit()
+    audit(
+        "time_entry_updated",
+        actor_id=cast(User, current_user()).id,
+        user_id=entry.user_id,
+        contract_id=contract_id,
+        time_entry_id=entry.id,
+    )
+    flash("Time session updated.", "success")
+    return redirect(url_for("main.contract_sessions", contract_id=contract_id))
+
+
+@main.post("/sessions/<int:entry_id>/delete")
+@login_required
+def delete_time_entry(entry_id: int) -> Any:
+    database = get_session()
+    entry = database.scalar(
+        select(TimeEntry)
+        .where(TimeEntry.id == entry_id)
+        .options(selectinload(TimeEntry.task))
+    )
+    if entry is None:
+        abort(404)
+    if not time_entry_allowed(
+        entry, TIME_ENTRY_DELETE_OWN, TIME_ENTRY_DELETE_ANY
+    ):
+        abort(403)
+    if entry.stopped_at is None:
+        abort(409, "Stop an active timer before deleting it.")
+    contract_id = entry.task.contract_id
+    user_id = entry.user_id
+    database.delete(entry)
+    database.commit()
+    audit(
+        "time_entry_deleted",
+        actor_id=cast(User, current_user()).id,
+        user_id=user_id,
+        contract_id=contract_id,
+        time_entry_id=entry_id,
+    )
+    flash("Time session deleted.", "success")
+    return redirect(url_for("main.contract_sessions", contract_id=contract_id))
 
 
 @main.get("/profile")

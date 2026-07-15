@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --deep-graphite: #1c1f24;
   --gunmetal: #2a2f36;
   --slate-grey: #353b44;
@@ -31,7 +32,7 @@ body { margin: 0; min-height: 100vh; color: var(--cool-grey); background: radial
 a { color: var(--primary-accent); text-decoration: none; transition: color 150ms ease, border-color 150ms ease, background 150ms ease; }
 a:hover { color: var(--standard-hover); }
 a:focus-visible { outline: 2px solid var(--primary-accent); outline-offset: 3px; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { cursor: pointer; }
 h1, h2, p { margin-top: 0; }
 h1, h2 { color: var(--soft-white); line-height: 1.2; }
@@ -75,7 +76,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .contract-row .rate i { margin-left: .7rem; color: var(--cool-grey); }
 .button { display: inline-flex; align-items: center; justify-content: center; gap: .55rem; min-height: 42px; padding: .65rem 1rem; border: 1px solid var(--charcoal-border); border-radius: var(--radius); font-size: .87rem; font-weight: 600; transition: all 150ms ease; }
 .button:disabled, .icon-button:disabled { opacity: .42; cursor: not-allowed; }
-.button:focus-visible, .icon-button:focus-visible, input:focus-visible, .text-link:focus-visible, .nav-button:focus-visible { outline: 2px solid var(--primary-accent); outline-offset: 3px; }
+.button:focus-visible, .icon-button:focus-visible, input:focus-visible, select:focus-visible, .text-link:focus-visible, .nav-button:focus-visible { outline: 2px solid var(--primary-accent); outline-offset: 3px; }
 .button-primary { color: var(--deep-graphite); background: var(--primary-accent); border-color: var(--primary-accent); }
 .button-primary:hover { color: var(--deep-graphite); background: var(--elevated-hover); border-color: var(--elevated-hover); }
 .button-secondary { color: var(--soft-white); background: rgb(28 31 36 / 34%); }
@@ -97,7 +98,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .task-panel { padding: 1.8rem; }
 .inline-form, .timer-form, .subtask-add { display: flex; align-items: center; gap: .5rem; }
 .inline-form input { width: 250px; }
-input { min-height: 42px; width: 100%; padding: .65rem .75rem; color: var(--soft-white); background: var(--deep-graphite); border: 1px solid var(--charcoal-border); border-radius: var(--radius); }
+input, select { min-height: 42px; width: 100%; padding: .65rem .75rem; color: var(--soft-white); background: var(--deep-graphite); border: 1px solid var(--charcoal-border); border-radius: var(--radius); }
 input::placeholder { color: #77818e; }
 label { display: grid; gap: .45rem; color: var(--soft-white); font-size: .86rem; font-weight: 500; }
 small { color: var(--cool-grey); font-weight: 400; }
@@ -159,7 +160,9 @@ small { color: var(--cool-grey); font-weight: 400; }
 .timer-elapsed { min-width: 7rem; color: var(--soft-white); font-size: 1.35rem; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
 .status-running { display: inline-flex; align-items: center; gap: .35rem; color: #9be1c6; background: rgb(63 182 139 / 15%); }
 .status-running i { font-size: .42rem; }
-.contract-directory, .user-directory { padding: 1.7rem; }
+.contract-directory, .user-directory, .session-directory { padding: 1.7rem; }
+.table-scroll { overflow-x: auto; }
+.session-table { min-width: 1040px; }
 .error-state { max-width: 720px; margin: 7rem auto; padding: 3rem; text-align: center; }
 .error-state .button { margin-top: 1rem; }
 .report-body { min-width: 1100px; }

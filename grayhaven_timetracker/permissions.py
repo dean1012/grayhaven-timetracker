@@ -22,6 +22,12 @@ TASK_EDIT = "task:edit"
 TASK_DELETE = "task:delete"
 TIMER_START = "timer:start"
 TIMER_STOP = "timer:stop"
+TIME_ENTRY_VIEW_OWN = "time_entry:view_own"
+TIME_ENTRY_VIEW_ANY = "time_entry:view_any"
+TIME_ENTRY_EDIT_OWN = "time_entry:edit_own"
+TIME_ENTRY_EDIT_ANY = "time_entry:edit_any"
+TIME_ENTRY_DELETE_OWN = "time_entry:delete_own"
+TIME_ENTRY_DELETE_ANY = "time_entry:delete_any"
 USER_ADD = "user:add"
 USER_VIEW = "user:view"
 USER_EDIT = "user:edit"
@@ -41,6 +47,12 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             TASK_DELETE,
             TIMER_START,
             TIMER_STOP,
+            TIME_ENTRY_VIEW_OWN,
+            TIME_ENTRY_VIEW_ANY,
+            TIME_ENTRY_EDIT_OWN,
+            TIME_ENTRY_EDIT_ANY,
+            TIME_ENTRY_DELETE_OWN,
+            TIME_ENTRY_DELETE_ANY,
             USER_ADD,
             USER_VIEW,
             USER_EDIT,
@@ -56,6 +68,9 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             TASK_DELETE,
             TIMER_START,
             TIMER_STOP,
+            TIME_ENTRY_VIEW_OWN,
+            TIME_ENTRY_EDIT_OWN,
+            TIME_ENTRY_DELETE_OWN,
         }
     ),
 }
@@ -86,4 +101,3 @@ def permission_required(permission: str) -> Callable[[Callable[P, R]], Callable[
         return wrapped
 
     return decorator
-
