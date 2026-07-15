@@ -33,18 +33,20 @@ a public load-balancer route.
 Set the external origin and browser trust boundary explicitly in production:
 
 ```text
-PUBLIC_BASE_URL=https://time.example.invalid
+PUBLIC_BASE_URL=https://timetracker.example.invalid
 SESSION_COOKIE_SECURE=true
-TRUSTED_HOSTS=time.example.invalid
+TRUSTED_HOSTS=timetracker.example.invalid
 TRUSTED_PROXY_COUNT=1
 ```
 
-Replace the example hostname and proxy count with deployed values. The
+Replace the example origin and proxy count with each deployment target's
+values. Confirm the proxy count against the final staging request path. The
 application refuses an external `PUBLIC_BASE_URL` unless Secure cookies are
 enabled and its hostname matches `TRUSTED_HOSTS`. Configure Nginx to preserve
 the original Host and send the expected forwarded address and scheme headers.
 Do not increase `TRUSTED_PROXY_COUNT` beyond the exact number of trusted proxy
-hops.
+hops. Leave the cookie domain unset so authentication cookies remain host-only
+to the selected deployment origin and are not shared with sibling subdomains.
 
 The application redacts live report tokens from its own logs. Configure the
 reverse proxy to redact `/shared/reports/<token>` paths as well, because proxy
@@ -181,6 +183,10 @@ successful reset:
 - requires the user to replace it immediately after sign-in; and
 - preserves the user's existing TOTP secret.
 
+TOTP codes are single-use. If the administrator just used the current code to
+sign in, wait for the authenticator to display its next code before confirming
+a password reset or other credential rotation.
+
 Deliver the temporary password through an approved channel separate from any
 TOTP provisioning information. If the user has also lost the configured TOTP
 method, password reset alone cannot restore access. Recovery then requires the
@@ -205,6 +211,16 @@ reauthentication. It displays a new password once and invalidates existing
 report browser sessions for every contract under that client. Stored report
 passwords cannot be viewed or recovered.
 
+The shared page is the same live dashboard available to administrators. Active
+session duration and allocated cost advance every second. A same-origin
+background check discovers new, stopped, edited, or deleted timers within a
+few seconds and updates the report without a page reload. Revocation,
+expiration, password rotation, or session expiry ends synchronization and
+freezes the visible values.
+
+PDF reports are static. Generation includes active timers through the exact
+generation instant but does not stop or otherwise modify those timers.
+
 [Back to top](#operations)
 
 ## Timezone Changes
@@ -220,7 +236,11 @@ The same sessions will be rendered in the new local timezone.
 Logs are emitted as one JSON object per line. Access events include HTTP method,
 redacted path, status, elapsed microseconds, source address, user agent, and
 authenticated user identifier where available. Authentication events include
-successful, rejected, and rate-limited logins without passwords or TOTP values.
+accepted password stages, successful logins, expired challenges, and rejected
+or rate-limited attempts without passwords or TOTP values. Unchanged live
+report conditional checks return HTTP 304 and are omitted from access and
+persistent audit records; the initial view, changed report responses, access
+failures, and underlying timer actions remain recorded.
 
 The encrypted database also contains an append-only audit history available to
 administrators under **Audit**. It records authenticated requests, protected

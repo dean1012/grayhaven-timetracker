@@ -20,8 +20,9 @@ import pyotp
 import qrcode
 from argon2 import PasswordHasher, Type
 from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
-from flask import g, redirect, request, session, url_for
-from sqlalchemy import select
+from flask import current_app, g, redirect, request, session, url_for
+from sqlalchemy import select, text
+from sqlalchemy.orm import Session
 
 from .database import get_session
 from .models import User
@@ -30,6 +31,7 @@ PASSWORD_MIN_LENGTH = 32
 PASSWORD_MAX_LENGTH = 1024
 TEMPORARY_PASSWORD_LENGTH = 40
 TEMPORARY_PASSWORD_SPECIALS = "!#$%&*+-=?@^_"  # noqa: S105
+TOTP_REPLAY_KEY_PREFIX = "totp_last_counter:"
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 password_hasher = PasswordHasher(
     time_cost=3,
@@ -141,12 +143,51 @@ def valid_totp_secret(secret: str) -> bool:
     return len(decoded) >= 10
 
 
-def verify_totp(secret: str, token: str) -> bool:
+def matching_totp_counter(secret: str, token: str) -> int | None:
+    """Return the accepted TOTP counter without persisting the secret or token."""
     normalized = token.replace(" ", "").strip()
-    return bool(
-        normalized.isdigit()
-        and len(normalized) == 6
-        and pyotp.TOTP(secret).verify(normalized, valid_window=1)
+    if not normalized.isdigit() or len(normalized) != 6:
+        return None
+    totp = pyotp.TOTP(secret)
+    current_counter = int(now_utc_timestamp()) // totp.interval
+    for counter in range(current_counter - 1, current_counter + 2):
+        if secrets.compare_digest(totp.generate_otp(counter), normalized):
+            return counter
+    return None
+
+
+def verify_totp(secret: str, token: str) -> bool:
+    return matching_totp_counter(secret, token) is not None
+
+
+def consume_totp(user: User, token: str, *, secret: str | None = None) -> bool:
+    """Atomically accept a valid TOTP counter no more than once per account."""
+    selected_secret = secret or user.totp_secret
+    if not selected_secret:
+        return False
+    counter = matching_totp_counter(selected_secret, token)
+    if counter is None:
+        return False
+    result = get_session().execute(
+        text(
+            "INSERT INTO application_metadata (key, value) VALUES (:key, :counter) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value "
+            "WHERE CAST(application_metadata.value AS INTEGER) "
+            "< CAST(excluded.value AS INTEGER) RETURNING value"
+        ),
+        {
+            "key": f"{TOTP_REPLAY_KEY_PREFIX}{user.id}",
+            "counter": str(counter),
+        },
+    )
+    return result.scalar_one_or_none() is not None
+
+
+def reset_totp_replay_state(database: Session, user_id: int) -> None:
+    """Forget a prior factor's counters when that factor is removed or replaced."""
+    database.execute(
+        text("DELETE FROM application_metadata WHERE key = :key"),
+        {"key": f"{TOTP_REPLAY_KEY_PREFIX}{user_id}"},
     )
 
 
@@ -173,10 +214,16 @@ def load_current_user() -> None:
     if not isinstance(user_id, int):
         g.current_user = None
         return
+    authenticated_at = session.get("authenticated_at")
+    now = now_utc_timestamp()
+    maximum_age = current_app.permanent_session_lifetime.total_seconds()
     user = get_session().get(User, user_id)
     if (
         user is None
         or not user.is_enabled
+        or not isinstance(authenticated_at, (int, float))
+        or authenticated_at > now + 60
+        or now - authenticated_at > maximum_age
         or session.get("session_version") != user.session_version
     ):
         session.clear()

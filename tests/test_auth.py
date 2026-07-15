@@ -8,6 +8,7 @@ import pyotp
 
 from grayhaven_timetracker.auth import (
     LoginLimiter,
+    consume_totp,
     generate_temporary_password,
     hash_password,
     normalize_email,
@@ -99,6 +100,7 @@ class TotpAndNavigationTests(unittest.TestCase):
         self.assertFalse(verify_totp(secret, "12345"))
         self.assertFalse(valid_totp_secret("invalid!"))
         self.assertFalse(valid_totp_secret("MY======"))
+        self.assertFalse(consume_totp(User(totp_secret=None), token))
 
     def test_provisioning_uri_and_qr_data(self) -> None:
         user = User(email="person@example.invalid")

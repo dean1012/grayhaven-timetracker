@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Authenticator · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+{% block content %}
+<section class="auth-layout">
+  <div class="auth-panel panel">
+    <img class="auth-logo" src="{{ url_for('main.branding_asset', filename='grayhaven-logo-wordmark-dark.svg') }}" alt="Grayhaven Systems LLC">
+    <form method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <fieldset class="totp-fieldset">
+        <legend><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Authenticator code</legend>
+        <div class="totp-bubbles" data-totp-bubbles>
+          {% for digit in range(1, 7) %}<input type="text" name="totp_digit" inputmode="numeric" pattern="{% if digit == 1 %}[0-9]{1,6}{% else %}[0-9]{1}{% endif %}" maxlength="{{ 6 if digit == 1 else 1 }}" required {% if digit == 1 %}autocomplete="one-time-code" autofocus{% else %}autocomplete="off"{% endif %} aria-label="Authenticator code digit {{ digit }}">{% endfor %}
+        </div>
+      </fieldset>
+      <button class="button button-primary" type="submit"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Verify</button>
+      <a class="auth-back" href="{{ url_for('main.login') }}">Back to sign in</a>
+    </form>
+  </div>
+</section>
+{% endblock %}

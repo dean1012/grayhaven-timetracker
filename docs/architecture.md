@@ -41,6 +41,16 @@ application emits structured access events for each non-health request. It
 also persists authenticated and security-relevant public requests plus
 semantic authentication and state-change events in the encrypted audit table.
 
+Sign-in validates email and password before deciding whether a second factor is
+needed. Accounts with TOTP enabled receive a separate five-minute authenticator
+challenge bound to the user ID and current session version. Only successful
+completion promotes that pending state into an authenticated application
+session. Accepted TOTP counters are atomically recorded and cannot be replayed.
+Restarting the password stage does not clear prior TOTP failures. Accounts
+without TOTP proceed directly after password validation. Authenticated and
+client-report sessions have a fixed 12-hour lifetime that is not extended by
+ordinary requests or live-report synchronization.
+
 [Back to top](#application-architecture)
 
 ## Authorization Model
@@ -70,10 +80,20 @@ created or rotated. Each client has a separate Argon2id report-password hash
 and a monotonically increasing password version.
 
 A client follows the contract link and enters the separately delivered report
-password. Successful verification stores only the client identifier and
-password version in the signed browser session. Password reset increments the
-version, invalidating every existing client report session. Link rotation,
-revocation, and expiration are checked independently for each contract.
+password. Successful verification stores only the client identifier, password
+version, and authentication timestamp in the signed browser session. Password
+reset increments the version, invalidating every existing client report
+session. Link rotation, revocation, expiration, and absolute session age are
+checked independently for each live synchronization request.
+
+The administrator and client HTML reports use the same server-rendered report
+fragment. JavaScript advances active sessions and exactly reconciled group and
+overall billing totals once per second. Every three seconds a same-origin
+conditional request checks a structural report fingerprint. An unchanged
+report returns HTTP 304 without markup or an audit-table write. Timer starts,
+stops, edits, deletions, and report-label or rate changes return replacement
+markup that is installed without reloading the page. Access loss freezes the
+display and marks the report ended.
 
 Shared reports exclude client and contract contact details. The application
 redacts report tokens from access, exception, and persistent audit paths.
@@ -106,7 +126,10 @@ Duration is measured to the second. Cost uses integer contract-rate cents and
 decimal arithmetic. Per-session cent allocation is reconciled to each grouped
 summary so detailed and summary totals remain equal.
 
-An active timer is represented by a null stop timestamp. Reports substitute
+An active timer is represented by a null stop timestamp. HTML reports start
+from an authoritative server snapshot and advance from browser receipt time,
+so a client clock mismatch cannot distort elapsed time. Background
+synchronization remains authoritative for timer state. PDF reports substitute
 their generation timestamp for display and calculations without changing the
 stored timer.
 

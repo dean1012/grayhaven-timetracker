@@ -101,6 +101,7 @@ class AppTestCase(unittest.TestCase):
         email: str = ADMIN_EMAIL,
         password: str = ADMIN_PASSWORD,
         totp_secret: str = ADMIN_TOTP_SECRET,
+        totp_token: str | None = None,
     ) -> FlaskClient:
         """Authenticate a test client with password and TOTP."""
         selected = client or self.client
@@ -109,9 +110,14 @@ class AppTestCase(unittest.TestCase):
             data={
                 "email": email,
                 "password": password,
-                "totp": pyotp.TOTP(totp_secret).now(),
             },
         )
+        if totp_secret:
+            self.assertEqual(response.location, "/login/authenticator")
+            response = selected.post(
+                "/login/authenticator",
+                data={"totp_digit": list(totp_token or pyotp.TOTP(totp_secret).now())},
+            )
         self.assertEqual(response.status_code, 302)
         return selected
 

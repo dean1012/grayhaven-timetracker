@@ -30,8 +30,9 @@ to adapt the runtime branding, deployment, and operating procedures.
 
 - Administrator-provisioned accounts with generated temporary credentials,
   hidden admin and user role mappings, and no email dependency.
-- Argon2id passwords, TOTP two-factor authentication, self-service profile
-  changes, and administrator-assisted password recovery that preserves TOTP.
+- Argon2id passwords, a separate short-lived TOTP challenge when enabled,
+  self-service profile changes, and administrator-assisted password recovery
+  that preserves TOTP.
 - Editable client and contract records with an immutable hourly rate per
   contract.
 - Shared tasks and one optional layer of subtasks.
@@ -42,8 +43,10 @@ to adapt the runtime branding, deployment, and operating procedures.
 - Live client reports without account registration, protected by a high-entropy
   link and a separately delivered client password. Links can be rotated,
   revoked, and configured with optional expiration.
-- Report summaries grouped by task and subtask, including duration, cost, and a
-  pie chart.
+- Live browser-report timers, grouped totals, cost, and distribution that
+  advance every second and discover timer changes without reloading the page.
+- Report summaries grouped by task and subtask, including duration, cost, and
+  a pie chart.
 - Detailed report sessions with user, start time, end time, duration, and cost.
 - SQLCipher encryption at rest and UTC timestamp storage.
 - An administrator-only, append-only audit log for user, public-report, and
@@ -193,6 +196,11 @@ external HTTPS origin when live report links are generated behind a reverse
 proxy. Configuring an external origin requires Secure cookies and a matching
 trusted host; the application refuses to start otherwise.
 
+The application does not hard-code a deployment hostname. Each environment
+must set its own exact `PUBLIC_BASE_URL` and `TRUSTED_HOSTS`, enable Secure
+cookies for HTTPS, retain host-only cookie scope, and set the trusted proxy
+count from its validated request topology.
+
 The branding path must contain:
 
 ```text
@@ -220,9 +228,15 @@ system audit event.
 
 ## Reporting
 
-Administrators can open a contract report in a new browser tab or download the
-same report as a branded PDF with one click. Both forms snapshot active timers
-at report-generation time without stopping or modifying those timers.
+Administrators can open a contract report in a new browser tab or download a
+branded PDF with one click. The browser report is a live dashboard: active
+session rows, grouped totals, overall duration, cost, and distribution advance
+every second. Background conditional requests discover newly started, stopped,
+edited, or deleted timers without a page reload.
+
+PDF generation is intentionally different. Each PDF is an immutable snapshot
+that calculates active timers as though they stopped at the generation instant
+without actually stopping or modifying those timers.
 
 An administrator can also create one live report link per contract. A client
 does not create an account: they open the opaque link and enter the separately
@@ -242,9 +256,9 @@ the configured IANA timezone, and stored timestamps remain UTC.
 The initial design includes SQLCipher encryption, Argon2id password hashing,
 TOTP, CSRF protection, concrete route permissions, secure response headers,
 request-size limits, abuse throttling, administrator reauthentication for
-credential rotation, session invalidation, trusted-host validation, and
-database-level integrity guards. TLS and reverse-proxy access controls remain
-deployment boundaries.
+credential rotation, single-use TOTP counters, fixed session lifetimes, session
+invalidation, trusted-host validation, and database-level integrity guards.
+TLS and reverse-proxy access controls remain deployment boundaries.
 
 See [Security Model](docs/security.md) for assumptions, controls, and known
 limitations. See [Operations](docs/operations.md) before backing up, restoring,

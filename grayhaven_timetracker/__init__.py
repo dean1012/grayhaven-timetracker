@@ -60,6 +60,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=12)
     app.config.setdefault("SESSION_COOKIE_HTTPONLY", True)
     app.config.setdefault("SESSION_COOKIE_NAME", "grayhaven_timetracker_session")
+    app.config.setdefault("SESSION_REFRESH_EACH_REQUEST", False)
     app.config.setdefault("SESSION_COOKIE_SAMESITE", "Lax")
     app.config.setdefault("SESSION_COOKIE_SECURE", False)
     app.config.setdefault("MAX_CONTENT_LENGTH", 1024 * 1024)
@@ -127,13 +128,14 @@ def register_request_logging(app: Flask) -> None:
     def log_request(response: Response) -> Response:
         if request.endpoint == "main.health" and response.status_code < 400:
             return response
+        if (
+            request.endpoint in {"main.report_live", "main.shared_report_live"}
+            and response.status_code == 304
+        ):
+            return response
         started_at = getattr(g, "request_started_at", time.perf_counter())
         user = getattr(g, "current_user", None)
-        logged_path = (
-            "/shared/reports/[redacted]"
-            if request.endpoint == "main.shared_report"
-            else request.path
-        )
+        logged_path = safe_audit_path(request.path) or request.path
         access_logger.info(
             "HTTP request",
             extra={
@@ -158,6 +160,11 @@ def register_request_auditing(app: Flask) -> None:
     def persist_request_audit(response: Response) -> Response:
         if request.endpoint in {"main.health", "main.branding_asset", "static"}:
             return response
+        if (
+            request.endpoint in {"main.report_live", "main.shared_report_live"}
+            and response.status_code == 304
+        ):
+            return response
 
         database = getattr(g, "database_session", None)
         owns_database = database is None
@@ -171,9 +178,10 @@ def register_request_auditing(app: Flask) -> None:
             if isinstance(actor_id, int):
                 actor = typed_database.get(User, actor_id)
         public_action = (
-            request.endpoint == "main.login" and request.method == "POST"
+            request.endpoint in {"main.login", "main.login_authenticator"}
+            and request.method == "POST"
         ) or (
-            request.endpoint == "main.shared_report"
+            request.endpoint in {"main.shared_report", "main.shared_report_live"}
             and response.status_code != 404
             and (
                 request.method == "POST"

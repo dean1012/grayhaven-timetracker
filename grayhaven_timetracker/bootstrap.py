@@ -13,7 +13,12 @@ from flask import Flask
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .auth import normalize_email, required_text, valid_totp_secret
+from .auth import (
+    normalize_email,
+    required_text,
+    reset_totp_replay_state,
+    valid_totp_secret,
+)
 from .config import ConfigurationError
 from .models import ApplicationMetadata, TimeEntry, User
 
@@ -345,9 +350,12 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
             changed_by_email[spec.email] = True
         else:
             prior_password, prior_totp = _prior_fingerprints(database, spec)
+            prior_totp_secret = user.totp_secret
             changed_by_email[spec.email] = _apply_identity_and_authentication(
                 user, spec, prior_password, prior_totp
             )
+            if user.totp_secret != prior_totp_secret:
+                reset_totp_replay_state(database, user.id)
             if spec.role == "admin" and spec.enabled:
                 changed_by_email[spec.email] = changed_by_email[spec.email] or (
                     user.role != "admin" or not user.is_enabled

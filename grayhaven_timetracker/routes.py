@@ -33,6 +33,7 @@ from sqlalchemy.orm import selectinload
 from .audit import record_audit_event
 from .auth import (
     LoginLimiter,
+    consume_totp,
     current_user,
     find_user_by_email,
     generate_temporary_password,
@@ -40,15 +41,16 @@ from .auth import (
     load_current_user,
     login_required,
     normalize_email,
+    now_utc_timestamp,
     password_error,
     password_hasher,
     provisioning_uri,
     qr_data_uri,
     required_text,
+    reset_totp_replay_state,
     safe_next_url,
     verify_password,
     verify_password_constant_time,
-    verify_totp,
 )
 from .bootstrap import is_deployment_managed_user
 from .database import get_session, health_check
@@ -93,12 +95,14 @@ from .permissions import (
     permission_required,
 )
 from .reports import (
+    ContractReport,
     build_contract_report,
     build_pdf,
     duration_seconds,
     format_datetime,
     format_duration,
     format_money,
+    report_state_etag,
 )
 
 main = Blueprint("main", __name__)
@@ -110,6 +114,18 @@ sensitive_action_limiter = LoginLimiter()
 REPORT_LINK_EXPIRATION_DAYS = frozenset({7, 30, 90, 365})
 AUDIT_SOURCES = frozenset({"admin", "user", "public", "system"})
 AUDIT_PAGE_SIZE = 50
+PENDING_LOGIN_TTL_SECONDS = 300
+PENDING_LOGIN_SESSION_KEYS = (
+    "pending_login_expires_at",
+    "pending_login_next",
+    "pending_login_session_version",
+    "pending_login_user_id",
+)
+SHARED_REPORT_SESSION_KEYS = (
+    "shared_report_authenticated_at",
+    "shared_report_client_id",
+    "shared_report_password_version",
+)
 
 
 def now_utc() -> datetime:
@@ -154,11 +170,44 @@ def report_token_hash(token: str) -> str:
 
 def shared_report_access_allowed(client: Client) -> bool:
     """Validate client report access stored in the signed browser session."""
-    return bool(
+    authenticated_at = session.get("shared_report_authenticated_at")
+    now = now_utc_timestamp()
+    maximum_age = current_app.permanent_session_lifetime.total_seconds()
+    allowed = bool(
         session.get("shared_report_client_id") == client.id
         and session.get("shared_report_password_version")
         == client.report_password_version
+        and isinstance(authenticated_at, (int, float))
+        and authenticated_at <= now + 60
+        and now - authenticated_at <= maximum_age
     )
+    if not allowed:
+        for key in SHARED_REPORT_SESSION_KEYS:
+            session.pop(key, None)
+    return allowed
+
+
+def get_shared_report_contract(token: str) -> Contract:
+    """Resolve an active report link without disclosing why lookup failed."""
+    if (
+        not 32 <= len(token) <= 128
+        or not token.isascii()
+        or any(not (character.isalnum() or character in "-_") for character in token)
+    ):
+        abort(404)
+    contract = get_session().scalar(
+        select(Contract)
+        .where(Contract.report_token_hash == report_token_hash(token))
+        .options(selectinload(Contract.client))
+    )
+    if contract is None or (
+        contract.report_expires_at is not None
+        and contract.report_expires_at <= now_utc()
+    ):
+        abort(404)
+    if contract.client.report_password_hash is None:
+        abort(404)
+    return contract
 
 
 def sensitive_action_credentials_valid(user: User) -> bool:
@@ -166,10 +215,9 @@ def sensitive_action_credentials_valid(user: User) -> bool:
     password_valid = verify_password(
         user.password_hash, request.form.get("current_password", "")
     )
-    totp_valid = not user.totp_secret or verify_totp(
-        user.totp_secret, request.form.get("totp", "")
-    )
-    return password_valid and totp_valid
+    if not password_valid:
+        return False
+    return not user.totp_secret or consume_totp(user, request.form.get("totp", ""))
 
 
 def sensitive_action_rate_key(user: User) -> str:
@@ -346,11 +394,57 @@ def health() -> tuple[dict[str, str], int] | dict[str, str]:
     return {"status": "ok"}
 
 
+def clear_pending_login() -> None:
+    """Remove an incomplete two-stage login without disturbing flash state."""
+    for key in PENDING_LOGIN_SESSION_KEYS:
+        session.pop(key, None)
+
+
+def pending_login_user() -> User | None:
+    """Return the account bound to a valid, short-lived TOTP challenge."""
+    user_id = session.get("pending_login_user_id")
+    session_version = session.get("pending_login_session_version")
+    expires_at = session.get("pending_login_expires_at")
+    if (
+        not isinstance(user_id, int)
+        or not isinstance(session_version, int)
+        or not isinstance(expires_at, (int, float))
+        or expires_at <= now_utc_timestamp()
+    ):
+        clear_pending_login()
+        return None
+    user = get_session().get(User, user_id)
+    if (
+        user is None
+        or not user.is_enabled
+        or not user.totp_secret
+        or user.session_version != session_version
+    ):
+        clear_pending_login()
+        return None
+    return user
+
+
+def complete_login(user: User, ip: str, next_url: str | None) -> Any:
+    """Promote a fully authenticated account into the application session."""
+    login_limiter.clear(f"{ip}|{user.email}")
+    session.clear()
+    session.permanent = True
+    session["authenticated_at"] = now_utc_timestamp()
+    session["user_id"] = user.id
+    session["session_version"] = user.session_version
+    audit("login_succeeded", user_id=user.id, ip=ip)
+    if user.password_change_required:
+        return redirect(url_for("main.required_password_change"))
+    return redirect(next_url or url_for("main.dashboard"))
+
+
 @main.route("/login", methods=["GET", "POST"])
 def login() -> Any:
     if current_user() is not None:
         return redirect(url_for("main.dashboard"))
     if request.method != "POST":
+        clear_pending_login()
         return render_template("login.html")
 
     raw_email = request.form.get("email", "")
@@ -378,29 +472,58 @@ def login() -> Any:
         flash("The sign-in information was not accepted.", "error")
         return render_template("login.html"), 401
 
-    if user.totp_secret and not verify_totp(
-        user.totp_secret, request.form.get("totp", "")
-    ):
-        login_limiter.record_failure(rate_key)
-        login_ip_limiter.record_failure(ip)
-        audit("login_rejected", email=email, ip=ip, reason="totp")
-        flash("The sign-in information was not accepted.", "error")
-        return render_template("login.html"), 401
-
     if password_hasher.check_needs_rehash(user.password_hash):
         user.password_hash = password_hasher.hash(request.form.get("password", ""))
         get_session().commit()
-    login_limiter.clear(rate_key)
+    next_url = safe_next_url(request.args.get("next"))
+    if not user.totp_secret:
+        return complete_login(user, ip, next_url)
+
     session.clear()
-    session.permanent = True
-    session["user_id"] = user.id
-    session["session_version"] = user.session_version
-    audit("login_succeeded", user_id=user.id, ip=ip)
-    if user.password_change_required:
-        return redirect(url_for("main.required_password_change"))
-    return redirect(
-        safe_next_url(request.args.get("next")) or url_for("main.dashboard")
+    session.permanent = False
+    session["pending_login_user_id"] = user.id
+    session["pending_login_session_version"] = user.session_version
+    session["pending_login_expires_at"] = (
+        now_utc_timestamp() + PENDING_LOGIN_TTL_SECONDS
     )
+    if next_url:
+        session["pending_login_next"] = next_url
+    audit("login_password_accepted", email=user.email, ip=ip)
+    return redirect(url_for("main.login_authenticator"))
+
+
+@main.route("/login/authenticator", methods=["GET", "POST"])
+def login_authenticator() -> Any:
+    if current_user() is not None:
+        return redirect(url_for("main.dashboard"))
+    had_pending_login = any(key in session for key in PENDING_LOGIN_SESSION_KEYS)
+    user = pending_login_user()
+    if user is None:
+        if had_pending_login:
+            audit("login_challenge_rejected", reason="expired_or_invalidated")
+        flash("Your sign-in session expired. Please sign in again.", "error")
+        return redirect(url_for("main.login"))
+    if request.method != "POST":
+        return render_template("login_authenticator.html")
+
+    ip = request.remote_addr or "unknown"
+    rate_key = f"{ip}|{user.email}"
+    if login_limiter.blocked(rate_key) or login_ip_limiter.blocked(ip):
+        audit("login_rate_limited", email=user.email, ip=ip, stage="authenticator")
+        abort(429)
+    digits = request.form.getlist("totp_digit")
+    token = "".join(digit.strip() for digit in digits)
+    if not consume_totp(user, token):
+        login_limiter.record_failure(rate_key)
+        login_ip_limiter.record_failure(ip)
+        audit("login_rejected", email=user.email, ip=ip, reason="totp")
+        flash("The authenticator code was not accepted.", "error")
+        return render_template("login_authenticator.html"), 401
+
+    get_session().commit()
+    pending_next = session.get("pending_login_next")
+    next_url = safe_next_url(pending_next if isinstance(pending_next, str) else None)
+    return complete_login(user, ip, next_url)
 
 
 @main.post("/logout")
@@ -1259,7 +1382,9 @@ def confirm_totp() -> Any:
     if user.totp_secret:
         abort(409, "Disable the active two-factor method before setting up a new one.")
     secret = user.pending_totp_secret
-    if not secret or not verify_totp(secret, request.form.get("totp", "")):
+    if not secret or not consume_totp(
+        user, request.form.get("totp", ""), secret=secret
+    ):
         flash("The verification code was not accepted. Setup was not enabled.", "error")
         return redirect(url_for("main.profile")), 400
     user.totp_secret = secret
@@ -1280,11 +1405,12 @@ def disable_totp() -> Any:
         return redirect(url_for("main.profile"))
     if not verify_password(
         user.password_hash, request.form.get("current_password", "")
-    ) or not verify_totp(user.totp_secret, request.form.get("totp", "")):
+    ) or not consume_totp(user, request.form.get("totp", "")):
         flash("The password or verification code was not accepted.", "error")
         return redirect(url_for("main.profile")), 400
     user.totp_secret = None
     user.pending_totp_secret = None
+    reset_totp_replay_state(get_session(), user.id)
     user.session_version += 1
     get_session().commit()
     session["session_version"] = user.session_version
@@ -1600,6 +1726,27 @@ def toggle_user_admin(user_id: int) -> Any:
 # ---------------------------------------------------------------------------
 
 
+def live_report_response(
+    report: ContractReport, *, shared_report: bool, live_report_url: str
+) -> Any:
+    """Return changed report markup or an inexpensive not-modified response."""
+    etag = report_state_etag(report)
+    if request.if_none_match.contains(etag):
+        response = current_app.response_class(status=304)
+    else:
+        response = current_app.make_response(
+            render_template(
+                "_report_content.html",
+                report=report,
+                shared_report=shared_report,
+                report_etag=etag,
+                live_report_url=live_report_url,
+            )
+        )
+    response.set_etag(etag)
+    return response
+
+
 @main.post("/contracts/<int:contract_id>/report-link")
 @permission_required(REPORT_SHARE)
 def create_report_link(contract_id: int) -> Any:
@@ -1665,26 +1812,8 @@ def revoke_report_link(contract_id: int) -> Any:
 
 @main.route("/shared/reports/<token>", methods=["GET", "POST"])
 def shared_report(token: str) -> Any:
-    if (
-        not 32 <= len(token) <= 128
-        or not token.isascii()
-        or any(not (character.isalnum() or character in "-_") for character in token)
-    ):
-        abort(404)
-    contract_item = get_session().scalar(
-        select(Contract)
-        .where(Contract.report_token_hash == report_token_hash(token))
-        .options(selectinload(Contract.client))
-    )
-    if contract_item is None or (
-        contract_item.report_expires_at is not None
-        and contract_item.report_expires_at <= now_utc()
-    ):
-        abort(404)
+    contract_item = get_shared_report_contract(token)
     client_item = contract_item.client
-    password_hash = client_item.report_password_hash
-    if password_hash is None:
-        abort(404)
     if not shared_report_access_allowed(client_item):
         if request.method != "POST":
             return render_template("shared_report_login.html", contract=contract_item)
@@ -1699,7 +1828,7 @@ def shared_report(token: str) -> Any:
             )
             abort(429)
         if not verify_password(
-            password_hash,
+            cast(str, client_item.report_password_hash),
             request.form.get("report_password", ""),
         ):
             shared_report_limiter.record_failure(rate_key)
@@ -1715,6 +1844,7 @@ def shared_report(token: str) -> Any:
             ), 401
         shared_report_limiter.clear(rate_key)
         session.permanent = True
+        session["shared_report_authenticated_at"] = now_utc_timestamp()
         session["shared_report_client_id"] = client_item.id
         session["shared_report_password_version"] = client_item.report_password_version
         audit(
@@ -1732,7 +1862,29 @@ def shared_report(token: str) -> Any:
         contract_id=contract_item.id,
         ip=request.remote_addr,
     )
-    return render_template("report.html", report=report, shared_report=True)
+    etag = report_state_etag(report)
+    return render_template(
+        "report.html",
+        report=report,
+        shared_report=True,
+        report_etag=etag,
+        live_report_url=url_for("main.shared_report_live", token=token),
+    )
+
+
+@main.get("/shared/reports/<token>/live")
+def shared_report_live(token: str) -> Any:
+    contract_item = get_shared_report_contract(token)
+    if not shared_report_access_allowed(contract_item.client):
+        abort(401)
+    report = build_contract_report(
+        get_session(), contract_item, cast(str, current_app.config["DISPLAY_TIMEZONE"])
+    )
+    return live_report_response(
+        report,
+        shared_report=True,
+        live_report_url=url_for("main.shared_report_live", token=token),
+    )
 
 
 @main.get("/reports/<int:contract_id>")
@@ -1754,7 +1906,34 @@ def report_view(contract_id: int) -> str:
         client_id=contract_item.client_id,
         contract_id=contract_item.id,
     )
-    return render_template("report.html", report=report)
+    etag = report_state_etag(report)
+    return render_template(
+        "report.html",
+        report=report,
+        shared_report=False,
+        report_etag=etag,
+        live_report_url=url_for("main.report_live", contract_id=contract_id),
+    )
+
+
+@main.get("/reports/<int:contract_id>/live")
+@permission_required(REPORT_VIEW)
+def report_live(contract_id: int) -> Any:
+    contract_item = get_session().scalar(
+        select(Contract)
+        .where(Contract.id == contract_id)
+        .options(selectinload(Contract.client))
+    )
+    if contract_item is None:
+        abort(404)
+    report = build_contract_report(
+        get_session(), contract_item, cast(str, current_app.config["DISPLAY_TIMEZONE"])
+    )
+    return live_report_response(
+        report,
+        shared_report=False,
+        live_report_url=url_for("main.report_live", contract_id=contract_id),
+    )
 
 
 @main.get("/reports/<int:contract_id>.pdf")

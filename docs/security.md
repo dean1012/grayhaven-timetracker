@@ -51,13 +51,20 @@ internal contact details.
   receive a unique TOTP secret. Disabling an active method requires the current
   password and TOTP.
 - Login checks use a dummy Argon2id hash for unknown users and bounded in-memory
-  throttles by account and source address.
+  throttles by account and source address. TOTP is requested on a separate page
+  only after password validation, using a five-minute challenge bound to the
+  account's current session version. The same throttles cover rejected TOTP
+  codes, restarting the password stage cannot reset TOTP failures, and each
+  accepted TOTP counter is atomically recorded for single-use enforcement.
 - Administrator-assisted password recovery generates a temporary password,
   invalidates existing sessions, forces a password change, preserves TOTP, and
   sends no email.
 - User-password and client-report-password rotation require the acting
   administrator's current password and TOTP and apply a separate abuse limit.
-- Session cookies are HTTP-only and SameSite Lax. Production must enable Secure
+- Session cookies are HTTP-only and SameSite Lax. Authenticated and client
+  report sessions have a fixed 12-hour lifetime and are not refreshed by
+  ordinary requests. Authentication clears pre-login session state before
+  establishing the authenticated session. Production must enable Secure
   cookies behind TLS.
 - State changes use POST requests and CSRF tokens.
 - Stable permissions are enforced at route boundaries even though the current
@@ -73,7 +80,8 @@ internal contact details.
   updates or deletion.
 - Report links store only SHA-256 token hashes. Client report passwords use
   Argon2id, can be rotated independently, and invalidate existing report
-  browser sessions by version.
+  browser sessions by version. Every live synchronization rechecks link state,
+  expiration, password version, and client-report session age.
 - Security headers deny framing, cross-origin resource use, external scripts,
   and browser capabilities not needed by the application.
 - Error responses omit internal exception and database details.

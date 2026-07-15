@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -14,7 +15,11 @@ from sqlalchemy import func, select, text
 
 from grayhaven_timetracker import routes
 from grayhaven_timetracker.audit import record_audit_event
-from grayhaven_timetracker.auth import LoginLimiter, verify_password
+from grayhaven_timetracker.auth import (
+    LoginLimiter,
+    reset_totp_replay_state,
+    verify_password,
+)
 from grayhaven_timetracker.database import get_session, session_scope
 from grayhaven_timetracker.models import (
     AuditEvent,
@@ -35,6 +40,12 @@ from tests.helpers import (
 )
 
 
+def next_totp(secret: str) -> str:
+    """Return the next counter's code for a second MFA event in one test."""
+    totp = pyotp.TOTP(secret)
+    return totp.generate_otp(int(time.time()) // totp.interval + 1)
+
+
 class AuthenticationRouteTests(AppTestCase):
     def test_login_without_totp_when_account_has_not_enrolled_it(self) -> None:
         with session_scope(self.app) as database:
@@ -47,18 +58,59 @@ class AuthenticationRouteTests(AppTestCase):
         )
         self.assertEqual(accepted.location, "/")
 
+    def test_authenticated_session_has_an_absolute_lifetime(self) -> None:
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.totp_secret = None
+            reset_totp_replay_state(database, admin.id)
+        maximum_age = self.app.permanent_session_lifetime.total_seconds()
+        invalid_ages: tuple[object, ...] = (
+            None,
+            "invalid",
+            time.time() + 3600,
+            time.time() - maximum_age - 1,
+        )
+        for authenticated_at in invalid_ages:
+            with self.subTest(authenticated_at=authenticated_at):
+                client = self.app.test_client()
+                self.login(client, totp_secret="")
+                with client.session_transaction() as authenticated_session:
+                    if authenticated_at is None:
+                        authenticated_session.pop("authenticated_at")
+                    else:
+                        authenticated_session["authenticated_at"] = authenticated_at
+                response = client.get("/")
+                self.assertEqual(response.status_code, 302)
+                self.assertTrue(response.location.startswith("/login"))
+
     def test_login_logout_head_and_safe_next_workflow(self) -> None:
         self.assertEqual(self.client.get("/").status_code, 302)
         self.assertIn("next=/", self.client.get("/").location)
-        self.assertEqual(self.client.get("/login").status_code, 200)
+        login_page = self.client.get("/login")
+        self.assertEqual(login_page.status_code, 200)
+        self.assertIn(b'class="auth-page"', login_page.data)
+        self.assertNotIn(b'class="app-header"', login_page.data)
+        self.assertNotIn(b"SECURE WORK SESSION MANAGEMENT", login_page.data)
+        self.assertNotIn(b'name="totp_digit"', login_page.data)
+        self.assertIn(b"fa-envelope", login_page.data)
+        self.assertIn(b"fa-lock", login_page.data)
         self.assertEqual(self.client.head("/login").status_code, 200)
         rejected = self.client.post(
             "/login", data={"email": ADMIN_EMAIL, "password": "wrong", "totp": "000000"}
         )
         self.assertEqual(rejected.status_code, 401)
-        rejected_totp = self.client.post(
+        challenge = self.client.post(
             "/login",
-            data={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD, "totp": "000000"},
+            data={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+        )
+        self.assertEqual(challenge.location, "/login/authenticator")
+        challenge_page = self.client.get(challenge.location)
+        self.assertEqual(challenge_page.data.count(b'name="totp_digit"'), 6)
+        self.assertIn(b"data-totp-bubbles", challenge_page.data)
+        rejected_totp = self.client.post(
+            "/login/authenticator",
+            data={"totp_digit": list("000000")},
         )
         self.assertEqual(rejected_totp.status_code, 401)
         weak_hash = PasswordHasher(
@@ -70,22 +122,96 @@ class AuthenticationRouteTests(AppTestCase):
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
             assert admin is not None
             admin.password_hash = weak_hash
-        accepted = self.client.post(
+        accepted_password = self.client.post(
             "/login?next=/profile",
             data={
                 "email": f" {ADMIN_EMAIL.upper()} ",
                 "password": ADMIN_PASSWORD,
-                "totp": pyotp.TOTP(ADMIN_TOTP_SECRET).now(),
             },
         )
-        self.assertEqual(accepted.location, "/profile")
+        self.assertEqual(accepted_password.location, "/login/authenticator")
         with session_scope(self.app) as database:
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
             assert admin is not None
             self.assertNotEqual(admin.password_hash, weak_hash)
+        accepted_token = pyotp.TOTP(ADMIN_TOTP_SECRET).now()
+        accepted = self.client.post(
+            "/login/authenticator",
+            data={"totp_digit": list(accepted_token)},
+        )
+        self.assertEqual(accepted.location, "/profile")
         self.assertEqual(self.client.get("/login").location, "/")
+        self.assertEqual(self.client.get("/login/authenticator").location, "/")
         self.assertEqual(self.client.post("/logout").status_code, 302)
         self.assertEqual(self.client.get("/profile").status_code, 302)
+        self.assertEqual(
+            self.client.post(
+                "/login", data={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+            ).location,
+            "/login/authenticator",
+        )
+        replayed = self.client.post(
+            "/login/authenticator",
+            data={"totp_digit": list(accepted_token)},
+        )
+        self.assertEqual(replayed.status_code, 401)
+
+    def test_authenticator_challenge_expires_and_rate_limits(self) -> None:
+        no_challenge = self.client.get("/login/authenticator")
+        self.assertEqual(no_challenge.location, "/login")
+
+        challenge = self.client.post(
+            "/login",
+            data={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+        )
+        self.assertEqual(challenge.location, "/login/authenticator")
+        with self.client.session_transaction() as pending_session:
+            pending_session["pending_login_expires_at"] = 0
+        self.assertEqual(self.client.get("/login/authenticator").location, "/login")
+
+        self.client.post(
+            "/login",
+            data={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+        )
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.session_version += 1
+        self.assertEqual(self.client.get("/login/authenticator").location, "/login")
+
+        self.client.post(
+            "/login",
+            data={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+        )
+        routes.login_limiter = LoginLimiter(limit=1)
+        rejected = self.client.post(
+            "/login/authenticator",
+            data={"totp_digit": list("000000")},
+        )
+        self.assertEqual(rejected.status_code, 401)
+        limited = self.client.post(
+            "/login/authenticator",
+            data={"totp_digit": list("000000")},
+        )
+        self.assertEqual(limited.status_code, 429)
+
+    def test_restarting_password_stage_does_not_reset_totp_throttling(self) -> None:
+        routes.login_limiter = LoginLimiter(limit=1)
+        challenge = self.client.post(
+            "/login",
+            data={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+        )
+        self.assertEqual(challenge.location, "/login/authenticator")
+        rejected = self.client.post(
+            "/login/authenticator",
+            data={"totp_digit": list("000000")},
+        )
+        self.assertEqual(rejected.status_code, 401)
+        restarted = self.client.post(
+            "/login",
+            data={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+        )
+        self.assertEqual(restarted.status_code, 429)
 
     def test_login_rejects_disabled_user_and_rate_limits_failures(self) -> None:
         user = self.create_user(enabled=False)
@@ -487,7 +613,7 @@ class ClientContractTaskRouteTests(AppTestCase):
                 f"/clients/{client_id}/report-password/reset",
                 data={
                     "current_password": ADMIN_PASSWORD,
-                    "totp": pyotp.TOTP(ADMIN_TOTP_SECRET).now(),
+                    "totp": next_totp(ADMIN_TOTP_SECRET),
                 },
             )
         self.assertEqual(reset_password.status_code, 200)
@@ -759,6 +885,7 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
             assert admin is not None
             admin.totp_secret = None
+            reset_totp_replay_state(database, admin.id)
         setup = self.client.post("/profile/totp/setup")
         self.assertEqual(setup.status_code, 200)
         with session_scope(self.app) as database:
@@ -789,7 +916,7 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                 "/profile/totp/disable",
                 data={
                     "current_password": ADMIN_PASSWORD,
-                    "totp": pyotp.TOTP(pending).now(),
+                    "totp": next_totp(pending),
                 },
             ).status_code,
             302,
@@ -973,6 +1100,7 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             email="corrected@example.invalid",
             password=password,
             totp_secret=secret,
+            totp_token=next_totp(secret),
         )
 
         managed_email_change = self.client.post(
@@ -1026,7 +1154,7 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                 f"/users/{user.id}/reset-password",
                 data={
                     "current_password": ADMIN_PASSWORD,
-                    "totp": pyotp.TOTP(ADMIN_TOTP_SECRET).now(),
+                    "totp": next_totp(ADMIN_TOTP_SECRET),
                 },
             )
         self.assertEqual(reset.status_code, 200)
@@ -1035,22 +1163,22 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         self.assertEqual(self.client.post("/users/1/reset-password").status_code, 409)
 
         recovered = self.app.test_client()
-        rejected_totp = recovered.post(
+        challenge = recovered.post(
             "/login",
             data={
                 "email": user.email,
                 "password": temporary_password,
-                "totp": "000000",
             },
+        )
+        self.assertEqual(challenge.location, "/login/authenticator")
+        rejected_totp = recovered.post(
+            "/login/authenticator",
+            data={"totp_digit": list("000000")},
         )
         self.assertEqual(rejected_totp.status_code, 401)
         accepted = recovered.post(
-            "/login",
-            data={
-                "email": user.email,
-                "password": temporary_password,
-                "totp": pyotp.TOTP(secret).now(),
-            },
+            "/login/authenticator",
+            data={"totp_digit": list(next_totp(secret))},
         )
         self.assertEqual(accepted.location, "/profile/password/change-required")
         self.assertEqual(
@@ -1096,12 +1224,49 @@ class ReportAndSessionRouteTests(AppTestCase):
         html = self.client.get(f"/reports/{self.seed.contract_id}")
         self.assertEqual(html.status_code, 200)
         self.assertIn(b"Contract Time Report", html.data)
+        self.assertIn(b"data-live-report", html.data)
+        self.assertIn(
+            f'data-live-url="/reports/{self.seed.contract_id}/live"'.encode(),
+            html.data,
+        )
+        etag_match = re.search(rb'data-live-etag="([0-9a-f]{64})"', html.data)
+        assert etag_match is not None
+        etag = etag_match.group(1).decode()
+        unchanged = self.client.get(
+            f"/reports/{self.seed.contract_id}/live",
+            headers={"If-None-Match": f'"{etag}"'},
+        )
+        self.assertEqual(unchanged.status_code, 304)
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            task = database.get(Task, self.seed.other_task_id)
+            assert admin and task
+            database.add(TimeEntry(user=admin, task=task, started_at=datetime.now()))
+        changed = self.client.get(
+            f"/reports/{self.seed.contract_id}/live",
+            headers={"If-None-Match": f'"{etag}"'},
+        )
+        self.assertEqual(changed.status_code, 200)
+        self.assertIn(b'data-active="true"', changed.data)
         pdf = self.client.get(f"/reports/{self.seed.contract_id}.pdf")
         self.assertEqual(pdf.status_code, 200)
         self.assertEqual(pdf.mimetype, "application/pdf")
         self.assertTrue(pdf.data.startswith(b"%PDF-"))
+        with session_scope(self.app) as database:
+            active_entry = database.scalar(
+                select(TimeEntry).where(TimeEntry.stopped_at.is_(None))
+            )
+            assert active_entry is not None
+            self.assertIsNone(active_entry.stopped_at)
         self.assertEqual(self.client.get("/reports/9999").status_code, 404)
+        self.assertEqual(self.client.get("/reports/9999/live").status_code, 404)
         self.assertEqual(self.client.get("/reports/9999.pdf").status_code, 404)
+        self.assertEqual(
+            self.app.test_client()
+            .get(f"/reports/{self.seed.contract_id}/live")
+            .status_code,
+            302,
+        )
 
     def test_live_client_report_links_are_private_rotatable_and_revocable(
         self,
@@ -1206,6 +1371,36 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertEqual(shared.status_code, 200)
         self.assertIn(b"Live Client Report", shared.data)
         self.assertNotIn(b"morgan@example.invalid", shared.data)
+        shared_etag_match = re.search(rb'data-live-etag="([0-9a-f]{64})"', shared.data)
+        assert shared_etag_match is not None
+        shared_etag = shared_etag_match.group(1).decode()
+        self.assertEqual(
+            self.app.test_client()
+            .get(f"/shared/reports/{first_token}/live")
+            .status_code,
+            401,
+        )
+        live = anonymous.get(
+            f"/shared/reports/{first_token}/live",
+            headers={"If-None-Match": f'"{shared_etag}"'},
+        )
+        self.assertEqual(live.status_code, 304)
+        self.assertEqual(live.headers.get("ETag"), f'"{shared_etag}"')
+        with anonymous.session_transaction() as report_session:
+            report_session["shared_report_authenticated_at"] = (
+                time.time() - self.app.permanent_session_lifetime.total_seconds() - 1
+            )
+        self.assertEqual(
+            anonymous.get(f"/shared/reports/{first_token}/live").status_code,
+            401,
+        )
+        self.assertEqual(
+            anonymous.post(
+                f"/shared/reports/{first_token}",
+                data={"report_password": report_password},
+            ).status_code,
+            200,
+        )
 
         with patch(
             "grayhaven_timetracker.routes.secrets.token_urlsafe",
@@ -1232,7 +1427,7 @@ class ReportAndSessionRouteTests(AppTestCase):
                 f"/clients/{self.seed.client_id}/report-password/reset",
                 data={
                     "current_password": ADMIN_PASSWORD,
-                    "totp": pyotp.TOTP(ADMIN_TOTP_SECRET).now(),
+                    "totp": next_totp(ADMIN_TOTP_SECRET),
                 },
             )
         self.assertEqual(password_reset.status_code, 200)

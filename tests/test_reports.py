@@ -23,6 +23,7 @@ from grayhaven_timetracker.reports import (
     format_datetime,
     format_duration,
     format_money,
+    report_state_etag,
 )
 from tests.helpers import ADMIN_EMAIL, AppTestCase
 
@@ -70,12 +71,12 @@ class ContractReportTests(AppTestCase):
             task = database.get(Task, seed.task_id)
             assert admin and contract and task
             database.add(
-                TimeEntry(
+                active_entry := TimeEntry(
                     user=admin,
                     task=task,
                     started_at=snapshot - timedelta(seconds=3),
                     stopped_at=None,
-                )
+                ),
             )
             database.flush()
             report = build_contract_report(
@@ -99,6 +100,43 @@ class ContractReportTests(AppTestCase):
                 "https://example.invalid/contact",
             ).getvalue()
             self.assertTrue(pdf.startswith(b"%PDF-"))
+            self.assertIsNone(active_entry.stopped_at)
+
+    def test_report_etag_changes_only_when_visible_report_state_changes(self) -> None:
+        seed = self.seed_contract()
+        snapshot = datetime(2026, 7, 15, 5, 0, 0)
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            contract = database.get(Contract, seed.contract_id)
+            task = database.get(Task, seed.task_id)
+            assert admin and contract and task
+            active_entry = TimeEntry(
+                user=admin,
+                task=task,
+                started_at=snapshot - timedelta(seconds=3),
+            )
+            database.add(active_entry)
+            database.flush()
+            first = build_contract_report(
+                database, contract, "America/Chicago", snapshot_at=snapshot
+            )
+            later = build_contract_report(
+                database,
+                contract,
+                "America/Chicago",
+                snapshot_at=snapshot + timedelta(seconds=30),
+            )
+            self.assertEqual(report_state_etag(first), report_state_etag(later))
+
+            active_entry.stopped_at = snapshot + timedelta(seconds=20)
+            database.flush()
+            stopped = build_contract_report(
+                database,
+                contract,
+                "America/Chicago",
+                snapshot_at=snapshot + timedelta(seconds=30),
+            )
+            self.assertNotEqual(report_state_etag(first), report_state_etag(stopped))
 
     def test_single_group_pie_uses_a_complete_circle(self) -> None:
         seed = self.seed_contract()

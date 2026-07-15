@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -156,6 +158,34 @@ def format_datetime(value: datetime, display_timezone: ZoneInfo) -> str:
 
 def format_money(value: Decimal) -> str:
     return f"${value:,.2f}"
+
+
+def report_state_etag(report: ContractReport) -> str:
+    """Fingerprint report structure while excluding a running timer's age."""
+    state = {
+        "client": [report.contract.client.id, report.contract.client.name],
+        "contract": [
+            report.contract.id,
+            report.contract.name,
+            report.contract.hourly_rate_cents,
+        ],
+        "sessions": [
+            [
+                item.user_name,
+                item.label,
+                item.started_at.isoformat(),
+                None if item.active else item.ended_at.isoformat(),
+            ]
+            for item in report.sessions
+        ],
+    }
+    serialized = json.dumps(
+        state,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return hashlib.sha256(serialized).hexdigest()
 
 
 def _pie_path(start_angle: float, end_angle: float) -> str:
