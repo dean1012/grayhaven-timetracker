@@ -95,6 +95,7 @@ class Subtask(db.Model):
 
 
 class TimeEntry(db.Model):
+    __table_args__ = (db.Index("uq_active_timer_per_user", "user_id", unique=True, sqlite_where=text("stopped_at IS NULL")),)
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     contract_id = db.Column(db.Integer, db.ForeignKey("contract.id"), nullable=False)
@@ -114,10 +115,6 @@ class TimeEntry(db.Model):
     @property
     def seconds(self):
         return max(0, int((self.effective_end - self.started_at).total_seconds()))
-
-
-db.Index("uq_active_timer_per_user", TimeEntry.user_id, unique=True, sqlite_where=text("stopped_at IS NULL"))
-
 
 def create_app():
     app = Flask(__name__, instance_relative_config=True)
