@@ -69,6 +69,8 @@ def rotate_key(database: Path, old_key_file: Path, new_key_file: Path) -> Path:
 
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     backup = database.with_name(f"{database.name}.pre-rekey-{timestamp}")
+    if backup.exists():
+        raise DatabaseError(f"Recovery backup already exists: {backup}")
     connection = connect_sqlcipher(database, old_key)
     try:
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
@@ -101,6 +103,8 @@ def encrypt_plaintext(database: Path, key_file: Path) -> Path:
     passphrase = read_secret(key_file)
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     backup = database.with_name(f"{database.name}.pre-migration-encrypted-{timestamp}")
+    if backup.exists():
+        raise DatabaseError(f"Recovery backup already exists: {backup}")
     temporary = database.with_name(f".{database.name}.encrypted.tmp")
     temporary.unlink(missing_ok=True)
     remove_sidecars(temporary)

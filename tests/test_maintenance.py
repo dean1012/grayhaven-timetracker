@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -125,6 +126,38 @@ class DatabaseMaintenanceTests(unittest.TestCase):
             database_maintenance.rotate_key(
                 self.database, self.old_key_file, self.old_key_file
             )
+
+    def test_recovery_operations_refuse_to_overwrite_existing_backups(self) -> None:
+        fixed = datetime(2026, 7, 15, 12, 0, tzinfo=UTC)
+        self.create_encrypted_database()
+        rekey_backup = self.database.with_name(
+            f"{self.database.name}.pre-rekey-20260715T120000Z"
+        )
+        rekey_backup.touch()
+        with (
+            patch.object(database_maintenance, "datetime") as clock,
+            self.assertRaises(DatabaseError),
+        ):
+            clock.now.return_value = fixed
+            database_maintenance.rotate_key(
+                self.database, self.old_key_file, self.new_key_file
+            )
+
+        self.database.unlink()
+        plaintext = sqlite3.connect(self.database)
+        plaintext.execute("CREATE TABLE sample (value TEXT)")
+        plaintext.commit()
+        plaintext.close()
+        migration_backup = self.database.with_name(
+            f"{self.database.name}.pre-migration-encrypted-20260715T120000Z"
+        )
+        migration_backup.touch()
+        with (
+            patch.object(database_maintenance, "datetime") as clock,
+            self.assertRaises(DatabaseError),
+        ):
+            clock.now.return_value = fixed
+            database_maintenance.encrypt_plaintext(self.database, self.old_key_file)
 
     def test_plaintext_migration_encrypts_and_preserves_data(self) -> None:
         plaintext = sqlite3.connect(self.database)

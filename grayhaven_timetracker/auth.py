@@ -11,7 +11,7 @@ from collections import OrderedDict, deque
 from collections.abc import Callable
 from functools import wraps
 from typing import ParamSpec, TypeVar, cast
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 import pyotp
 import qrcode
@@ -166,12 +166,15 @@ def login_required(view: Callable[P, R]) -> Callable[P, R]:  # noqa: UP047
 def safe_next_url(value: str | None) -> str | None:
     if not value:
         return None
+    decoded = unquote(value)
     parsed = urlsplit(value)
     if (
         parsed.scheme
         or parsed.netloc
         or not value.startswith("/")
-        or value.startswith("//")
+        or decoded.startswith("//")
+        or "\\" in decoded
+        or any(ord(character) < 32 for character in decoded)
     ):
         return None
     return value

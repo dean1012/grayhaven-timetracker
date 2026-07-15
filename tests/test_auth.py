@@ -100,7 +100,17 @@ class TotpAndNavigationTests(unittest.TestCase):
         self.assertEqual(
             safe_next_url("/contracts/1?tab=tasks"), "/contracts/1?tab=tasks"
         )
-        for value in (None, "", "relative", "//evil.invalid", "https://evil.invalid"):
+        for value in (
+            None,
+            "",
+            "relative",
+            "//evil.invalid",
+            "/%2fevil.invalid",
+            "/\\evil.invalid",
+            "/%5cevil.invalid",
+            "/profile%0d%0aX-Test: value",
+            "https://evil.invalid",
+        ):
             with self.subTest(value=value):
                 self.assertIsNone(safe_next_url(value))
 
