@@ -1310,9 +1310,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         report_password = "Shared-Report-Password-For-Testing-0001!"
         password_mailto = parse_qs(
-            urlsplit(
-                routes.report_password_mailto(client, report_url, report_password)
-            ).query
+            urlsplit(routes.report_password_mailto(client, report_password)).query
         )
         self.assertEqual(
             password_mailto["subject"],
@@ -1332,7 +1330,7 @@ class ReportAndSessionRouteTests(AppTestCase):
             "<b>Please save this password, as this email will expire in 48 hours.</b>",
             password_mailto_body,
         )
-        self.assertIn(f'<a href="{report_url}">{report_url}</a>', password_mailto_body)
+        self.assertNotIn(report_url, password_mailto_body)
         with session_scope(self.app) as database:
             client = database.get(Client, self.seed.client_id)
             assert client is not None

@@ -265,16 +265,13 @@ def report_mailto(client: Client, report_url: str) -> str:
     )
 
 
-def report_password_mailto(
-    client: Client, report_url: str, report_password: str
-) -> str:
+def report_password_mailto(client: Client, report_password: str) -> str:
     """Build the Proton-compatible report-password reset email."""
     subject = (
         f"Your live time and cost report password for {client.name} has been reset"
     )
     contact_name = escape(client.contact_name)
     escaped_password = escape(report_password)
-    escaped_report_url = escape(report_url, quote=True)
     body_lines = [
         f"{contact_name},",
         "",
@@ -285,9 +282,6 @@ def report_password_mailto(
         f"<b>Your new password is:</b> {escaped_password}",
         "",
         "<b>Please save this password, as this email will expire in 48 hours.</b>",
-        "",
-        "<b>As a reminder, your personalized live report is available here:</b>",
-        f'<a href="{escaped_report_url}">{escaped_report_url}</a>',
         "",
         "<b>Please keep both your link and password confidential to protect your "
         "data.</b>",
@@ -762,11 +756,7 @@ def reset_client_report_password(client_id: int) -> Any:
         "client_report_password_created.html",
         client=item,
         report_password=report_password,
-        mailto=report_password_mailto(
-            item,
-            shared_report_url(ensure_client_report_token(item)),
-            report_password,
-        ),
+        mailto=report_password_mailto(item, report_password),
         next_url=url_for("main.client", client_id=item.id),
     )
 
