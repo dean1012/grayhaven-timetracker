@@ -77,6 +77,23 @@ if (oneTimeConfirmation instanceof HTMLElement) {
     const redirectUrl = new URL(redirectTarget, window.location.origin);
     if (redirectUrl.origin === window.location.origin) {
       const leaveConfirmation = () => window.location.replace(redirectUrl.href);
+      const countdown = oneTimeConfirmation.querySelector(
+        "[data-confirmation-countdown]",
+      );
+      const expiresAt = Date.now() + redirectAfter;
+      const updateCountdown = () => {
+        const remainingSeconds = Math.max(
+          0,
+          Math.ceil((expiresAt - Date.now()) / 1000),
+        );
+        if (countdown) {
+          const minutes = Math.floor(remainingSeconds / 60);
+          const seconds = String(remainingSeconds % 60).padStart(2, "0");
+          countdown.textContent = `${minutes}:${seconds}`;
+        }
+      };
+      updateCountdown();
+      window.setInterval(updateCountdown, 1000);
       window.setTimeout(leaveConfirmation, redirectAfter);
       window.addEventListener("pageshow", (event) => {
         if (event.persisted) {

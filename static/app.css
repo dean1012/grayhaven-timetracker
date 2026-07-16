@@ -132,6 +132,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .secret-value { margin: 1.5rem 0; padding: 1rem; color: var(--soft-white); background: var(--deep-graphite); border: 1px solid var(--charcoal-border); border-radius: var(--border-radius); font-family: ui-monospace, monospace; font-size: 1.1rem; letter-spacing: .08em; overflow-wrap: anywhere; }
 .secret-copy-value { display: flex; align-items: center; gap: .65rem; }
 .secret-copy-value .secret-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.confirmation-expiry { color: var(--alert-error); font-weight: var(--font-weight-semibold); }
 .clipboard-fallback { position: fixed; inset: 0 auto auto 0; opacity: 0; pointer-events: none; }
 .secret-value a { overflow-wrap: anywhere; }
 .text-link { padding: 0; color: var(--primary-accent); background: none; border: 0; font-size: .86rem; }

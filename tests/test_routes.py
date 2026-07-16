@@ -658,6 +658,7 @@ class ClientContractTaskRouteTests(AppTestCase):
         self.assertIn(b"Copy password", confirmation.data)
         self.assertIn(b"Email report password", confirmation.data)
         self.assertIn(b'data-expire-after-ms="120000"', confirmation.data)
+        self.assertIn(b"data-confirmation-countdown", confirmation.data)
         refreshed = self.client.get(confirmation_url)
         self.assertEqual(refreshed.status_code, 302)
         self.assertEqual(
