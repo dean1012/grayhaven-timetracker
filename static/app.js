@@ -11,6 +11,49 @@ document.addEventListener("submit", (event) => {
   }
 });
 
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const fallback = document.createElement("textarea");
+  fallback.value = value;
+  fallback.setAttribute("readonly", "true");
+  fallback.className = "clipboard-fallback";
+  document.body.append(fallback);
+  fallback.select();
+  const copied = document.execCommand("copy");
+  fallback.remove();
+  if (!copied) {
+    throw new Error("Clipboard copy was rejected");
+  }
+}
+
+document.addEventListener("click", async (event) => {
+  if (!(event.target instanceof Element)) {
+    return;
+  }
+  const button = event.target.closest("[data-copy-target]");
+  if (!(button instanceof HTMLButtonElement)) {
+    return;
+  }
+  const target = document.querySelector(button.dataset.copyTarget || "");
+  const value = target?.dataset.copyValue || target?.textContent?.trim() || "";
+  if (!value) {
+    return;
+  }
+  try {
+    await copyText(value);
+    const original = button.innerHTML;
+    button.innerHTML = '<i class="fa-solid fa-check" aria-hidden="true"></i> Copied';
+    window.setTimeout(() => {
+      button.innerHTML = original;
+    }, 1800);
+  } catch {
+    window.prompt("Copy this password", value);
+  }
+});
+
 function formatDuration(totalSeconds) {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -90,14 +133,14 @@ function reportPiePath(startAngle, endAngle) {
   return `M ${center.toFixed(3)} ${center.toFixed(3)} L ${startX.toFixed(3)} ${startY.toFixed(3)} A ${radius.toFixed(3)} ${radius.toFixed(3)} 0 ${largeArc} 1 ${endX.toFixed(3)} ${endY.toFixed(3)} Z`;
 }
 
-function updateReportPie(article, groups) {
+function updateReportPie(section, groups) {
   const totalSeconds = groups.reduce((total, group) => total + group.seconds, 0);
   let angle = -Math.PI / 2;
   groups.forEach((group, index) => {
     const nextAngle = index < groups.length - 1
       ? angle + 2 * Math.PI * group.seconds / Math.max(totalSeconds, 1)
       : 3 * Math.PI / 2;
-    const path = Array.from(article.querySelectorAll("[data-report-pie]")).find(
+    const path = Array.from(section.querySelectorAll("[data-report-pie]")).find(
       (item) => item.dataset.reportPie === group.label,
     );
     if (path) {
@@ -107,7 +150,7 @@ function updateReportPie(article, groups) {
         title.textContent = `${group.label}: ${formatDuration(group.seconds)} (${moneyFormatter.format(group.costCents / 100)})`;
       }
     }
-    const legend = Array.from(article.querySelectorAll("[data-report-legend]")).find(
+    const legend = Array.from(section.querySelectorAll("[data-report-legend]")).find(
       (item) => item.dataset.reportLegend === group.label,
     );
     const legendValue = legend?.querySelector("[data-report-legend-value]");
@@ -118,23 +161,15 @@ function updateReportPie(article, groups) {
   });
 }
 
-function updateLiveReportCounters() {
-  const article = document.querySelector("[data-live-report]");
-  if (!article || reportReconciliationStopped) {
-    return;
-  }
-  const hourlyRateCents = Number(article.dataset.hourlyRateCents);
+function updateLiveReportSection(section) {
+  const hourlyRateCents = Number(section.dataset.hourlyRateCents);
   if (!Number.isSafeInteger(hourlyRateCents)) {
-    return;
+    return { seconds: 0, costCents: 0 };
   }
-  if (!reportReceivedAt.has(article)) {
-    reportReceivedAt.set(article, Date.now());
-  }
-  const activeDelta = Math.max(
-    0,
-    Math.floor((Date.now() - (reportReceivedAt.get(article) || Date.now())) / 1000),
-  );
-  const groups = Array.from(article.querySelectorAll("tr[data-report-group]:not([data-report-session])")).map((row) => ({
+  const receivedAt = reportReceivedAt.get(section) || Date.now();
+  reportReceivedAt.set(section, receivedAt);
+  const activeDelta = Math.max(0, Math.floor((Date.now() - receivedAt) / 1000));
+  const groups = Array.from(section.querySelectorAll("tr[data-report-group]:not([data-report-session])")).map((row) => ({
     label: row.dataset.reportGroup || "",
     row,
     sessions: [],
@@ -142,13 +177,9 @@ function updateLiveReportCounters() {
     costCents: 0,
   }));
   const groupsByLabel = new Map(groups.map((group) => [group.label, group]));
-
-  article.querySelectorAll("tr[data-report-session]").forEach((row) => {
+  section.querySelectorAll("tr[data-report-session]").forEach((row) => {
     const baseSeconds = Number(row.dataset.baseSeconds);
-    const seconds = Math.max(
-      0,
-      baseSeconds + (row.dataset.active === "true" ? activeDelta : 0),
-    );
+    const seconds = Math.max(0, baseSeconds + (row.dataset.active === "true" ? activeDelta : 0));
     const session = { row, seconds };
     groupsByLabel.get(row.dataset.reportGroup || "")?.sessions.push(session);
     const duration = row.querySelector("[data-report-session-duration]");
@@ -156,7 +187,6 @@ function updateLiveReportCounters() {
       duration.textContent = formatDuration(seconds);
     }
   });
-
   groups.forEach((group) => {
     group.seconds = group.sessions.reduce((total, session) => total + session.seconds, 0);
     group.costCents = roundedCostCents(group.seconds, hourlyRateCents);
@@ -176,18 +206,42 @@ function updateLiveReportCounters() {
       cost.textContent = moneyFormatter.format(group.costCents / 100);
     }
   });
-
   const totalSeconds = groups.reduce((total, group) => total + group.seconds, 0);
   const totalCostCents = groups.reduce((total, group) => total + group.costCents, 0);
+  const sectionDuration = section.querySelector("[data-report-contract-total-duration]");
+  const sectionCost = section.querySelector("[data-report-contract-total-cost]");
+  if (sectionDuration) {
+    sectionDuration.textContent = formatDuration(totalSeconds);
+  }
+  if (sectionCost) {
+    sectionCost.textContent = moneyFormatter.format(totalCostCents / 100);
+  }
+  updateReportPie(section, groups);
+  return { seconds: totalSeconds, costCents: totalCostCents };
+}
+
+function updateLiveReportCounters() {
+  const article = document.querySelector("[data-live-report]");
+  if (!article || reportReconciliationStopped) {
+    return;
+  }
+  const totals = Array.from(article.querySelectorAll("[data-report-contract-section]"))
+    .map(updateLiveReportSection)
+    .reduce(
+      (total, section) => ({
+        seconds: total.seconds + section.seconds,
+        costCents: total.costCents + section.costCents,
+      }),
+      { seconds: 0, costCents: 0 },
+    );
   const totalDuration = article.querySelector("[data-report-total-duration]");
   const totalCost = article.querySelector("[data-report-total-cost]");
   if (totalDuration) {
-    totalDuration.textContent = formatDuration(totalSeconds);
+    totalDuration.textContent = formatDuration(totals.seconds);
   }
   if (totalCost) {
-    totalCost.textContent = moneyFormatter.format(totalCostCents / 100);
+    totalCost.textContent = moneyFormatter.format(totals.costCents / 100);
   }
-  updateReportPie(article, groups);
 }
 
 function setLiveReportStatus(label, state) {

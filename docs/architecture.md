@@ -74,12 +74,14 @@ or deletion.
 
 ## Live Report Access
 
-Each contract can store one SHA-256 hash of a high-entropy report-link token and
-an optional UTC expiration. The token itself is shown only when the link is
-created or rotated. Each client has a separate Argon2id report-password hash
-and a monotonically increasing password version.
+Each client stores one SHA-256 hash of a high-entropy report-link token and an
+optional UTC expiration. The token itself is shown only when the link is
+created or rotated. Each client has one Argon2id report-password hash and a
+monotonically increasing password version. The linked report contains every
+contract for that client, newest first, with contract-specific rates and
+totals.
 
-A client follows the contract link and enters the separately delivered report
+A client follows the client link and enters the separately delivered report
 password. Successful verification stores only the client identifier, password
 version, and authentication timestamp in the signed browser session. Password
 reset increments the version, invalidating every existing client report
@@ -138,7 +140,8 @@ stored timer.
 ## Persistence and Growth
 
 SQLCipher SQLite is appropriate for the initial single-host, low-write
-workload. Schema version 3 includes account recovery state, live report access,
+workload. Schema version 4 includes account recovery state, client-wide live
+report access,
 and the audit trail. The domain model and SQLAlchemy boundary keep future
 migration to a server RDBMS feasible, but such a migration will require schema
 migrations, provider-specific integrity constraints, concurrency testing, and

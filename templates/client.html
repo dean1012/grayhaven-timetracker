@@ -14,6 +14,25 @@
     {% if can('contract:add') %}<a class="button button-primary" href="{{ url_for('main.new_contract', client_id=client.id) }}"><i class="fa-solid fa-plus" aria-hidden="true"></i> Add contract</a>{% endif %}
   </div>
 </section>
+{% if can('report:share') %}
+<section class="panel share-panel">
+  <div>
+    <p class="eyebrow">CLIENT ACCESS</p>
+    <h2>Live Client Report Link</h2>
+    {% if report_link_active %}<p class="muted"><span class="status-pill status-enabled">Active</span> {% if report_link_expiration %}Expires {{ report_link_expiration }}.{% else %}No expiration; active until revoked.{% endif %} One link covers all of this client’s contracts.</p>{% elif report_link_expired %}<p class="muted"><span class="status-pill status-warning">Expired</span> Generate a replacement link to restore client access.</p>{% elif client.contracts %}<p class="muted">Give this client a private, account-free view of all contract time and cost reporting, protected by the client report password.</p>{% else %}<p class="muted">Add a contract before configuring live client reporting.</p>{% endif %}
+  </div>
+  {% if client.contracts %}
+  <div class="share-controls">
+    <form method="post" action="{{ url_for('main.create_report_link', client_id=client.id) }}" class="share-form" autocomplete="off" data-protonpass-ignore="true" {% if report_link_active %}data-confirm="Replace the active client report link? The current link will stop working immediately."{% endif %}>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Expiration<select name="expires_in_days" autocomplete="off" data-protonpass-ignore="true"><option value="90">90 days</option><option value="7">7 days</option><option value="30">30 days</option><option value="365">365 days</option><option value="never">No expiration</option></select></label>
+      <button class="button button-primary" type="submit"><i class="fa-solid fa-link" aria-hidden="true"></i> {{ 'Replace link' if report_link_active else 'Generate link' }}</button>
+    </form>
+    {% if report_link_active or report_link_expired %}<form method="post" action="{{ url_for('main.revoke_report_link', client_id=client.id) }}" data-confirm="Revoke this client report link?" autocomplete="off" data-protonpass-ignore="true"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary" type="submit">Revoke</button></form>{% endif %}
+  </div>
+  {% endif %}
+</section>
+{% endif %}
 <section class="panel contract-directory">
   <div class="panel-heading">
     <div><p class="eyebrow">CONTRACTS</p><h2>Contract Directory</h2></div>

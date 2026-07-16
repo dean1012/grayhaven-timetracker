@@ -5,9 +5,7 @@
   <div class="panel form-panel">
     <p class="eyebrow">CLIENT CREATED</p>
     <h1>{{ client.name }}</h1>
-    <p class="muted">This password is needed for {{ client.name }} to access live reporting data. Please save it and securely share it with the client. It will not be displayed again.</p>
-    <div class="secret-value">{{ report_password }}</div>
-    <p class="muted">This password can be reset from the client page.</p>
+    <p class="muted">The client was created successfully. Add a contract to configure live reporting access and generate the client report password.</p>
     <div class="form-actions"><a class="button button-primary" href="{{ url_for('main.client', client_id=client.id) }}">Continue to client</a></div>
   </div>
 </section>

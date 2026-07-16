@@ -406,8 +406,10 @@ class DatabaseAndModelTests(AppTestCase):
         self.assertIn("report_expires_at", contract_columns)
         self.assertIn("report_password_hash", client_columns)
         self.assertIn("report_password_version", client_columns)
+        self.assertIn("report_token_hash", client_columns)
+        self.assertIn("report_expires_at", client_columns)
         self.assertEqual(prior_schema, "1")
-        self.assertEqual(version, "3")
+        self.assertEqual(version, "4")
         self.assertEqual(admin_count, 1)
         self.assertEqual(audit_table, 1)
 
@@ -434,7 +436,7 @@ class DatabaseAndModelTests(AppTestCase):
         with engine.begin() as connection:
             connection.execute(
                 text(
-                    "UPDATE application_metadata SET value = '3' "
+                    "UPDATE application_metadata SET value = '4' "
                     "WHERE key = 'schema_version'"
                 )
             )
@@ -454,6 +456,9 @@ class DatabaseAndModelTests(AppTestCase):
             column_result("password_change_required"),
             column_result("report_token_hash", "report_expires_at"),
             column_result(),
+            MagicMock(),
+            MagicMock(),
+            MagicMock(),
             MagicMock(),
             MagicMock(),
             MagicMock(),

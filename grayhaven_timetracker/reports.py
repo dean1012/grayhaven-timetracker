@@ -35,7 +35,7 @@ from reportlab.platypus import (
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from .models import Contract, Task, TimeEntry
+from .models import Client, Contract, Task, TimeEntry
 
 MONEY_QUANTUM = Decimal("0.01")
 BRAND_GUNMETAL = "#2A2F36"
@@ -123,6 +123,18 @@ class ContractReport:
     total_cost: Decimal
 
 
+@dataclass(frozen=True)
+class ClientReport:
+    """Complete client-wide report composed of newest-first contract sections."""
+
+    client: Client
+    generated_at: datetime
+    timezone: ZoneInfo
+    contracts: tuple[ContractReport, ...]
+    total_seconds: int
+    total_cost: Decimal
+
+
 # ---------------------------------------------------------------------------
 # Calculation and formatting
 # ---------------------------------------------------------------------------
@@ -182,23 +194,38 @@ def format_money(value: Decimal) -> str:
     return f"${value:,.2f}"
 
 
-def report_state_etag(report: ContractReport) -> str:
+def report_state_etag(report: ContractReport | ClientReport) -> str:
     """Fingerprint report structure while excluding a running timer's age."""
+    sections = (
+        (report,)
+        if isinstance(report, ContractReport)
+        else report.contracts
+    )
     state = {
-        "client": [report.contract.client.id, report.contract.client.name],
-        "contract": [
-            report.contract.id,
-            report.contract.name,
-            report.contract.hourly_rate_cents,
-        ],
-        "sessions": [
-            [
-                item.user_name,
-                item.label,
-                item.started_at.isoformat(),
-                None if item.active else item.ended_at.isoformat(),
-            ]
-            for item in report.sessions
+        "client": [
+            report.contract.client.id,
+            report.contract.client.name,
+        ]
+        if isinstance(report, ContractReport)
+        else [report.client.id, report.client.name],
+        "contracts": [
+            {
+                "contract": [
+                    section.contract.id,
+                    section.contract.name,
+                    section.contract.hourly_rate_cents,
+                ],
+                "sessions": [
+                    [
+                        item.user_name,
+                        item.label,
+                        item.started_at.isoformat(),
+                        None if item.active else item.ended_at.isoformat(),
+                    ]
+                    for item in section.sessions
+                ],
+            }
+            for section in sections
         ],
     }
     serialized = json.dumps(
@@ -357,10 +384,62 @@ def build_contract_report(
     )
 
 
+def build_client_report(
+    database: Session,
+    client: Client,
+    display_timezone: str,
+    *,
+    snapshot_at: datetime | None = None,
+) -> ClientReport:
+    """Snapshot every client contract, newest first, at one shared instant."""
+    generated_at = snapshot_at or utc_now()
+    contracts = database.scalars(
+        select(Contract)
+        .where(Contract.client_id == client.id)
+        .options(joinedload(Contract.client))
+        .order_by(Contract.id.desc())
+    ).all()
+    sections = tuple(
+        build_contract_report(
+            database,
+            contract,
+            display_timezone,
+            snapshot_at=generated_at,
+        )
+        for contract in contracts
+    )
+    return ClientReport(
+        client=client,
+        generated_at=generated_at,
+        timezone=ZoneInfo(display_timezone),
+        contracts=sections,
+        total_seconds=sum(section.total_seconds for section in sections),
+        total_cost=sum((section.total_cost for section in sections), Decimal(0)),
+    )
+
+
 def build_pdf(
-    report: ContractReport, branding_path: Path, contact_url: str
+    report: ContractReport | ClientReport, branding_path: Path, contact_url: str
 ) -> io.BytesIO:
-    """Render a contract report as a branded, paginated PDF in memory."""
+    """Render a client-wide or legacy contract report as a branded PDF."""
+    sections = (report,) if isinstance(report, ContractReport) else report.contracts
+    client = (
+        report.contract.client
+        if isinstance(report, ContractReport)
+        else report.client
+    )
+    total_seconds = report.total_seconds
+    total_cost = report.total_cost
+    flattened_groups = tuple(
+        ReportGroup(
+            label=f"{section.contract.name} · {group.label}",
+            seconds=group.seconds,
+            cost=group.cost,
+            color=group.color,
+        )
+        for section in sections
+        for group in section.groups
+    )
     buffer = io.BytesIO()
     font_regular, font_bold = _pdf_font_names(branding_path)
     page_size = landscape(letter)
@@ -372,8 +451,8 @@ def build_pdf(
         topMargin=0.45 * inch,
         bottomMargin=0.5 * inch,
         title=(
-            "Grayhaven Systems LLC - Contract Time Report | "
-            f"{report.contract.client.name} | {report.contract.name}"
+            "Grayhaven Systems LLC - Client Time Report | "
+            f"{client.name}"
         ),
         author="Grayhaven Systems LLC",
     )
@@ -420,7 +499,7 @@ def build_pdf(
             [
                 logo,
                 Paragraph(
-                    "<b>CONFIDENTIAL</b><br/>Contract Time Report",
+                    "<b>CONFIDENTIAL</b><br/>Client Time Report",
                     styles["GrayhavenRight"],
                 ),
             ]
@@ -446,11 +525,10 @@ def build_pdf(
         [
             header,
             Spacer(1, 0.22 * inch),
-            Paragraph("Contract Time Report", heading),
+            Paragraph("Client Time Report", heading),
             Paragraph(
-                f"<b>Client:</b> {escape(report.contract.client.name)}<br/>"
-                f"<b>Contract:</b> {escape(report.contract.name)}<br/>"
-                f"<b>Hourly rate:</b> {format_money(report.contract.hourly_rate)}<br/>"
+                f"<b>Client:</b> {escape(client.name)}<br/>"
+                f"<b>Contracts:</b> {len(sections)}<br/>"
                 f"<b>Generated:</b> "
                 f"{format_datetime(report.generated_at, report.timezone)}",
                 body,
@@ -470,14 +548,14 @@ def build_pdf(
             format_duration(group.seconds),
             format_money(group.cost),
         ]
-        for group in report.groups
+        for group in flattened_groups
     ]
-    if not report.groups:
+    if not flattened_groups:
         summary_group_rows.append(["No time recorded", "0:00:00", "$0.00"])
     total_row: list[object] = [
         "Total",
-        format_duration(report.total_seconds),
-        format_money(report.total_cost),
+        format_duration(total_seconds),
+        format_money(total_cost),
     ]
     preview_limit = 8
     has_continuation = len(summary_group_rows) > preview_limit
@@ -503,7 +581,7 @@ def build_pdf(
     pie.y = 15
     pie.width = 160
     pie.height = 160
-    chart_groups = [group for group in report.groups if group.seconds > 0]
+    chart_groups = [group for group in flattened_groups if group.seconds > 0]
     pie.data = [group.seconds for group in chart_groups] or [1]
     pie.labels = None
     pie.slices.strokeWidth = 0.5
@@ -568,21 +646,22 @@ def build_pdf(
     detail_rows: list[list[object]] = [
         ["User", "Task / subtask", "Start", "End", "Duration", "Cost"]
     ]
-    for item in report.sessions:
-        end_text = format_datetime(item.ended_at, report.timezone)
-        if item.active:
-            end_text += " (active snapshot)"
-        detail_rows.append(
-            [
-                Paragraph(escape(item.user_name), body),
-                Paragraph(escape(item.label), body),
-                Paragraph(format_datetime(item.started_at, report.timezone), body),
-                Paragraph(end_text, body),
-                format_duration(item.seconds),
-                format_money(item.cost),
-            ]
-        )
-    if not report.sessions:
+    for section in sections:
+        for item in section.sessions:
+            end_text = format_datetime(item.ended_at, report.timezone)
+            if item.active:
+                end_text += " (active snapshot)"
+            detail_rows.append(
+                [
+                    Paragraph(escape(item.user_name), body),
+                    Paragraph(escape(f"{section.contract.name} · {item.label}"), body),
+                    Paragraph(format_datetime(item.started_at, report.timezone), body),
+                    Paragraph(end_text, body),
+                    format_duration(item.seconds),
+                    format_money(item.cost),
+                ]
+            )
+    if not any(section.sessions for section in sections):
         detail_rows.append(["No sessions recorded", "", "", "", "", ""])
     detail_table = Table(
         detail_rows,

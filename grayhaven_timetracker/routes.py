@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import pyotp
@@ -95,8 +96,9 @@ from .permissions import (
     permission_required,
 )
 from .reports import (
+    ClientReport,
     ContractReport,
-    build_contract_report,
+    build_client_report,
     build_pdf,
     duration_seconds,
     format_datetime,
@@ -187,27 +189,26 @@ def shared_report_access_allowed(client: Client) -> bool:
     return allowed
 
 
-def get_shared_report_contract(token: str) -> Contract:
-    """Resolve an active report link without disclosing why lookup failed."""
+def get_shared_report_client(token: str) -> Client:
+    """Resolve an active client report link without disclosing lookup details."""
     if (
         not 32 <= len(token) <= 128
         or not token.isascii()
         or any(not (character.isalnum() or character in "-_") for character in token)
     ):
         abort(404)
-    contract = get_session().scalar(
-        select(Contract)
-        .where(Contract.report_token_hash == report_token_hash(token))
-        .options(selectinload(Contract.client))
+    client = get_session().scalar(
+        select(Client).where(Client.report_token_hash == report_token_hash(token))
+        .options(selectinload(Client.contracts))
     )
-    if contract is None or (
-        contract.report_expires_at is not None
-        and contract.report_expires_at <= now_utc()
+    if client is None or (
+        client.report_expires_at is not None
+        and client.report_expires_at <= now_utc()
     ):
         abort(404)
-    if contract.client.report_password_hash is None:
+    if client.report_password_hash is None:
         abort(404)
-    return contract
+    return client
 
 
 def sensitive_action_credentials_valid(user: User) -> bool:
@@ -232,6 +233,38 @@ def shared_report_url(token: str) -> str:
     if public_base_url:
         return f"{public_base_url}{path}"
     return url_for("main.shared_report", token=token, _external=True)
+
+
+def report_mailto(client: Client, report_url: str | None = None) -> str:
+    """Build the reviewed client-access email without placing the password in it."""
+    subject = f"Live reporting access — {client.name}"
+    body_lines = [
+        f"Hello {client.contact_name},",
+        "",
+        f"You can view {client.name}'s live time and cost report "
+        "without creating an account.",
+        "",
+    ]
+    if report_url:
+        body_lines.extend(["Open the private report link:", report_url, ""])
+    else:
+        body_lines.extend(
+            [
+                "Use the private live-report link provided by Grayhaven Systems LLC.",
+                "",
+            ]
+        )
+    body_lines.extend(
+        [
+            "The report password will be shared securely in a separate message.",
+            "",
+            "Please keep the link and password confidential.",
+        ]
+    )
+    return (
+        f"mailto:{quote(client.contact_email, safe='@')}?subject={quote(subject)}"
+        f"&body={quote(chr(10).join(body_lines))}"
+    )
 
 
 def form_text(name: str, label: str, maximum: int) -> str:
@@ -584,7 +617,28 @@ def client(client_id: int) -> str:
     )
     if item is None:
         abort(404)
-    return render_template("client.html", client=item)
+    snapshot_at = now_utc()
+    report_link_active = bool(
+        item.report_token_hash
+        and (item.report_expires_at is None or item.report_expires_at > snapshot_at)
+    )
+    report_link_expired = bool(
+        item.report_token_hash
+        and item.report_expires_at is not None
+        and item.report_expires_at <= snapshot_at
+    )
+    timezone_info = ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"]))
+    return render_template(
+        "client.html",
+        client=item,
+        report_link_active=report_link_active,
+        report_link_expired=report_link_expired,
+        report_link_expiration=(
+            format_datetime(item.report_expires_at, timezone_info)
+            if item.report_expires_at is not None
+            else None
+        ),
+    )
 
 
 @main.route("/clients/new", methods=["GET", "POST"])
@@ -593,12 +647,10 @@ def new_client() -> Any:
     if request.method != "POST":
         return render_template("client_form.html")
     try:
-        report_password = generate_temporary_password()
         item = Client(
             name=form_text("name", "Client name", 200),
             contact_name=form_text("contact_name", "Contact name", 200),
             contact_email=normalize_email(request.form.get("contact_email", "")),
-            report_password_hash=hash_password(report_password),
             report_password_version=1,
         )
     except ValueError as exc:
@@ -611,9 +663,7 @@ def new_client() -> Any:
         actor_id=cast(User, current_user()).id,
         client_id=item.id,
     )
-    return render_template(
-        "client_created.html", client=item, report_password=report_password
-    )
+    return render_template("client_created.html", client=item)
 
 
 @main.route("/clients/<int:client_id>/edit", methods=["GET", "POST"])
@@ -690,6 +740,8 @@ def reset_client_report_password(client_id: int) -> Any:
         "client_report_password_created.html",
         client=item,
         report_password=report_password,
+        next_url=url_for("main.client", client_id=item.id),
+        mailto=report_mailto(item),
     )
 
 
@@ -717,6 +769,11 @@ def new_contract(client_id: int) -> Any:
         flash(message, "error")
         return render_template("contract_form.html", client=client_item), 400
     get_session().add(contract_item)
+    report_password: str | None = None
+    if client_item.report_password_hash is None:
+        report_password = generate_temporary_password()
+        client_item.report_password_hash = hash_password(report_password)
+        client_item.report_password_version += 1
     get_session().commit()
     audit(
         "contract_created",
@@ -724,6 +781,14 @@ def new_contract(client_id: int) -> Any:
         client_id=client_item.id,
         contract_id=contract_item.id,
     )
+    if report_password is not None:
+        return render_template(
+            "client_report_password_created.html",
+            client=client_item,
+            report_password=report_password,
+            next_url=url_for("main.contract", contract_id=contract_item.id),
+            mailto=report_mailto(client_item),
+        )
     return redirect(url_for("main.contract", contract_id=contract_item.id))
 
 
@@ -770,17 +835,6 @@ def contract(contract_id: int) -> str:
     )
     if item is None:
         abort(404)
-    snapshot_at = now_utc()
-    report_link_active = bool(
-        item.report_token_hash
-        and (item.report_expires_at is None or item.report_expires_at > snapshot_at)
-    )
-    report_link_expired = bool(
-        item.report_token_hash
-        and item.report_expires_at is not None
-        and item.report_expires_at <= snapshot_at
-    )
-    timezone_info = ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"]))
     active_entry = get_session().scalar(
         select(TimeEntry)
         .where(
@@ -802,13 +856,6 @@ def contract(contract_id: int) -> str:
             duration_seconds(active_entry.started_at, now_utc()) if active_entry else 0
         ),
         current_contract_id=item.id,
-        report_link_active=report_link_active,
-        report_link_expired=report_link_expired,
-        report_link_expiration=(
-            format_datetime(item.report_expires_at, timezone_info)
-            if item.report_expires_at is not None
-            else None
-        ),
     )
 
 
@@ -1727,7 +1774,10 @@ def toggle_user_admin(user_id: int) -> Any:
 
 
 def live_report_response(
-    report: ContractReport, *, shared_report: bool, live_report_url: str
+    report: ContractReport | ClientReport,
+    *,
+    shared_report: bool,
+    live_report_url: str,
 ) -> Any:
     """Return changed report markup or an inexpensive not-modified response."""
     etag = report_state_etag(report)
@@ -1747,10 +1797,10 @@ def live_report_response(
     return response
 
 
-@main.post("/contracts/<int:contract_id>/report-link")
-@permission_required(REPORT_SHARE)
-def create_report_link(contract_id: int) -> Any:
-    contract_item = cast(Contract, get_or_404(Contract, contract_id))
+def create_client_report_link(client_item: Client) -> Any:
+    """Create or replace the single client-wide report link."""
+    if not client_item.contracts:
+        abort(409, "Create a contract before generating a client report link.")
     expiration_choice = request.form.get("expires_in_days", "90")
     expires_at: datetime | None = None
     if expiration_choice != "never":
@@ -1762,26 +1812,26 @@ def create_report_link(contract_id: int) -> Any:
             abort(400)
         expires_at = now_utc() + timedelta(days=expiration_days)
     token = secrets.token_urlsafe(32)
-    contract_item.report_token_hash = report_token_hash(token)
-    contract_item.report_expires_at = expires_at
+    client_item.report_token_hash = report_token_hash(token)
+    client_item.report_expires_at = expires_at
     report_password: str | None = None
-    if contract_item.client.report_password_hash is None:
+    if client_item.report_password_hash is None:
         report_password = generate_temporary_password()
-        contract_item.client.report_password_hash = hash_password(report_password)
-        contract_item.client.report_password_version += 1
+        client_item.report_password_hash = hash_password(report_password)
+        client_item.report_password_version += 1
     get_session().commit()
     actor = cast(User, current_user())
     audit(
         "report_link_created",
         actor_id=actor.id,
-        client_id=contract_item.client_id,
-        contract_id=contract_item.id,
+        client_id=client_item.id,
     )
     return render_template(
         "report_link_created.html",
-        contract=contract_item,
+        client=client_item,
         report_url=shared_report_url(token),
         report_password=report_password,
+        mailto=report_mailto(client_item, shared_report_url(token)),
         expires_at=(
             format_datetime(
                 expires_at,
@@ -1793,37 +1843,41 @@ def create_report_link(contract_id: int) -> Any:
     )
 
 
-@main.post("/contracts/<int:contract_id>/report-link/revoke")
+@main.post("/clients/<int:client_id>/report-link")
 @permission_required(REPORT_SHARE)
-def revoke_report_link(contract_id: int) -> Any:
-    contract_item = cast(Contract, get_or_404(Contract, contract_id))
-    contract_item.report_token_hash = None
-    contract_item.report_expires_at = None
+def create_report_link(client_id: int) -> Any:
+    client_item = cast(Client, get_or_404(Client, client_id))
+    return create_client_report_link(client_item)
+
+
+@main.post("/clients/<int:client_id>/report-link/revoke")
+@permission_required(REPORT_SHARE)
+def revoke_report_link(client_id: int) -> Any:
+    client_item = cast(Client, get_or_404(Client, client_id))
+    client_item.report_token_hash = None
+    client_item.report_expires_at = None
     get_session().commit()
     audit(
         "report_link_revoked",
         actor_id=cast(User, current_user()).id,
-        client_id=contract_item.client_id,
-        contract_id=contract_item.id,
+        client_id=client_item.id,
     )
     flash("The client report link has been revoked.", "success")
-    return redirect(url_for("main.contract", contract_id=contract_item.id))
+    return redirect(url_for("main.client", client_id=client_item.id))
 
 
 @main.route("/shared/reports/<token>", methods=["GET", "POST"])
 def shared_report(token: str) -> Any:
-    contract_item = get_shared_report_contract(token)
-    client_item = contract_item.client
+    client_item = get_shared_report_client(token)
     if not shared_report_access_allowed(client_item):
         if request.method != "POST":
-            return render_template("shared_report_login.html", contract=contract_item)
+            return render_template("shared_report_login.html", client=client_item)
         ip = request.remote_addr or "unknown"
         rate_key = f"{ip}|{client_item.id}"
         if shared_report_limiter.blocked(rate_key):
             audit(
                 "shared_report_rate_limited",
                 client_id=client_item.id,
-                contract_id=contract_item.id,
                 ip=ip,
             )
             abort(429)
@@ -1835,12 +1889,11 @@ def shared_report(token: str) -> Any:
             audit(
                 "shared_report_rejected",
                 client_id=client_item.id,
-                contract_id=contract_item.id,
                 ip=ip,
             )
             flash("The report password was not accepted.", "error")
             return render_template(
-                "shared_report_login.html", contract=contract_item
+                "shared_report_login.html", client=client_item
             ), 401
         shared_report_limiter.clear(rate_key)
         session.permanent = True
@@ -1850,16 +1903,14 @@ def shared_report(token: str) -> Any:
         audit(
             "shared_report_access_granted",
             client_id=client_item.id,
-            contract_id=contract_item.id,
             ip=ip,
         )
-    report = build_contract_report(
-        get_session(), contract_item, cast(str, current_app.config["DISPLAY_TIMEZONE"])
+    report = build_client_report(
+        get_session(), client_item, cast(str, current_app.config["DISPLAY_TIMEZONE"])
     )
     audit(
         "shared_report_viewed",
-        client_id=contract_item.client_id,
-        contract_id=contract_item.id,
+        client_id=client_item.id,
         ip=request.remote_addr,
     )
     etag = report_state_etag(report)
@@ -1874,11 +1925,11 @@ def shared_report(token: str) -> Any:
 
 @main.get("/shared/reports/<token>/live")
 def shared_report_live(token: str) -> Any:
-    contract_item = get_shared_report_contract(token)
-    if not shared_report_access_allowed(contract_item.client):
+    client_item = get_shared_report_client(token)
+    if not shared_report_access_allowed(client_item):
         abort(401)
-    report = build_contract_report(
-        get_session(), contract_item, cast(str, current_app.config["DISPLAY_TIMEZONE"])
+    report = build_client_report(
+        get_session(), client_item, cast(str, current_app.config["DISPLAY_TIMEZONE"])
     )
     return live_report_response(
         report,
@@ -1897,14 +1948,15 @@ def report_view(contract_id: int) -> str:
     )
     if contract_item is None:
         abort(404)
-    report = build_contract_report(
-        get_session(), contract_item, cast(str, current_app.config["DISPLAY_TIMEZONE"])
+    report = build_client_report(
+        get_session(),
+        contract_item.client,
+        cast(str, current_app.config["DISPLAY_TIMEZONE"]),
     )
     audit(
         "report_viewed",
         user_id=cast(User, current_user()).id,
         client_id=contract_item.client_id,
-        contract_id=contract_item.id,
     )
     etag = report_state_etag(report)
     return render_template(
@@ -1926,8 +1978,10 @@ def report_live(contract_id: int) -> Any:
     )
     if contract_item is None:
         abort(404)
-    report = build_contract_report(
-        get_session(), contract_item, cast(str, current_app.config["DISPLAY_TIMEZONE"])
+    report = build_client_report(
+        get_session(),
+        contract_item.client,
+        cast(str, current_app.config["DISPLAY_TIMEZONE"]),
     )
     return live_report_response(
         report,
@@ -1946,20 +2000,21 @@ def report_pdf(contract_id: int) -> Any:
     )
     if contract_item is None:
         abort(404)
-    report = build_contract_report(
-        get_session(), contract_item, cast(str, current_app.config["DISPLAY_TIMEZONE"])
+    report = build_client_report(
+        get_session(),
+        contract_item.client,
+        cast(str, current_app.config["DISPLAY_TIMEZONE"]),
     )
     pdf = build_pdf(
         report,
         Path(cast(str, current_app.config["BRANDING_PATH"])),
         cast(str, current_app.config["CONTACT_URL"]),
     )
-    filename = f"contract-time-report-{contract_id}.pdf"
+    filename = f"client-time-report-{contract_item.client_id}.pdf"
     audit(
         "report_generated",
         user_id=cast(User, current_user()).id,
         client_id=contract_item.client_id,
-        contract_id=contract_item.id,
     )
     return send_file(
         pdf,

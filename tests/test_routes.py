@@ -479,30 +479,22 @@ class ClientContractTaskRouteTests(AppTestCase):
             data={"name": "", "contact_name": "Contact", "contact_email": "invalid"},
         )
         self.assertEqual(invalid_client.status_code, 400)
-        report_password = "Client-Report-Password-For-Testing-0001!"
-        with patch(
-            "grayhaven_timetracker.routes.generate_temporary_password",
-            return_value=report_password,
-        ):
-            created = self.client.post(
-                "/clients/new",
-                data={
-                    "name": "Client One",
-                    "contact_name": "Client Contact",
-                    "contact_email": "CLIENT@EXAMPLE.INVALID",
-                },
-            )
+        created = self.client.post(
+            "/clients/new",
+            data={
+                "name": "Client One",
+                "contact_name": "Client Contact",
+                "contact_email": "CLIENT@EXAMPLE.INVALID",
+            },
+        )
         self.assertEqual(created.status_code, 200)
-        self.assertIn(report_password.encode(), created.data)
+        self.assertNotIn(b"Client-Report-Password", created.data)
         with session_scope(self.app) as database:
             client = database.scalar(select(Client).where(Client.name == "Client One"))
             assert client is not None
             client_id = client.id
             self.assertEqual(client.contact_email, "client@example.invalid")
-            assert client.report_password_hash is not None
-            self.assertTrue(
-                verify_password(client.report_password_hash, report_password)
-            )
+            self.assertIsNone(client.report_password_hash)
         self.assertEqual(self.client.get(f"/clients/{client_id}").status_code, 200)
         self.assertEqual(self.client.get("/clients/9999").status_code, 404)
         self.assertEqual(
@@ -529,7 +521,8 @@ class ClientContractTaskRouteTests(AppTestCase):
                 "hourly_rate": "55.005",
             },
         )
-        self.assertEqual(created_contract.status_code, 302)
+        self.assertEqual(created_contract.status_code, 200)
+        self.assertIn(b"LIVE REPORT PASSWORD", created_contract.data)
         with session_scope(self.app) as database:
             contract = database.scalar(
                 select(Contract).where(Contract.name == "Contract One")
@@ -537,6 +530,8 @@ class ClientContractTaskRouteTests(AppTestCase):
             assert contract is not None
             contract_id = contract.id
             self.assertEqual(contract.hourly_rate_cents, 5501)
+            client = database.get(Client, client_id)
+            assert client is not None and client.report_password_hash is not None
         self.assertEqual(self.client.get(f"/clients/{client_id}/edit").status_code, 200)
         updated_client = self.client.post(
             f"/clients/{client_id}/edit",
@@ -727,7 +722,7 @@ class TimerAndPermissionRouteTests(AppTestCase):
         )
         self.assertEqual(
             self.client.post(
-                f"/contracts/{self.seed.contract_id}/report-link",
+                f"/clients/{self.seed.client_id}/report-link",
                 data={"expires_in_days": "never"},
             ).status_code,
             403,
@@ -1279,24 +1274,24 @@ class ReportAndSessionRouteTests(AppTestCase):
         report_password = "Shared-Report-Password-For-Testing-0001!"
         self.app.config["PUBLIC_BASE_URL"] = "https://time.example.invalid"
         with session_scope(self.app) as database:
-            contract = database.get(Contract, self.seed.contract_id)
-            assert contract is not None
-            contract.report_token_hash = routes.report_token_hash(unusable_token)
-            contract.client.report_password_hash = None
+            client = database.get(Client, self.seed.client_id)
+            assert client is not None
+            client.report_token_hash = routes.report_token_hash(unusable_token)
+            client.report_password_hash = None
         self.assertEqual(
             self.app.test_client().get(f"/shared/reports/{unusable_token}").status_code,
             404,
         )
         self.assertEqual(
             self.client.post(
-                f"/contracts/{self.seed.contract_id}/report-link",
+                f"/clients/{self.seed.client_id}/report-link",
                 data={"expires_in_days": "invalid"},
             ).status_code,
             400,
         )
         self.assertEqual(
             self.client.post(
-                f"/contracts/{self.seed.contract_id}/report-link",
+                f"/clients/{self.seed.client_id}/report-link",
                 data={"expires_in_days": "14"},
             ).status_code,
             400,
@@ -1312,7 +1307,7 @@ class ReportAndSessionRouteTests(AppTestCase):
             ),
         ):
             created = self.client.post(
-                f"/contracts/{self.seed.contract_id}/report-link",
+                f"/clients/{self.seed.client_id}/report-link",
                 data={"expires_in_days": "never"},
             )
         self.assertEqual(created.status_code, 200)
@@ -1324,16 +1319,16 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertIn(report_password.encode(), created.data)
         self.assertIn(b"does not expire", created.data)
         with session_scope(self.app) as database:
-            contract = database.get(Contract, self.seed.contract_id)
-            assert contract is not None
-            self.assertNotEqual(contract.report_token_hash, first_token)
+            client = database.get(Client, self.seed.client_id)
+            assert client is not None
+            self.assertNotEqual(client.report_token_hash, first_token)
             self.assertEqual(
-                contract.report_token_hash, routes.report_token_hash(first_token)
+                client.report_token_hash, routes.report_token_hash(first_token)
             )
-            self.assertIsNone(contract.report_expires_at)
-            assert contract.client.report_password_hash is not None
+            self.assertIsNone(client.report_expires_at)
+            assert client.report_password_hash is not None
             self.assertTrue(
-                verify_password(contract.client.report_password_hash, report_password)
+                verify_password(client.report_password_hash, report_password)
             )
 
         anonymous = self.app.test_client()
@@ -1409,7 +1404,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         ):
             self.app.config["PUBLIC_BASE_URL"] = None
             rotated = self.client.post(
-                f"/contracts/{self.seed.contract_id}/report-link",
+                f"/clients/{self.seed.client_id}/report-link",
                 data={"expires_in_days": "7"},
             )
         self.assertEqual(rotated.status_code, 200)
@@ -1449,22 +1444,22 @@ class ReportAndSessionRouteTests(AppTestCase):
             200,
         )
         with session_scope(self.app) as database:
-            contract = database.get(Contract, self.seed.contract_id)
-            assert contract and contract.report_expires_at
-            self.assertGreater(contract.report_expires_at, datetime.now())
-            contract.report_expires_at = datetime.now() - timedelta(seconds=1)
+            client = database.get(Client, self.seed.client_id)
+            assert client and client.report_expires_at
+            self.assertGreater(client.report_expires_at, datetime.now())
+            client.report_expires_at = datetime.now() - timedelta(seconds=1)
         self.assertEqual(
             anonymous.get(f"/shared/reports/{second_token}").status_code, 404
         )
         revoked = self.client.post(
-            f"/contracts/{self.seed.contract_id}/report-link/revoke"
+            f"/clients/{self.seed.client_id}/report-link/revoke"
         )
         self.assertEqual(revoked.status_code, 302)
         with session_scope(self.app) as database:
-            contract = database.get(Contract, self.seed.contract_id)
-            assert contract is not None
-            self.assertIsNone(contract.report_token_hash)
-            self.assertIsNone(contract.report_expires_at)
+            client = database.get(Client, self.seed.client_id)
+            assert client is not None
+            self.assertIsNone(client.report_token_hash)
+            self.assertIsNone(client.report_expires_at)
             audit_events = database.scalars(select(AuditEvent)).all()
             self.assertTrue(
                 any(item.path == "/shared/reports/[redacted]" for item in audit_events)

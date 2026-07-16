@@ -16,6 +16,7 @@ from grayhaven_timetracker.database import session_scope
 from grayhaven_timetracker.models import Client, Contract, Task, TimeEntry, User
 from grayhaven_timetracker.reports import (
     allocate_session_costs,
+    build_client_report,
     build_contract_report,
     build_pdf,
     calculate_cost,
@@ -62,6 +63,39 @@ class FormattingTests(AppTestCase):
 
 
 class ContractReportTests(AppTestCase):
+    def test_client_report_contains_newest_contracts_and_aggregate_totals(self) -> None:
+        seed = self.seed_contract()
+        with session_scope(self.app) as database:
+            client = database.get(Client, seed.client_id)
+            assert client is not None
+            newer = Contract(
+                client=client,
+                name="Newest Contract",
+                contact_name="Contact",
+                contact_email="contact@example.invalid",
+                hourly_rate_cents=6500,
+            )
+            database.add(newer)
+            database.flush()
+            report = build_client_report(
+                database,
+                client,
+                "America/Chicago",
+                snapshot_at=datetime(2026, 7, 15, 5, 0, 0),
+            )
+            self.assertEqual([item.contract.name for item in report.contracts], [
+                "Newest Contract",
+                "Hamilton Beach - Phase 1",
+            ])
+            self.assertEqual(
+                report.total_seconds,
+                sum(item.total_seconds for item in report.contracts),
+            )
+            self.assertEqual(
+                report.total_cost,
+                sum(item.total_cost for item in report.contracts),
+            )
+
     def test_report_groups_sessions_and_snapshots_active_timers(self) -> None:
         seed = self.seed_contract()
         snapshot = datetime(2026, 7, 15, 5, 0, 0)

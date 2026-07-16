@@ -75,6 +75,12 @@ class Client(Base):
             "report_password_version >= 1",
             name="ck_client_report_password_version",
         ),
+        Index(
+            "uq_client_report_token_hash",
+            "report_token_hash",
+            unique=True,
+            sqlite_where=text("report_token_hash IS NOT NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -83,9 +89,11 @@ class Client(Base):
     contact_email: Mapped[str] = mapped_column(String(255))
     report_password_hash: Mapped[str | None] = mapped_column(String(512), nullable=True)
     report_password_version: Mapped[int] = mapped_column(Integer, default=1)
+    report_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    report_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     contracts: Mapped[list[Contract]] = relationship(
-        back_populates="client", order_by="Contract.name"
+        back_populates="client", order_by=lambda: Contract.id.desc()
     )
 
 

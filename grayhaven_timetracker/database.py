@@ -15,7 +15,7 @@ from sqlcipher3 import dbapi2 as sqlcipher
 from .models import Base
 
 SQLITE_HEADER = b"SQLite format 3\x00"
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 
 
 class DatabaseError(RuntimeError):
@@ -155,6 +155,33 @@ def migrate_schema(connection: Connection) -> str | None:
     if version == "2":
         # Base.metadata.create_all creates the new audit table before migration;
         # the schema marker advances only after that operation succeeds.
+        connection.execute(
+            text(
+                "UPDATE application_metadata SET value = :version "
+                "WHERE key = 'schema_version'"
+            ),
+            {"version": "3"},
+        )
+        version = "3"
+    if version == "3":
+        client_columns = {
+            row[1]
+            for row in connection.exec_driver_sql(
+                "PRAGMA table_info(client)"
+            ).fetchall()
+        }
+        if "report_token_hash" not in client_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE client ADD COLUMN report_token_hash VARCHAR(64)"
+            )
+        if "report_expires_at" not in client_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE client ADD COLUMN report_expires_at DATETIME"
+            )
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_client_report_token_hash "
+            "ON client (report_token_hash) WHERE report_token_hash IS NOT NULL"
+        )
         connection.execute(
             text(
                 "UPDATE application_metadata SET value = :version "

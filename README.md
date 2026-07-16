@@ -40,9 +40,10 @@ to adapt the runtime branding, deployment, and operating procedures.
 - Manual completed-session entry, correction, and deletion by the owner or an
   administrator, with per-user overlap prevention.
 - Administrator-only internal reports and one-click branded PDF reports.
-- Live client reports without account registration, protected by a high-entropy
-  link and a separately delivered client password. Links can be rotated,
-  revoked, and configured with optional expiration.
+- Live client reports without account registration, protected by one
+  high-entropy client link and a separately delivered client password. The
+  report includes all contracts newest first; the link can be rotated, revoked,
+  and configured with optional expiration.
 - Live browser-report timers, grouped totals, cost, and distribution that
   advance every second and discover timer changes without reloading the page.
 - Report summaries grouped by task and subtask, including duration, cost, and
@@ -228,8 +229,9 @@ system audit event.
 
 ## Reporting
 
-Administrators can open a contract report in a new browser tab or download a
-branded PDF with one click. The browser report is a live dashboard: active
+Administrators can open a client report from any of its contracts in a new
+browser tab or download a branded PDF with one click. The browser report is a
+live dashboard: active
 session rows, grouped totals, overall duration, cost, and distribution advance
 every second. Background conditional requests discover newly started, stopped,
 edited, or deleted timers without a page reload.
@@ -238,12 +240,12 @@ PDF generation is intentionally different. Each PDF is an immutable snapshot
 that calculates active timers as though they stopped at the generation instant
 without actually stopping or modifying those timers.
 
-An administrator can also create one live report link per contract. A client
-does not create an account: they open the opaque link and enter the separately
-delivered client report password. Expiration is optional, and administrators
-can rotate or revoke the contract link or reset the client password. Password
-reset immediately invalidates existing client report browser sessions across
-that client's contracts.
+An administrator can create one live report link per client. A client does not
+create an account: they open the opaque link and enter the separately delivered
+client report password. The report presents every contract newest first.
+Expiration is optional, and administrators can rotate or revoke the client link
+or reset the client password. Password reset immediately invalidates existing
+client report browser sessions.
 
 The report contains only the client and contract names. Client and contract
 contact details remain internal. Currency is USD, timestamps are displayed in

@@ -197,14 +197,20 @@ override in the application.
 
 ## Live Client Reports
 
-Client reports do not require account registration. At client creation, the
-application generates one report password and displays it once. Deliver that
-password separately from contract report links.
+Client reports do not require account registration. Client creation does not
+generate a report password because no contract exists yet. Creating the first
+contract generates one client report password and displays it once. Deliver
+that password separately from the client report link.
 
-From a contract, an administrator can create or rotate the opaque report link
-and select 7, 30, 90, or 365 days, or no expiration. Rotation immediately
-invalidates the prior link. Revocation removes access regardless of a client's
-existing browser session.
+The password confirmation page provides an **Email client** mailto action that
+does not include the password and a **Copy password** action for secure manual
+delivery. The same confirmation workflow is used after an administrator resets
+the client password.
+
+From the client page, an administrator can create or rotate the single opaque
+client report link and select 7, 30, 90, or 365 days, or no expiration.
+Rotation immediately invalidates the prior link. Revocation removes access
+regardless of a client's existing browser session.
 
 Resetting the client report password requires administrator password and TOTP
 reauthentication. It displays a new password once and invalidates existing
@@ -212,7 +218,8 @@ report browser sessions for every contract under that client. Stored report
 passwords cannot be viewed or recovered.
 
 The shared page is the same live dashboard available to administrators. Active
-session duration and allocated cost advance every second. A same-origin
+contract sections are shown newest first. Active session duration and allocated
+cost advance every second. A same-origin
 background check discovers new, stopped, edited, or deleted timers within a
 few seconds and updates the report without a page reload. Revocation,
 expiration, password rotation, or session expiry ends synchronization and
