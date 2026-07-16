@@ -39,9 +39,9 @@ That boundary requires both the client's opaque high-entropy link and the
 client’s administrator-delivered report password. Shared reports exclude
 internal contact details.
 
-Report-password emails are sent through Proton as password-protected encrypted
-messages. A separate, temporary email-decryption password is delivered through
-another approved channel. That temporary password is external to the
+Report-password emails use Proton Mail External encryption and expire within
+48–72 hours. A separate, temporary external-encryption password is delivered
+through another approved channel. That temporary password is external to the
 application and is distinct from the client report password contained in the
 encrypted message.
 
