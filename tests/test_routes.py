@@ -1320,6 +1320,11 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         password_mailto_body = password_mailto["body"][0]
         self.assertIn(
+            "All previously open live report sessions will need to be "
+            "reauthenticated.",
+            password_mailto_body,
+        )
+        self.assertIn(
             f"<b>Your new password is:</b> {report_password}",
             password_mailto_body,
         )

@@ -279,8 +279,8 @@ def report_password_mailto(
         f"{contact_name},",
         "",
         "Your personalized live time and cost tracking report password for "
-        "Grayhaven Systems LLC has been reset. All previous open sessions will "
-        "need to be reauthenticated.",
+        "Grayhaven Systems LLC has been reset. All previously open live report "
+        "sessions will need to be reauthenticated.",
         "",
         f"<b>Your new password is:</b> {escaped_password}",
         "",
