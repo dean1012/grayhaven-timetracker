@@ -9,6 +9,7 @@ import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 import pyotp
 from argon2 import PasswordHasher
@@ -1280,6 +1281,18 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertIn(report_url.encode(), client_page.data)
         self.assertIn(b"Copy report link", client_page.data)
         self.assertIn(b"Share report link by email", client_page.data)
+        mailto_body = parse_qs(
+            urlsplit(routes.report_mailto(client, report_url)).query
+        )["body"][0]
+        self.assertIn(
+            "<b>Your personalized live report is available here:</b>", mailto_body
+        )
+        self.assertIn(f'<a href="{report_url}">{report_url}</a>', mailto_body)
+        self.assertIn(
+            "<b>Please keep both your link and password confidential to protect "
+            "your data.</b>",
+            mailto_body,
+        )
         anonymous = self.app.test_client()
         self.assertEqual(anonymous.get(f"/shared/reports/{token}").status_code, 200)
         self.assertEqual(

@@ -6,6 +6,7 @@ import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from html import escape
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import quote
@@ -233,21 +234,30 @@ def ensure_client_report_token(client: Client) -> str:
 
 
 def report_mailto(client: Client, report_url: str) -> str:
-    """Build the reviewed client-access email without placing the password in it."""
+    """Build the Proton-compatible HTML email without placing the password in it."""
     subject = f"Live time and cost report access for {client.name}"
+    contact_name = escape(client.contact_name)
+    escaped_report_url = escape(report_url, quote=True)
     body_lines = [
-        f"{client.contact_name},",
+        f"{contact_name},",
         "",
         "Grayhaven Systems LLC is inviting you to view live time and cost tracking "
-        "data for your contracts with us. Viewing your live report will require a "
-        "password that will be shared with you securely separately from this message. "
-        "You do not need to sign up for an account to view your report.",
+        "data for your contracts with us.",
         "",
-        f"Your personalized live report is available here: {report_url}",
+        "Viewing your live report will require a password that will be securely "
+        "shared with you separately from this message. You do not need to sign up "
+        "for an account to view your report.",
         "",
-        "Please keep both your link and password confidential to protect your data. "
+        "\u200b<b>Your personalized live report is available here:</b>",
+        f'<a href="{escaped_report_url}">{escaped_report_url}</a>',
+        "",
+        "<b>Please keep both your link and password confidential to protect your "
+        "data.</b>",
+        "",
         "If you have any questions, concerns, or problems, please let me know and I "
         "will be happy to assist you.",
+        "",
+        "",
     ]
     return (
         f"mailto:{quote(client.contact_email, safe='@')}?subject={quote(subject)}"
