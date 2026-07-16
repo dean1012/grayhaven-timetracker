@@ -1323,6 +1323,10 @@ class ReportAndSessionRouteTests(AppTestCase):
             f"<b>Your new password is:</b> {report_password}",
             password_mailto_body,
         )
+        self.assertIn(
+            "<b>Please save this password, as this email will expire in 48 hours.</b>",
+            password_mailto_body,
+        )
         self.assertIn(f'<a href="{report_url}">{report_url}</a>', password_mailto_body)
         with session_scope(self.app) as database:
             client = database.get(Client, self.seed.client_id)

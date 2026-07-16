@@ -284,6 +284,8 @@ def report_password_mailto(
         "",
         f"<b>Your new password is:</b> {escaped_password}",
         "",
+        "<b>Please save this password, as this email will expire in 48 hours.</b>",
+        "",
         "<b>As a reminder, your personalized live report is available here:</b>",
         f'<a href="{escaped_report_url}">{escaped_report_url}</a>',
         "",

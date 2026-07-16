@@ -209,11 +209,12 @@ password and TOTP reauthentication, the confirmation page displays the new
 password once with copy and Proton Mail actions inside the password field. The
 password mailto includes the reset password and permanent report URL. The
 administrator must enable Proton Mail **External encryption** for that draft
-and set the encrypted message to expire within 48–72 hours. Generate a second,
+and set the encrypted message to expire in 48 hours. The email reminds the
+client to save the report password before that expiration. Generate a second,
 temporary external-encryption password and deliver it through a separate
-approved channel. That password is distinct from the client report password
-and is not generated or stored by the application. The report password cannot
-be recovered after leaving the confirmation page.
+approved channel. That password is distinct from the client report password and
+is not generated or stored by the application. The report password cannot be
+recovered after leaving the confirmation page.
 
 Resetting the client report password requires administrator password and TOTP
 reauthentication. It displays a new password once and invalidates existing

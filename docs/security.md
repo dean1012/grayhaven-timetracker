@@ -40,7 +40,7 @@ client’s administrator-delivered report password. Shared reports exclude
 internal contact details.
 
 Report-password emails use Proton Mail External encryption and expire within
-48–72 hours. A separate, temporary external-encryption password is delivered
+48 hours. A separate, temporary external-encryption password is delivered
 through another approved channel. That temporary password is external to the
 application and is distinct from the client report password contained in the
 encrypted message.
