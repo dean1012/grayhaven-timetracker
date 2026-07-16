@@ -10,12 +10,10 @@
     <form method="post" class="form-stack" autocomplete="off" data-protonpass-ignore="true">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Contract name<input name="name" value="{{ request.form.get('name', contract.name if editing else '') }}" maxlength="200" required autofocus autocomplete="off" data-protonpass-ignore="true"></label>
-      <label>Contract contact name<input name="contact_name" value="{{ request.form.get('contact_name', contract.contact_name if editing else '') }}" maxlength="200" required autocomplete="off" data-protonpass-ignore="true"></label>
-      <label>Contract contact email<input type="email" name="contact_email" value="{{ request.form.get('contact_email', contract.contact_email if editing else '') }}" maxlength="255" required autocomplete="off" data-protonpass-ignore="true"></label>
-      {% if editing %}
-      <label>Billable hourly rate<span class="readonly-value">{{ format_money(contract.hourly_rate) }} per hour</span><small>The original billable rate is immutable so historical and live reporting remain consistent.</small></label>
-      {% else %}
-      <label>Billable hourly rate<input type="number" name="hourly_rate" value="{{ request.form.get('hourly_rate', '') }}" min="0" max="1000000" step="0.01" required autocomplete="off" data-protonpass-ignore="true"></label>
+      <label>Contract contact name<input name="contact_name" value="{{ request.form.get('contact_name', contract.contact_name if editing else client.contact_name) }}" maxlength="200" required autocomplete="off" data-protonpass-ignore="true"></label>
+      <label>Contract contact email<input type="email" name="contact_email" value="{{ request.form.get('contact_email', contract.contact_email if editing else client.contact_email) }}" maxlength="255" required autocomplete="off" data-protonpass-ignore="true"></label>
+      {% if not editing %}
+      <label>Billable hourly rate<span class="money-input"><span class="money-prefix" aria-hidden="true">$</span><input type="number" name="hourly_rate" value="{{ request.form.get('hourly_rate', '') }}" min="0" max="1000000" step="0.01" required autocomplete="off" data-protonpass-ignore="true"><span class="money-suffix">per hour</span></span></label>
       {% endif %}
       <div class="form-actions">
         <a class="button button-secondary" href="{{ url_for('main.contract', contract_id=contract.id) if editing else url_for('main.client', client_id=client.id) }}">Cancel</a>

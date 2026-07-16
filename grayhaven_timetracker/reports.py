@@ -540,7 +540,7 @@ def build_pdf(
     summary_header: list[object] = [
         "Task / subtask",
         "Duration",
-        "Equivalent cost",
+        "Estimated Cost",
     ]
     summary_group_rows: list[list[object]] = [
         [

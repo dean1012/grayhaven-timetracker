@@ -19,11 +19,10 @@
   <section class="report-title">
     <p class="eyebrow">CLIENT</p>
     <h1>{{ report.client.name }}</h1>
-    <p class="muted">Synchronized {{ format_datetime(report.generated_at, report.timezone) }} · all contracts · live totals</p>
   </section>
   <section class="report-summary panel">
     <div class="summary-card"><span>Total duration</span><strong data-report-total-duration>{{ format_duration(report.total_seconds) }}</strong></div>
-    <div class="summary-card"><span>Equivalent cost</span><strong data-report-total-cost>{{ format_money(report.total_cost) }}</strong></div>
+    <div class="summary-card"><span>Estimated Cost</span><strong data-report-total-cost>{{ format_money(report.total_cost) }}</strong></div>
     <div class="summary-card"><span>Contracts</span><strong>{{ report.contracts|length }}</strong></div>
   </section>
   {% for contract_report in report.contracts %}
@@ -37,13 +36,13 @@
     </header>
     <section class="report-contract-summary panel">
       <div class="summary-card"><span>Contract duration</span><strong data-report-contract-total-duration>{{ format_duration(contract_report.total_seconds) }}</strong></div>
-      <div class="summary-card"><span>Equivalent cost</span><strong data-report-contract-total-cost>{{ format_money(contract_report.total_cost) }}</strong></div>
+      <div class="summary-card"><span>Estimated Cost</span><strong data-report-contract-total-cost>{{ format_money(contract_report.total_cost) }}</strong></div>
     </section>
     <section class="report-overview-grid">
       <div class="panel report-panel">
         <div class="panel-heading"><div><p class="eyebrow">SUMMARY</p><h3>Time by Task and Subtask</h3></div></div>
         <table class="data-table">
-          <thead><tr><th>Task / subtask</th><th>Duration</th><th>Equivalent cost</th></tr></thead>
+          <thead><tr><th>Task / subtask</th><th>Duration</th><th>Estimated Cost</th></tr></thead>
           <tbody>
             {% for group in contract_report.groups %}
             <tr data-report-group="{{ group.label }}">
@@ -109,5 +108,5 @@
   </aside>
   </div>
   </div>
-  <footer class="report-footer"><span>Grayhaven Systems LLC</span><strong>CONFIDENTIAL</strong></footer>
+  <footer class="report-footer"><strong>CONFIDENTIAL</strong></footer>
 </article>

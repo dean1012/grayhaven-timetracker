@@ -246,7 +246,7 @@ def report_mailto(client: Client, report_url: str | None = None) -> str:
         "",
     ]
     if report_url:
-        body_lines.extend(["Open the private report link:", report_url, ""])
+        body_lines.extend(["Open your private live report here:", report_url, ""])
     else:
         body_lines.extend(
             [

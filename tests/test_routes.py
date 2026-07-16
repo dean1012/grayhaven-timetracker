@@ -497,9 +497,10 @@ class ClientContractTaskRouteTests(AppTestCase):
             self.assertIsNone(client.report_password_hash)
         self.assertEqual(self.client.get(f"/clients/{client_id}").status_code, 200)
         self.assertEqual(self.client.get("/clients/9999").status_code, 404)
-        self.assertEqual(
-            self.client.get(f"/contracts/new/{client_id}").status_code, 200
-        )
+        new_contract_form = self.client.get(f"/contracts/new/{client_id}")
+        self.assertEqual(new_contract_form.status_code, 200)
+        self.assertIn(b'value="Client Contact"', new_contract_form.data)
+        self.assertIn(b'value="client@example.invalid"', new_contract_form.data)
         for rate in ("invalid", "-1", "1000000.01"):
             with self.subTest(rate=rate):
                 response = self.client.post(
@@ -1312,6 +1313,7 @@ class ReportAndSessionRouteTests(AppTestCase):
             )
         self.assertEqual(created.status_code, 200)
         self.assertIn(first_token.encode(), created.data)
+        self.assertGreater(created.data.count(first_token.encode()), 1)
         self.assertIn(
             f"https://time.example.invalid/shared/reports/{first_token}".encode(),
             created.data,
@@ -1366,6 +1368,8 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         self.assertEqual(shared.status_code, 200)
         self.assertIn(b"Live Client Report", shared.data)
+        self.assertIn(b"Estimated Cost", shared.data)
+        self.assertNotIn(b"Equivalent Cost", shared.data)
         self.assertNotIn(b"morgan@example.invalid", shared.data)
         shared_etag_match = re.search(rb'data-live-etag="([0-9a-f]{64})"', shared.data)
         assert shared_etag_match is not None

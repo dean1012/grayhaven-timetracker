@@ -38,13 +38,16 @@
     <div><p class="eyebrow">CONTRACTS</p><h2>Contract Directory</h2></div>
   </div>
   {% for contract in client.contracts %}
-  <a class="contract-row contract-row-detailed" href="{{ url_for('main.contract', contract_id=contract.id) }}">
-    <span class="contract-identity">
+  <div class="contract-row contract-row-detailed">
+    <a class="contract-name-link" href="{{ url_for('main.contract', contract_id=contract.id) }}">
+      <span class="contract-identity">
       <i class="fa-solid fa-file-signature" aria-hidden="true"></i>
-      <span><strong>{{ contract.name }}</strong><small>{{ contract.contact_name }} · {{ contract.contact_email }}</small></span>
-    </span>
-    <span class="rate">{{ format_money(contract.hourly_rate) }}/hr <i class="fa-solid fa-chevron-right" aria-hidden="true"></i></span>
-  </a>
+      <strong>{{ contract.name }}</strong>
+      </span>
+    </a>
+    {% if contract.contact_name != client.contact_name or contract.contact_email != client.contact_email %}<small class="contract-contact"><i class="fa-solid fa-address-card" aria-hidden="true"></i><span>{{ contract.contact_name }} · <a href="mailto:{{ contract.contact_email }}">{{ contract.contact_email }}</a></span></small>{% endif %}
+    <a class="rate" href="{{ url_for('main.contract', contract_id=contract.id) }}">{{ format_money(contract.hourly_rate) }}/hr <i class="fa-solid fa-chevron-right" aria-hidden="true"></i></a>
+  </div>
   {% else %}
   <div class="empty-state"><p>No contracts created for this client.</p></div>
   {% endfor %}

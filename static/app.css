@@ -103,11 +103,13 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .contact-line span { color: var(--charcoal-border); }
 .contract-list { margin: 1.1rem 0 1.3rem; border-top: 1px solid var(--charcoal-border); }
 .contract-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .9rem .2rem; color: var(--soft-white); border-bottom: 1px solid color-mix(in srgb, var(--charcoal-border) 60%, transparent); font-size: .92rem; }
-.contract-row span:first-child { display: flex; gap: .65rem; align-items: center; min-width: 0; overflow-wrap: anywhere; }
+.contract-name-link { display: flex; align-items: center; min-width: 0; color: var(--soft-white); }
+.contract-identity { display: flex; align-items: center; gap: .65rem; min-width: 0; overflow-wrap: anywhere; }
 .contract-row-detailed { padding-block: 1rem; }
-.contract-row-detailed .contract-identity > span { display: grid; gap: .15rem; }
+.contract-contact { display: inline-flex; align-items: center; gap: .4rem; }
+.contract-contact > i { color: var(--primary-accent); }
 .contract-row-detailed .contract-identity strong { color: var(--soft-white); font-weight: 600; }
-.contract-row-detailed .contract-identity small { color: var(--cool-grey); overflow-wrap: anywhere; }
+.contract-contact > span { color: var(--cool-grey); overflow-wrap: anywhere; }
 .contract-row i { color: var(--primary-accent); }
 .contract-row .rate { color: var(--cool-grey); font-size: .82rem; }
 .contract-row .rate i { margin-left: .7rem; color: var(--cool-grey); }
@@ -139,6 +141,13 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .inline-form, .timer-form, .subtask-add { display: flex; align-items: center; gap: .5rem; }
 .inline-form input { width: 250px; }
 input, select { min-height: 42px; width: 100%; padding: .65rem .75rem; color: var(--soft-white); background: var(--deep-graphite); border: 1px solid var(--charcoal-border); border-radius: var(--border-radius); }
+select { padding-right: 2.25rem; }
+.money-input { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; min-height: 42px; color: var(--soft-white); background: var(--deep-graphite); border: 1px solid var(--charcoal-border); border-radius: var(--border-radius); overflow: hidden; }
+.money-input:focus-within { outline: 2px solid var(--primary-accent); outline-offset: 3px; }
+.money-prefix, .money-suffix { color: var(--cool-grey); }
+.money-prefix { padding-left: .75rem; }
+.money-suffix { padding-right: .9rem; white-space: nowrap; }
+.money-input input { min-width: 0; padding: .65rem .35rem; border: 0; border-radius: 0; outline: 0; }
 .input-with-icon { position: relative; display: block; }
 .input-with-icon > i { position: absolute; top: 50%; left: .85rem; z-index: 1; color: var(--slate-grey); transform: translateY(-50%); pointer-events: none; transition: color var(--transition-fast); }
 .input-with-icon > input { padding-left: 2.65rem; }
@@ -259,7 +268,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .report-header img { width: 230px; }
 .report-meta { text-align: right; color: var(--cool-grey); font-size: .86rem; }
 .report-meta p { margin-bottom: .15rem; }
-.report-viewport { min-height: 0; overflow-y: auto; flex: 1 1 auto; }
+.report-viewport { width: 100vw; min-height: 0; margin-left: calc((100% - 100vw) / 2); padding-inline: max(var(--container-padding), calc((100vw - 1480px) / 2)); overflow-y: auto; flex: 1 1 auto; }
 .report-content { min-width: 0; }
 .live-report-status { display: inline-flex; align-items: center; justify-content: flex-end; gap: .45rem; color: var(--alert-success); }
 .live-report-status .running-dot { width: 7px; height: 7px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--alert-success) 12%, transparent); }
@@ -305,7 +314,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .report-contact { display: flex; align-items: center; gap: .8rem; margin-top: 2rem; padding: 1rem 1.15rem; color: var(--cool-grey); background: color-mix(in srgb, var(--primary-accent) 6%, transparent); border: 1px solid color-mix(in srgb, var(--primary-accent) 22%, transparent); border-radius: var(--border-radius); }
 .report-contact > i { color: var(--primary-accent); font-size: 1.2rem; }
 .report-contact p { margin: 0; }
-.report-footer { display: flex; flex: 0 0 auto; justify-content: space-between; margin-top: 1rem; padding-top: 1rem; color: var(--cool-grey); border-top: 1px solid var(--primary-accent); font-size: .76rem; }
+.report-footer { display: flex; flex: 0 0 auto; justify-content: flex-start; margin-top: 1rem; padding-top: 1rem; color: var(--cool-grey); border-top: 1px solid var(--primary-accent); font-size: .76rem; }
 .report-footer strong { color: var(--primary-accent); letter-spacing: .16em; }
 
 @media (width >=640px) {
@@ -326,7 +335,7 @@ small { color: var(--cool-grey); font-weight: 400; }
   .client-card, .task-panel, .contract-directory, .user-directory, .session-directory, .audit-directory, .report-panel { padding: 1.25rem; }
   .contract-row { align-items: flex-start; flex-wrap: wrap; }
   .contract-row .rate { margin-left: auto; }
-  .contract-row-detailed .contract-identity { min-width: 100%; }
+  .contract-row-detailed .contract-name-link { min-width: 100%; }
   .contact-line { align-items: flex-start; flex-wrap: wrap; overflow-wrap: anywhere; }
   .active-timer { align-items: stretch; flex-direction: column; gap: 1rem; }
   .share-panel { align-items: stretch; flex-direction: column; }
