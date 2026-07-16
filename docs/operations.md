@@ -201,13 +201,14 @@ Client reports do not require account registration. Client creation generates a
 permanent report URL automatically, even before any contracts exist. Only
 administrators can view or share that URL from the client page. Until a password
 is generated, the URL cannot grant report access. The page provides copy and
-mailto sharing controls; the mailto template includes the URL but never the
-report password.
+mailto sharing controls. The link-sharing mailto includes the URL and states
+that the password will arrive separately.
 
 An administrator can select **Generate Password** from the client page. After
 password and TOTP reauthentication, the confirmation page displays the new
-password once with an icon-only copy control. Deliver the password separately
-from the report URL; it cannot be recovered after leaving the page.
+password once with copy and Proton Mail actions inside the password field. The
+password mailto includes the reset password and permanent report URL. The
+password cannot be recovered after leaving the confirmation page.
 
 Resetting the client report password requires administrator password and TOTP
 reauthentication. It displays a new password once and invalidates existing

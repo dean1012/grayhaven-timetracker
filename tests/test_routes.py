@@ -622,6 +622,8 @@ class ClientContractTaskRouteTests(AppTestCase):
             )
         self.assertEqual(reset_password.status_code, 200)
         self.assertIn(replacement_password.encode(), reset_password.data)
+        self.assertIn(b"Copy password", reset_password.data)
+        self.assertIn(b"Email report password", reset_password.data)
 
     def test_task_subtask_rename_delete_and_time_guards(self) -> None:
         seed = self.seed_contract()
@@ -1307,6 +1309,21 @@ class ReportAndSessionRouteTests(AppTestCase):
             401,
         )
         report_password = "Shared-Report-Password-For-Testing-0001!"
+        password_mailto = parse_qs(
+            urlsplit(
+                routes.report_password_mailto(client, report_url, report_password)
+            ).query
+        )
+        self.assertEqual(
+            password_mailto["subject"],
+            ["Your live time and cost report password for Pellera has been reset"],
+        )
+        password_mailto_body = password_mailto["body"][0]
+        self.assertIn(
+            f"<b>Your new password is:</b> {report_password}",
+            password_mailto_body,
+        )
+        self.assertIn(f'<a href="{report_url}">{report_url}</a>', password_mailto_body)
         with session_scope(self.app) as database:
             client = database.get(Client, self.seed.client_id)
             assert client is not None

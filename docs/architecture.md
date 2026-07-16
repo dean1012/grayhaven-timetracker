@@ -81,7 +81,7 @@ longer consulted. Each client has one Argon2id report-password hash and a
 monotonically increasing password version. The linked report contains every
 contract for that client, newest first, with contract-specific rates and totals.
 
-A client follows the client URL and enters the separately delivered report
+A client follows the client URL and enters the administrator-delivered report
 password. Before a password exists, the URL remains inaccessible. Successful
 verification stores only the client identifier, password version, and
 authentication timestamp in the signed browser session. Password replacement

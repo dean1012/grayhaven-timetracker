@@ -41,7 +41,7 @@ to adapt the runtime branding, deployment, and operating procedures.
   administrator, with per-user overlap prevention.
 - Administrator-only internal reports and one-click branded PDF reports.
 - Live client reports without account registration, protected by one
-  high-entropy client link and a separately delivered client password. The
+  high-entropy client link and an administrator-delivered client password. The
   report includes all contracts newest first. Each client receives a permanent
   report URL when created; administrators explicitly generate or replace the
   client password when access is needed.
@@ -244,9 +244,9 @@ without actually stopping or modifying those timers.
 Each client has one permanent live report URL, generated automatically when the
 client is created. The URL is shared only by administrators. Until an
 administrator generates a password, it cannot grant report access. A client
-does not create an account: they open the URL and enter the separately delivered
-client report password. Password replacement immediately invalidates existing
-client report browser sessions.
+does not create an account: they open the URL and enter the administrator-
+delivered client report password. Password replacement immediately invalidates
+existing client report browser sessions.
 
 The report contains only the client and contract names. Client and contract
 contact details remain internal. Currency is USD, timestamps are displayed in
