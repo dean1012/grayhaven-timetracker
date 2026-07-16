@@ -237,6 +237,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .report-link-row .client-report-link a { display: block; overflow-wrap: anywhere; }
 .report-link-row .client-report-link > a { flex: 1; min-width: 0; }
 .report-link-actions { display: flex; flex: 0 0 auto; align-items: center; gap: .2rem; }
+.report-link-actions .icon-button { flex: 0 0 32px; line-height: 1; }
 .share-panel > div:first-child { max-width: 760px; }
 .share-panel p:last-child { margin-bottom: 0; }
 .share-controls, .share-form { display: flex; align-items: end; gap: .65rem; }
