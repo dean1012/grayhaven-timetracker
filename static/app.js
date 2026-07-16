@@ -45,9 +45,23 @@ document.addEventListener("click", async (event) => {
   try {
     await copyText(value);
     const original = button.innerHTML;
-    button.innerHTML = '<i class="fa-solid fa-check" aria-hidden="true"></i> Copied';
+    const originalLabel = button.getAttribute("aria-label");
+    const originalTitle = button.getAttribute("title");
+    button.innerHTML = '<i class="fa-solid fa-check" aria-hidden="true"></i><span class="visually-hidden">Copied</span>';
+    button.setAttribute("aria-label", "Copied");
+    button.setAttribute("title", "Copied");
     window.setTimeout(() => {
       button.innerHTML = original;
+      if (originalLabel === null) {
+        button.removeAttribute("aria-label");
+      } else {
+        button.setAttribute("aria-label", originalLabel);
+      }
+      if (originalTitle === null) {
+        button.removeAttribute("title");
+      } else {
+        button.setAttribute("title", originalTitle);
+      }
     }, 1800);
   } catch {
     window.prompt("Copy this password", value);

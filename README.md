@@ -42,8 +42,9 @@ to adapt the runtime branding, deployment, and operating procedures.
 - Administrator-only internal reports and one-click branded PDF reports.
 - Live client reports without account registration, protected by one
   high-entropy client link and a separately delivered client password. The
-  report includes all contracts newest first; the link can be rotated, revoked,
-  and configured with optional expiration.
+  report includes all contracts newest first. Each client receives a permanent
+  report URL when created; administrators explicitly generate or replace the
+  client password when access is needed.
 - Live browser-report timers, grouped totals, cost, and distribution that
   advance every second and discover timer changes without reloading the page.
 - Report summaries grouped by task and subtask, including duration, cost, and
@@ -240,11 +241,11 @@ PDF generation is intentionally different. Each PDF is an immutable snapshot
 that calculates active timers as though they stopped at the generation instant
 without actually stopping or modifying those timers.
 
-An administrator can create one live report link per client. A client does not
-create an account: they open the opaque link and enter the separately delivered
-client report password. The report presents every contract newest first.
-Expiration is optional, and administrators can rotate or revoke the client link
-or reset the client password. Password reset immediately invalidates existing
+Each client has one permanent live report URL, generated automatically when the
+client is created. The URL is shared only by administrators. Until an
+administrator generates a password, it cannot grant report access. A client
+does not create an account: they open the URL and enter the separately delivered
+client report password. Password replacement immediately invalidates existing
 client report browser sessions.
 
 The report contains only the client and contract names. Client and contract

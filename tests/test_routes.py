@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -1265,6 +1266,48 @@ class ReportAndSessionRouteTests(AppTestCase):
             302,
         )
 
+    def test_live_client_report_is_permanent_and_admin_shared(self) -> None:
+        self.login()
+        self.app.config["PUBLIC_BASE_URL"] = "https://time.example.invalid"
+        with session_scope(self.app) as database:
+            client = database.get(Client, self.seed.client_id)
+            assert client is not None
+            token = client.report_token
+            client.report_password_hash = None
+        client_page = self.client.get(f"/clients/{self.seed.client_id}")
+        self.assertEqual(client_page.status_code, 200)
+        report_url = f"https://time.example.invalid/shared/reports/{token}"
+        self.assertIn(report_url.encode(), client_page.data)
+        self.assertIn(b"Copy report link", client_page.data)
+        self.assertIn(b"Share report link by email", client_page.data)
+        anonymous = self.app.test_client()
+        self.assertEqual(anonymous.get(f"/shared/reports/{token}").status_code, 200)
+        self.assertEqual(
+            anonymous.post(
+                f"/shared/reports/{token}", data={"report_password": "unused"}
+            ).status_code,
+            401,
+        )
+        report_password = "Shared-Report-Password-For-Testing-0001!"
+        with session_scope(self.app) as database:
+            client = database.get(Client, self.seed.client_id)
+            assert client is not None
+            client.report_password_hash = routes.hash_password(report_password)
+            client.report_password_version += 1
+        self.assertEqual(
+            anonymous.post(
+                f"/shared/reports/{token}", data={"report_password": report_password}
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.post(f"/clients/{self.seed.client_id}/report-link").status_code,
+            404,
+        )
+
+    @unittest.skip(
+        "Legacy expiration and rotation assertions replaced by permanent links"
+    )
     def test_live_client_report_links_are_private_rotatable_and_revocable(
         self,
     ) -> None:

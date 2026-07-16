@@ -74,19 +74,20 @@ or deletion.
 
 ## Live Report Access
 
-Each client stores one SHA-256 hash of a high-entropy report-link token and an
-optional UTC expiration. The token itself is shown only when the link is
-created or rotated. Each client has one Argon2id report-password hash and a
+Each client stores one permanent, high-entropy report-link token in the
+encrypted SQLCipher database so the URL can be displayed and reused. Legacy
+expiration and hash columns are retained only by the migration path and are no
+longer consulted. Each client has one Argon2id report-password hash and a
 monotonically increasing password version. The linked report contains every
-contract for that client, newest first, with contract-specific rates and
-totals.
+contract for that client, newest first, with contract-specific rates and totals.
 
-A client follows the client link and enters the separately delivered report
-password. Successful verification stores only the client identifier, password
-version, and authentication timestamp in the signed browser session. Password
-reset increments the version, invalidating every existing client report
-session. Link rotation, revocation, expiration, and absolute session age are
-checked independently for each live synchronization request.
+A client follows the client URL and enters the separately delivered report
+password. Before a password exists, the URL remains inaccessible. Successful
+verification stores only the client identifier, password version, and
+authentication timestamp in the signed browser session. Password replacement
+increments the version, invalidating every existing client report session. The
+permanent token, password version, and absolute session age are checked on each
+live synchronization request.
 
 The administrator and client HTML reports use the same server-rendered report
 fragment. JavaScript advances active sessions and exactly reconciled group and

@@ -17,7 +17,8 @@
 - Client and contract contact data
 - Task structures and time-entry history
 - Contract rates and calculated report costs
-- Live report-link hashes, report-password hashes, and report browser sessions
+- Permanent live report tokens, report-password hashes, and report browser
+  sessions
 - Append-only audit history and actor snapshots
 - Flask signing key and SQLCipher passphrase
 - Proprietary Grayhaven branding assets
@@ -78,10 +79,11 @@ internal contact details.
   task/subtask assignments, overlapping time for one user, negative session
   durations, removal of the last enabled administrator, and audit history
   updates or deletion.
-- Report links store only SHA-256 token hashes. Client report passwords use
-  Argon2id, can be rotated independently, and invalidate existing report
-  browser sessions by version. Every live synchronization rechecks link state,
-  expiration, password version, and client-report session age.
+- Permanent report tokens are stored in the encrypted SQLCipher database so the
+  client URL can be displayed and reused. Client report passwords use Argon2id,
+  can be replaced independently, and invalidate existing report browser
+  sessions by version. Every live synchronization rechecks the token, password
+  version, and client-report session age.
 - Security headers deny framing, cross-origin resource use, external scripts,
   and browser capabilities not needed by the application.
 - Error responses omit internal exception and database details.

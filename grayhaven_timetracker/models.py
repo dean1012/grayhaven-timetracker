@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
@@ -75,12 +76,7 @@ class Client(Base):
             "report_password_version >= 1",
             name="ck_client_report_password_version",
         ),
-        Index(
-            "uq_client_report_token_hash",
-            "report_token_hash",
-            unique=True,
-            sqlite_where=text("report_token_hash IS NOT NULL"),
-        ),
+        Index("uq_client_report_token", "report_token", unique=True),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -89,8 +85,9 @@ class Client(Base):
     contact_email: Mapped[str] = mapped_column(String(255))
     report_password_hash: Mapped[str | None] = mapped_column(String(512), nullable=True)
     report_password_version: Mapped[int] = mapped_column(Integer, default=1)
-    report_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    report_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    report_token: Mapped[str] = mapped_column(
+        String(128), default=lambda: secrets.token_urlsafe(32)
+    )
 
     contracts: Mapped[list[Contract]] = relationship(
         back_populates="client", order_by=lambda: Contract.id.desc()
@@ -111,12 +108,6 @@ class Contract(Base):
             "hourly_rate_cents BETWEEN 0 AND 100000000",
             name="ck_contract_rate",
         ),
-        Index(
-            "uq_contract_report_token_hash",
-            "report_token_hash",
-            unique=True,
-            sqlite_where=text("report_token_hash IS NOT NULL"),
-        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -125,9 +116,6 @@ class Contract(Base):
     contact_name: Mapped[str] = mapped_column(String(200))
     contact_email: Mapped[str] = mapped_column(String(255))
     hourly_rate_cents: Mapped[int] = mapped_column(Integer)
-    report_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    report_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-
     client: Mapped[Client] = relationship(back_populates="contracts")
     tasks: Mapped[list[Task]] = relationship(
         back_populates="contract", order_by="Task.id"

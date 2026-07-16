@@ -197,20 +197,17 @@ override in the application.
 
 ## Live Client Reports
 
-Client reports do not require account registration. Client creation does not
-generate a report password because no contract exists yet. Creating the first
-contract generates one client report password and displays it once. Deliver
-that password separately from the client report link.
+Client reports do not require account registration. Client creation generates a
+permanent report URL automatically, even before any contracts exist. Only
+administrators can view or share that URL from the client page. Until a password
+is generated, the URL cannot grant report access. The page provides copy and
+mailto sharing controls; the mailto template includes the URL but never the
+report password.
 
-The password confirmation page provides an **Email client** mailto action that
-does not include the password and a **Copy password** action for secure manual
-delivery. The same confirmation workflow is used after an administrator resets
-the client password.
-
-From the client page, an administrator can create or rotate the single opaque
-client report link and select 7, 30, 90, or 365 days, or no expiration.
-Rotation immediately invalidates the prior link. Revocation removes access
-regardless of a client's existing browser session.
+An administrator can select **Generate Password** from the client page. After
+password and TOTP reauthentication, the confirmation page displays the new
+password once with an icon-only copy control. Deliver the password separately
+from the report URL; it cannot be recovered after leaving the page.
 
 Resetting the client report password requires administrator password and TOTP
 reauthentication. It displays a new password once and invalidates existing
@@ -221,9 +218,8 @@ The shared page is the same live dashboard available to administrators. Active
 contract sections are shown newest first. Active session duration and allocated
 cost advance every second. A same-origin
 background check discovers new, stopped, edited, or deleted timers within a
-few seconds and updates the report without a page reload. Revocation,
-expiration, password rotation, or session expiry ends synchronization and
-freezes the visible values.
+few seconds and updates the report without a page reload. Password replacement
+or session expiry ends synchronization and freezes the visible values.
 
 PDF reports are static. Generation includes active timers through the exact
 generation instant but does not stop or otherwise modify those timers.

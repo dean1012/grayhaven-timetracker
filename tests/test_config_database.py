@@ -409,7 +409,8 @@ class DatabaseAndModelTests(AppTestCase):
         self.assertIn("report_token_hash", client_columns)
         self.assertIn("report_expires_at", client_columns)
         self.assertEqual(prior_schema, "1")
-        self.assertEqual(version, "4")
+        self.assertIn("report_token", client_columns)
+        self.assertEqual(version, "5")
         self.assertEqual(admin_count, 1)
         self.assertEqual(audit_table, 1)
 
@@ -436,7 +437,7 @@ class DatabaseAndModelTests(AppTestCase):
         with engine.begin() as connection:
             connection.execute(
                 text(
-                    "UPDATE application_metadata SET value = '4' "
+                    "UPDATE application_metadata SET value = '5' "
                     "WHERE key = 'schema_version'"
                 )
             )

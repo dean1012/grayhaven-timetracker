@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -113,7 +112,6 @@ login_limiter = LoginLimiter()
 login_ip_limiter = LoginLimiter(limit=50)
 shared_report_limiter = LoginLimiter()
 sensitive_action_limiter = LoginLimiter()
-REPORT_LINK_EXPIRATION_DAYS = frozenset({7, 30, 90, 365})
 AUDIT_SOURCES = frozenset({"admin", "user", "public", "system"})
 AUDIT_PAGE_SIZE = 50
 PENDING_LOGIN_TTL_SECONDS = 300
@@ -165,11 +163,6 @@ def audit(event: str, **fields: Any) -> None:
         )
 
 
-def report_token_hash(token: str) -> str:
-    """Return the non-reversible lookup value stored for a report link."""
-    return hashlib.sha256(token.encode("ascii")).hexdigest()
-
-
 def shared_report_access_allowed(client: Client) -> bool:
     """Validate client report access stored in the signed browser session."""
     authenticated_at = session.get("shared_report_authenticated_at")
@@ -190,7 +183,7 @@ def shared_report_access_allowed(client: Client) -> bool:
 
 
 def get_shared_report_client(token: str) -> Client:
-    """Resolve an active client report link without disclosing lookup details."""
+    """Resolve a permanent client report link without disclosing lookup details."""
     if (
         not 32 <= len(token) <= 128
         or not token.isascii()
@@ -198,15 +191,10 @@ def get_shared_report_client(token: str) -> Client:
     ):
         abort(404)
     client = get_session().scalar(
-        select(Client).where(Client.report_token_hash == report_token_hash(token))
+        select(Client).where(Client.report_token == token)
         .options(selectinload(Client.contracts))
     )
-    if client is None or (
-        client.report_expires_at is not None
-        and client.report_expires_at <= now_utc()
-    ):
-        abort(404)
-    if client.report_password_hash is None:
+    if client is None:
         abort(404)
     return client
 
@@ -235,32 +223,32 @@ def shared_report_url(token: str) -> str:
     return url_for("main.shared_report", token=token, _external=True)
 
 
-def report_mailto(client: Client, report_url: str | None = None) -> str:
+def ensure_client_report_token(client: Client) -> str:
+    """Return the permanent client report token, creating it for legacy rows."""
+    if client.report_token:
+        return client.report_token
+    client.report_token = secrets.token_urlsafe(32)
+    get_session().commit()
+    return client.report_token
+
+
+def report_mailto(client: Client, report_url: str) -> str:
     """Build the reviewed client-access email without placing the password in it."""
-    subject = f"Live reporting access — {client.name}"
+    subject = f"Live time and cost report access for {client.name}"
     body_lines = [
-        f"Hello {client.contact_name},",
+        f"{client.contact_name},",
         "",
-        f"You can view {client.name}'s live time and cost report "
-        "without creating an account.",
+        "Grayhaven Systems LLC is inviting you to view live time and cost tracking "
+        "data for your contracts with us. Viewing your live report will require a "
+        "password that will be shared with you securely separately from this message. "
+        "You do not need to sign up for an account to view your report.",
         "",
+        f"Your personalized live report is available here: {report_url}",
+        "",
+        "Please keep both your link and password confidential to protect your data. "
+        "If you have any questions, concerns, or problems, please let me know and I "
+        "will be happy to assist you.",
     ]
-    if report_url:
-        body_lines.extend(["Open your private live report here:", report_url, ""])
-    else:
-        body_lines.extend(
-            [
-                "Use the private live-report link provided by Grayhaven Systems LLC.",
-                "",
-            ]
-        )
-    body_lines.extend(
-        [
-            "The report password will be shared securely in a separate message.",
-            "",
-            "Please keep the link and password confidential.",
-        ]
-    )
     return (
         f"mailto:{quote(client.contact_email, safe='@')}?subject={quote(subject)}"
         f"&body={quote(chr(10).join(body_lines))}"
@@ -617,27 +605,12 @@ def client(client_id: int) -> str:
     )
     if item is None:
         abort(404)
-    snapshot_at = now_utc()
-    report_link_active = bool(
-        item.report_token_hash
-        and (item.report_expires_at is None or item.report_expires_at > snapshot_at)
-    )
-    report_link_expired = bool(
-        item.report_token_hash
-        and item.report_expires_at is not None
-        and item.report_expires_at <= snapshot_at
-    )
-    timezone_info = ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"]))
+    report_token = ensure_client_report_token(item)
     return render_template(
         "client.html",
         client=item,
-        report_link_active=report_link_active,
-        report_link_expired=report_link_expired,
-        report_link_expiration=(
-            format_datetime(item.report_expires_at, timezone_info)
-            if item.report_expires_at is not None
-            else None
-        ),
+        report_url=shared_report_url(report_token),
+        report_mailto=report_mailto(item, shared_report_url(report_token)),
     )
 
 
@@ -651,6 +624,7 @@ def new_client() -> Any:
             name=form_text("name", "Client name", 200),
             contact_name=form_text("contact_name", "Contact name", 200),
             contact_email=normalize_email(request.form.get("contact_email", "")),
+            report_token=secrets.token_urlsafe(32),
             report_password_version=1,
         )
     except ValueError as exc:
@@ -695,13 +669,13 @@ def reset_client_report_password(client_id: int) -> Any:
     item = cast(Client, get_or_404(Client, client_id))
     actor = cast(User, current_user())
     confirmation = {
-        "eyebrow": "REPORT PASSWORD RESET",
+        "eyebrow": "GENERATE REPORT PASSWORD",
         "title": item.name,
         "description": (
             "Generate a new client report password and immediately invalidate "
             "existing report sessions across this client's contracts."
         ),
-        "submit_label": "Reset report password",
+        "submit_label": "Generate Password",
         "cancel_url": url_for("main.client", client_id=item.id),
         "totp_required": bool(actor.totp_secret),
     }
@@ -741,7 +715,6 @@ def reset_client_report_password(client_id: int) -> Any:
         client=item,
         report_password=report_password,
         next_url=url_for("main.client", client_id=item.id),
-        mailto=report_mailto(item),
     )
 
 
@@ -769,11 +742,6 @@ def new_contract(client_id: int) -> Any:
         flash(message, "error")
         return render_template("contract_form.html", client=client_item), 400
     get_session().add(contract_item)
-    report_password: str | None = None
-    if client_item.report_password_hash is None:
-        report_password = generate_temporary_password()
-        client_item.report_password_hash = hash_password(report_password)
-        client_item.report_password_version += 1
     get_session().commit()
     audit(
         "contract_created",
@@ -781,14 +749,6 @@ def new_contract(client_id: int) -> Any:
         client_id=client_item.id,
         contract_id=contract_item.id,
     )
-    if report_password is not None:
-        return render_template(
-            "client_report_password_created.html",
-            client=client_item,
-            report_password=report_password,
-            next_url=url_for("main.contract", contract_id=contract_item.id),
-            mailto=report_mailto(client_item),
-        )
     return redirect(url_for("main.contract", contract_id=contract_item.id))
 
 
@@ -1797,75 +1757,6 @@ def live_report_response(
     return response
 
 
-def create_client_report_link(client_item: Client) -> Any:
-    """Create or replace the single client-wide report link."""
-    if not client_item.contracts:
-        abort(409, "Create a contract before generating a client report link.")
-    expiration_choice = request.form.get("expires_in_days", "90")
-    expires_at: datetime | None = None
-    if expiration_choice != "never":
-        try:
-            expiration_days = int(expiration_choice)
-        except ValueError:
-            abort(400)
-        if expiration_days not in REPORT_LINK_EXPIRATION_DAYS:
-            abort(400)
-        expires_at = now_utc() + timedelta(days=expiration_days)
-    token = secrets.token_urlsafe(32)
-    client_item.report_token_hash = report_token_hash(token)
-    client_item.report_expires_at = expires_at
-    report_password: str | None = None
-    if client_item.report_password_hash is None:
-        report_password = generate_temporary_password()
-        client_item.report_password_hash = hash_password(report_password)
-        client_item.report_password_version += 1
-    get_session().commit()
-    actor = cast(User, current_user())
-    audit(
-        "report_link_created",
-        actor_id=actor.id,
-        client_id=client_item.id,
-    )
-    return render_template(
-        "report_link_created.html",
-        client=client_item,
-        report_url=shared_report_url(token),
-        report_password=report_password,
-        mailto=report_mailto(client_item, shared_report_url(token)),
-        expires_at=(
-            format_datetime(
-                expires_at,
-                ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"])),
-            )
-            if expires_at is not None
-            else None
-        ),
-    )
-
-
-@main.post("/clients/<int:client_id>/report-link")
-@permission_required(REPORT_SHARE)
-def create_report_link(client_id: int) -> Any:
-    client_item = cast(Client, get_or_404(Client, client_id))
-    return create_client_report_link(client_item)
-
-
-@main.post("/clients/<int:client_id>/report-link/revoke")
-@permission_required(REPORT_SHARE)
-def revoke_report_link(client_id: int) -> Any:
-    client_item = cast(Client, get_or_404(Client, client_id))
-    client_item.report_token_hash = None
-    client_item.report_expires_at = None
-    get_session().commit()
-    audit(
-        "report_link_revoked",
-        actor_id=cast(User, current_user()).id,
-        client_id=client_item.id,
-    )
-    flash("The client report link has been revoked.", "success")
-    return redirect(url_for("main.client", client_id=client_item.id))
-
-
 @main.route("/shared/reports/<token>", methods=["GET", "POST"])
 def shared_report(token: str) -> Any:
     client_item = get_shared_report_client(token)
@@ -1881,9 +1772,9 @@ def shared_report(token: str) -> Any:
                 ip=ip,
             )
             abort(429)
-        if not verify_password(
-            cast(str, client_item.report_password_hash),
-            request.form.get("report_password", ""),
+        password_hash = client_item.report_password_hash
+        if not password_hash or not verify_password(
+            password_hash, request.form.get("report_password", "")
         ):
             shared_report_limiter.record_failure(rate_key)
             audit(
@@ -1891,7 +1782,12 @@ def shared_report(token: str) -> Any:
                 client_id=client_item.id,
                 ip=ip,
             )
-            flash("The report password was not accepted.", "error")
+            flash(
+                "A report password has not been generated yet."
+                if not password_hash
+                else "The report password was not accepted.",
+                "error",
+            )
             return render_template(
                 "shared_report_login.html", client=client_item
             ), 401
