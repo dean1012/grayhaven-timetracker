@@ -89,6 +89,13 @@ increments the version, invalidating every existing client report session. The
 permanent token, password version, and absolute session age are checked on each
 live synchronization request.
 
+The plaintext generated password is held only in bounded process memory for a
+maximum of two minutes while the application redirects to its confirmation
+page. A random nonce in the signed administrator session identifies the pending
+confirmation without placing the password in the cookie or URL. The first page
+view consumes the server-side value; refreshes and later requests return to the
+client page.
+
 The administrator and client HTML reports use the same server-rendered report
 fragment. JavaScript advances active sessions and exactly reconciled group and
 overall billing totals once per second. Every three seconds a same-origin

@@ -216,6 +216,12 @@ separate approved channel. That password is distinct from the client report
 password and is not generated or stored by the application. The report
 password cannot be recovered after leaving the confirmation page.
 
+The confirmation URL is one-time. Refreshing it or requesting it again returns
+to the client page without generating another password. The page automatically
+returns to the client after two minutes. If the confirmation is not opened
+within two minutes of generation, its pending server-side value expires and the
+administrator must reset the report password again.
+
 Resetting the client report password requires administrator password and TOTP
 reauthentication. It displays a new password once and invalidates existing
 report browser sessions for every contract under that client. Stored report

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import logging
 import secrets
+from collections import OrderedDict
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
+from threading import Lock, Timer
 from typing import Any, cast
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -113,6 +116,7 @@ login_limiter = LoginLimiter()
 login_ip_limiter = LoginLimiter(limit=50)
 shared_report_limiter = LoginLimiter()
 sensitive_action_limiter = LoginLimiter()
+REPORT_PASSWORD_CONFIRMATION_TTL_SECONDS = 120
 AUDIT_SOURCES = frozenset({"admin", "user", "public", "system"})
 AUDIT_PAGE_SIZE = 50
 PENDING_LOGIN_TTL_SECONDS = 300
@@ -127,6 +131,98 @@ SHARED_REPORT_SESSION_KEYS = (
     "shared_report_client_id",
     "shared_report_password_version",
 )
+REPORT_PASSWORD_CONFIRMATION_SESSION_KEYS = (
+    "report_password_confirmation_client_id",
+    "report_password_confirmation_token",
+)
+
+
+@dataclass(frozen=True)
+class ReportPasswordConfirmation:
+    """One short-lived report password awaiting its one permitted display."""
+
+    actor_user_id: int
+    client_id: int
+    expires_at: float
+    report_password: str
+
+
+class ReportPasswordConfirmationStore:
+    """Bounded, thread-safe, one-time storage for report password displays."""
+
+    def __init__(
+        self,
+        ttl_seconds: int = REPORT_PASSWORD_CONFIRMATION_TTL_SECONDS,
+        maximum_items: int = 1_000,
+    ) -> None:
+        if ttl_seconds <= 0 or maximum_items <= 0:
+            raise ValueError("Confirmation store limits must be positive")
+        self.ttl_seconds = ttl_seconds
+        self.maximum_items = maximum_items
+        self._items: OrderedDict[str, ReportPasswordConfirmation] = OrderedDict()
+        self._lock = Lock()
+
+    def _prune(self, current: float) -> None:
+        for token, item in list(self._items.items()):
+            if item.expires_at <= current:
+                del self._items[token]
+        while len(self._items) >= self.maximum_items:
+            self._items.popitem(last=False)
+
+    def _discard(self, token: str) -> None:
+        """Remove an expired value even when no later request prunes the store."""
+        with self._lock:
+            self._items.pop(token, None)
+
+    def issue(
+        self,
+        *,
+        actor_user_id: int,
+        client_id: int,
+        report_password: str,
+        now: float | None = None,
+    ) -> str:
+        """Store a password briefly and return an unrelated session nonce."""
+        current = now if now is not None else now_utc_timestamp()
+        with self._lock:
+            self._prune(current)
+            token = secrets.token_urlsafe(32)
+            while token in self._items:
+                token = secrets.token_urlsafe(32)
+            self._items[token] = ReportPasswordConfirmation(
+                actor_user_id=actor_user_id,
+                client_id=client_id,
+                expires_at=current + self.ttl_seconds,
+                report_password=report_password,
+            )
+            expiration_timer = Timer(self.ttl_seconds, self._discard, args=(token,))
+            expiration_timer.daemon = True
+            expiration_timer.start()
+            return token
+
+    def consume(
+        self,
+        token: str,
+        *,
+        actor_user_id: int,
+        client_id: int,
+        now: float | None = None,
+    ) -> ReportPasswordConfirmation | None:
+        """Return and permanently remove one valid matching confirmation."""
+        current = now if now is not None else now_utc_timestamp()
+        with self._lock:
+            self._prune(current)
+            item = self._items.pop(token, None)
+        if (
+            item is None
+            or item.actor_user_id != actor_user_id
+            or item.client_id != client_id
+        ):
+            return None
+        return item
+
+
+report_password_confirmation_store = ReportPasswordConfirmationStore()
 
 
 def now_utc() -> datetime:
@@ -752,12 +848,51 @@ def reset_client_report_password(client_id: int) -> Any:
         actor_id=actor.id,
         client_id=item.id,
     )
+    confirmation_token = report_password_confirmation_store.issue(
+        actor_user_id=actor.id,
+        client_id=item.id,
+        report_password=report_password,
+    )
+    for key in REPORT_PASSWORD_CONFIRMATION_SESSION_KEYS:
+        session.pop(key, None)
+    session["report_password_confirmation_client_id"] = item.id
+    session["report_password_confirmation_token"] = confirmation_token
+    return redirect(
+        url_for("main.client_report_password_confirmation", client_id=item.id)
+    )
+
+
+@main.get("/clients/<int:client_id>/report-password/confirmation")
+@permission_required(REPORT_SHARE)
+def client_report_password_confirmation(client_id: int) -> Any:
+    item = cast(Client, get_or_404(Client, client_id))
+    actor = cast(User, current_user())
+    next_url = url_for("main.client", client_id=item.id)
+    confirmation_client_id = session.pop(
+        "report_password_confirmation_client_id", None
+    )
+    confirmation_token = session.pop("report_password_confirmation_token", None)
+    if confirmation_client_id != item.id or not isinstance(confirmation_token, str):
+        return redirect(next_url)
+    confirmation = report_password_confirmation_store.consume(
+        confirmation_token,
+        actor_user_id=actor.id,
+        client_id=item.id,
+    )
+    if confirmation is None:
+        return redirect(next_url)
+    audit(
+        "client_report_password_confirmation_viewed",
+        actor_id=actor.id,
+        client_id=item.id,
+    )
     return render_template(
         "client_report_password_created.html",
         client=item,
-        report_password=report_password,
-        mailto=report_password_mailto(item, report_password),
-        next_url=url_for("main.client", client_id=item.id),
+        confirmation_ttl_seconds=REPORT_PASSWORD_CONFIRMATION_TTL_SECONDS,
+        report_password=confirmation.report_password,
+        mailto=report_password_mailto(item, confirmation.report_password),
+        next_url=next_url,
     )
 
 

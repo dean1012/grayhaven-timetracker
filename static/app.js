@@ -68,6 +68,25 @@ document.addEventListener("click", async (event) => {
   }
 });
 
+const oneTimeConfirmation = document.querySelector("[data-one-time-confirmation]");
+
+if (oneTimeConfirmation instanceof HTMLElement) {
+  const redirectAfter = Number(oneTimeConfirmation.dataset.expireAfterMs);
+  const redirectTarget = oneTimeConfirmation.dataset.expireRedirect;
+  if (Number.isFinite(redirectAfter) && redirectAfter > 0 && redirectTarget) {
+    const redirectUrl = new URL(redirectTarget, window.location.origin);
+    if (redirectUrl.origin === window.location.origin) {
+      const leaveConfirmation = () => window.location.replace(redirectUrl.href);
+      window.setTimeout(leaveConfirmation, redirectAfter);
+      window.addEventListener("pageshow", (event) => {
+        if (event.persisted) {
+          leaveConfirmation();
+        }
+      });
+    }
+  }
+}
+
 function formatDuration(totalSeconds) {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);

@@ -473,6 +473,36 @@ class ClientContractTaskRouteTests(AppTestCase):
         super().setUp()
         self.login()
 
+    def test_report_password_confirmation_is_one_time_and_expires(self) -> None:
+        store = routes.ReportPasswordConfirmationStore(ttl_seconds=120)
+        token = store.issue(
+            actor_user_id=1,
+            client_id=2,
+            report_password="Temporary-Report-Password-For-Test-0001!",
+            now=1_000,
+        )
+        confirmation = store.consume(
+            token, actor_user_id=1, client_id=2, now=1_119
+        )
+        assert confirmation is not None
+        self.assertEqual(
+            confirmation.report_password,
+            "Temporary-Report-Password-For-Test-0001!",
+        )
+        self.assertIsNone(
+            store.consume(token, actor_user_id=1, client_id=2, now=1_119)
+        )
+
+        expired_token = store.issue(
+            actor_user_id=1,
+            client_id=2,
+            report_password="Expired-Report-Password-For-Test-0001!",
+            now=2_000,
+        )
+        self.assertIsNone(
+            store.consume(expired_token, actor_user_id=1, client_id=2, now=2_120)
+        )
+
     def test_client_and_contract_creation_validation_and_display(self) -> None:
         self.assertEqual(self.client.get("/").status_code, 200)
         self.assertEqual(self.client.get("/clients/new").status_code, 200)
@@ -620,10 +650,19 @@ class ClientContractTaskRouteTests(AppTestCase):
                     "totp": next_totp(ADMIN_TOTP_SECRET),
                 },
             )
-        self.assertEqual(reset_password.status_code, 200)
-        self.assertIn(replacement_password.encode(), reset_password.data)
-        self.assertIn(b"Copy password", reset_password.data)
-        self.assertIn(b"Email report password", reset_password.data)
+        self.assertEqual(reset_password.status_code, 302)
+        confirmation_url = reset_password.headers["Location"]
+        confirmation = self.client.get(confirmation_url)
+        self.assertEqual(confirmation.status_code, 200)
+        self.assertIn(replacement_password.encode(), confirmation.data)
+        self.assertIn(b"Copy password", confirmation.data)
+        self.assertIn(b"Email report password", confirmation.data)
+        self.assertIn(b'data-expire-after-ms="120000"', confirmation.data)
+        refreshed = self.client.get(confirmation_url)
+        self.assertEqual(refreshed.status_code, 302)
+        self.assertEqual(
+            refreshed.headers["Location"], f"/clients/{client_id}"
+        )
 
     def test_task_subtask_rename_delete_and_time_guards(self) -> None:
         seed = self.seed_contract()

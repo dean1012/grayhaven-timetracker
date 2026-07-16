@@ -87,6 +87,9 @@ class AppTestCase(unittest.TestCase):
         routes.login_ip_limiter = LoginLimiter(limit=50)
         routes.shared_report_limiter = LoginLimiter()
         routes.sensitive_action_limiter = LoginLimiter()
+        routes.report_password_confirmation_store = (
+            routes.ReportPasswordConfirmationStore()
+        )
         self.client = self.app.test_client()
 
     def tearDown(self) -> None:

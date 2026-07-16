@@ -90,6 +90,10 @@ encrypted message.
   can be replaced independently, and invalidate existing report browser
   sessions by version. Every live synchronization rechecks the token, password
   version, and client-report session age.
+- Generated report passwords use a one-time confirmation redirect. Plaintext is
+  held only in bounded process memory for up to two minutes, identified by a
+  random nonce in the signed administrator session, consumed on first view, and
+  never placed in a cookie or URL. Refreshes return to the client page.
 - Security headers deny framing, cross-origin resource use, external scripts,
   and browser capabilities not needed by the application.
 - Error responses omit internal exception and database details.
