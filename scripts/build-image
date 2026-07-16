@@ -1,15 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="$(tr -d '\r\n' < VERSION)"
-revision="$(git rev-parse --short=8 HEAD)"
-build_timestamp="$(date -u +%Y%m%d%H%M%S)"
-if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
-  build_state=".dirty"
-else
-  build_state=""
+series="$(tr -d '\r\n' < VERSION)"
+if [[ ! "$series" =~ ^[0-9]+\.[0-9]+$ ]]; then
+  printf 'VERSION must contain only a major.minor series such as 0.1.\n' >&2
+  exit 1
 fi
+if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
+  printf 'Refusing to build a commit-versioned image from a dirty worktree.\n' >&2
+  exit 1
+fi
+revision="$(git rev-parse --short HEAD)"
+build_revision=0
+while IFS= read -r tag; do
+  candidate="${tag##*.}"
+  if [[ "$candidate" =~ ^[0-9]+$ ]] && (( candidate > build_revision )); then
+    build_revision="$candidate"
+  fi
+done < <(git tag --list "build/${series}.*")
+build_revision=$((build_revision + 1))
+release="${series}.${build_revision}"
 
-export APP_VERSION="${version}-${revision}.${build_timestamp}${build_state}"
+export APP_VERSION="${release}-${revision}"
 docker compose build
-printf 'Built Grayhaven Time Tracker %s\n' "$APP_VERSION"
+git tag --sign --message "Grayhaven Time Tracker build ${release}" \
+  "build/${release}" HEAD
+printf 'Built Grayhaven Time Tracker %s and created tag build/%s\n' \
+  "$APP_VERSION" "$release"

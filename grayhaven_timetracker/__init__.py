@@ -65,7 +65,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.config.setdefault("SESSION_COOKIE_SECURE", False)
     app.config.setdefault("MAX_CONTENT_LENGTH", 1024 * 1024)
     app.config.setdefault("WTF_CSRF_TIME_LIMIT", 3600)
-    app.config.setdefault("APP_VERSION", "0.1.0-dev")
+    app.config.setdefault("APP_VERSION", "unversioned")
 
     trusted_proxies = int(app.config.get("TRUSTED_PROXY_COUNT", 0))
     if trusted_proxies:

@@ -99,7 +99,7 @@ def environment_config() -> dict[str, Any]:
         raise ConfigurationError("SECRET_KEY must contain at least 32 characters")
 
     return {
-        "APP_VERSION": os.environ.get("APP_VERSION", "0.1.0-dev"),
+        "APP_VERSION": os.environ.get("APP_VERSION", "unversioned"),
         "BRANDING_PATH": str(
             Path(os.environ.get("BRANDING_PATH", "/app/branding")).resolve()
         ),

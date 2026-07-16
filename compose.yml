@@ -3,7 +3,7 @@ services:
     build:
       context: .
       args:
-        APP_VERSION: ${APP_VERSION:-0.1.0-dev}
+        APP_VERSION: "${APP_VERSION:-}"
     container_name: grayhaven-timetracker
     environment:
       BRANDING_PATH: /app/branding

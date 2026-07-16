@@ -17,8 +17,10 @@ RUN python -m pip install --no-cache-dir -r requirements.txt
 # from Debian so unrelated, currently unpatched CPAN modules are not reachable.
 RUN dpkg --purge --force-remove-essential perl-base
 
-ARG APP_VERSION=0.1.0-dev
+ARG APP_VERSION
+RUN test -n "${APP_VERSION}"
 ENV APP_VERSION=${APP_VERSION}
+LABEL org.opencontainers.image.version=${APP_VERSION}
 
 COPY grayhaven_timetracker ./grayhaven_timetracker
 COPY templates ./templates

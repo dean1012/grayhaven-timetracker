@@ -120,6 +120,15 @@ Build a traceable image and start the local service:
 docker compose up --detach --wait
 ```
 
+The build script requires a clean worktree and embeds the version as
+`<major>.<minor>.<build-revision>-<short-commit>`, ensuring the footer and
+static-asset cache keys identify the exact build and source commit. `VERSION`
+contains the deliberately selected `major.minor` series. Each successful build
+increments the revision from signed Git tags named `build/<major>.<minor>.<rev>`;
+the first build in a new series is revision 1. Preserve and fetch these tags
+wherever release images are built. Direct image builds without an explicit
+`APP_VERSION` fail instead of falling back to a development label.
+
 Open <http://127.0.0.1:8000>. The default local administrator email is
 `admin@example.invalid`; override it and the display name through environment
 variables before starting the Compose project.
