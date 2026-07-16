@@ -7,7 +7,7 @@
     <p class="eyebrow">{{ eyebrow }}</p>
     <h1>{{ title }}</h1>
     <p class="muted">{{ description }}</p>
-    <p class="muted">Re-enter your administrator credentials to continue.</p>
+    <p class="muted">Re-enter your password to continue.</p>
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Current password<input type="password" name="current_password" maxlength="1024" required autocomplete="current-password" autofocus></label>

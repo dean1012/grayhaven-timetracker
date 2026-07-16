@@ -604,6 +604,11 @@ class ClientContractTaskRouteTests(AppTestCase):
             429,
         )
         routes.sensitive_action_limiter = LoginLimiter()
+        missing_totp = self.client.post(
+            f"/clients/{client_id}/report-password/reset",
+            data={"current_password": ADMIN_PASSWORD},
+        )
+        self.assertEqual(missing_totp.status_code, 400)
         with patch(
             "grayhaven_timetracker.routes.generate_temporary_password",
             return_value=replacement_password,
