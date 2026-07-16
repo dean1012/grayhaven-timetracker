@@ -208,7 +208,12 @@ An administrator can select **Generate Password** from the client page. After
 password and TOTP reauthentication, the confirmation page displays the new
 password once with copy and Proton Mail actions inside the password field. The
 password mailto includes the reset password and permanent report URL. The
-password cannot be recovered after leaving the confirmation page.
+administrator must send that draft as a Proton password-protected encrypted
+message. Generate a second temporary password for decrypting the email and
+deliver it through a separate approved channel. The email-decryption password
+is distinct from the client report password and is not generated or stored by
+the application. The report password cannot be recovered after leaving the
+confirmation page.
 
 Resetting the client report password requires administrator password and TOTP
 reauthentication. It displays a new password once and invalidates existing

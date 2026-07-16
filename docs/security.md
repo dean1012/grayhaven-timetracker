@@ -36,8 +36,14 @@ hourly rates, and task structures. Administrators are trusted with user
 management, contact details, all completed sessions, and client reports.
 Clients may access an explicitly shared live client report without an account.
 That boundary requires both the client's opaque high-entropy link and the
-client's administrator-delivered report password. Shared reports exclude
+client’s administrator-delivered report password. Shared reports exclude
 internal contact details.
+
+Report-password emails are sent through Proton as password-protected encrypted
+messages. A separate, temporary email-decryption password is delivered through
+another approved channel. That temporary password is external to the
+application and is distinct from the client report password contained in the
+encrypted message.
 
 [Back to top](#security-model)
 
