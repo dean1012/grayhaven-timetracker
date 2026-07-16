@@ -6,7 +6,6 @@
     <img class="auth-logo" src="{{ url_for('main.branding_asset', filename='grayhaven-logo-wordmark-dark.svg') }}" alt="Grayhaven Systems LLC">
     <p class="eyebrow">CLIENT REPORT ACCESS</p>
     <h1>{{ client.name }}</h1>
-    <p class="muted">Enter the separate report password provided by Grayhaven Systems LLC. No account is required.</p>
     {% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack">{% for category, message in messages %}<div class="flash flash-{{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
