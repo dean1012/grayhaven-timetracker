@@ -234,8 +234,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .report-share-panel { margin-bottom: 1.5rem; padding: 1.4rem 1.7rem; }
 .report-link-row { display: flex; align-items: center; gap: .65rem; }
 .report-link-row .client-report-link { display: flex; align-items: center; flex: 1; min-width: 0; gap: .65rem; margin: 0; }
-.report-link-row .client-report-link a { display: block; overflow-wrap: anywhere; }
-.report-link-row .client-report-link > a { flex: 1; min-width: 0; }
+.report-link-row .client-report-link > a { display: block; flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .report-link-actions { display: flex; flex: 0 0 auto; align-items: center; gap: .45rem; }
 .report-link-actions .icon-button i { display: block; line-height: 1; }
 .share-panel > div:first-child { max-width: 760px; }
