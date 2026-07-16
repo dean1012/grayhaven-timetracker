@@ -4,7 +4,7 @@
 {% set selected_assignment = request.form.get('assignment', '') %}
 {% set selected_user_id = request.form.get('user_id', logged_user.id)|int %}
 <section class="narrow-content">
-  <a class="back-link" href="{{ url_for('main.contract_sessions', contract_id=contract.id) }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to sessions</a>
+  <a class="back-link" href="{{ url_for('main.contract_sessions', contract_id=contract.id) }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to Sessions</a>
   <div class="panel form-panel">
     <p class="eyebrow">TIME SESSION</p>
     <h1>Add Completed Session</h1>
@@ -12,7 +12,7 @@
     <form method="post" class="form-stack" autocomplete="off" data-protonpass-ignore="true">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       {% if users %}<label>User<select name="user_id" required autocomplete="off" data-protonpass-ignore="true">{% for user in users %}<option value="{{ user.id }}" {% if selected_user_id == user.id %}selected{% endif %}>{{ user.full_name }} · {{ user.email }}{% if not user.is_enabled %} (disabled){% endif %}</option>{% endfor %}</select></label>{% else %}<p class="muted">Session owner: {{ logged_user.full_name }}</p>{% endif %}
-      <label>Task or subtask
+      <label>Task or Subtask
         <select name="assignment" required autocomplete="off" data-protonpass-ignore="true">
           {% for task in tasks %}
           <option value="{{ task.id }}" {% if selected_assignment == task.id|string %}selected{% endif %}>{{ task.name }} (task)</option>
@@ -20,9 +20,9 @@
           {% endfor %}
         </select>
       </label>
-      <label>Start time<input type="datetime-local" name="started_at" value="{{ request.form.get('started_at', start_value) }}" step="1" required autocomplete="off" data-protonpass-ignore="true"></label>
-      <label>End time<input type="datetime-local" name="stopped_at" value="{{ request.form.get('stopped_at', end_value) }}" step="1" required autocomplete="off" data-protonpass-ignore="true"></label>
-      <div class="form-actions"><a class="button button-secondary" href="{{ url_for('main.contract_sessions', contract_id=contract.id) }}">Cancel</a><button class="button button-primary" type="submit"><i class="fa-solid fa-check" aria-hidden="true"></i> Add session</button></div>
+      <label>Start Time<input type="datetime-local" name="started_at" value="{{ request.form.get('started_at', start_value) }}" step="1" required autocomplete="off" data-protonpass-ignore="true"></label>
+      <label>End Time<input type="datetime-local" name="stopped_at" value="{{ request.form.get('stopped_at', end_value) }}" step="1" required autocomplete="off" data-protonpass-ignore="true"></label>
+      <div class="form-actions"><a class="button button-secondary" href="{{ url_for('main.contract_sessions', contract_id=contract.id) }}">Cancel</a><button class="button button-primary" type="submit"><i class="fa-solid fa-check" aria-hidden="true"></i> Add Session</button></div>
     </form>
   </div>
 </section>

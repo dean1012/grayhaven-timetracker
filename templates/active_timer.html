@@ -23,14 +23,14 @@
     </span>
     {% if current_contract_id != active_entry.task.contract_id %}
     <a class="button button-secondary" href="{{ url_for('main.contract', contract_id=active_entry.task.contract_id) }}">
-      Open contract
+      Open Contract
     </a>
     {% endif %}
     <form method="post" action="{{ url_for('main.stop_timer', entry_id=active_entry.id) }}" autocomplete="off" data-protonpass-ignore="true">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="next" value="{{ request.path }}">
       <button class="button button-stop" type="submit">
-        <i class="fa-solid fa-stop" aria-hidden="true"></i> Stop timer
+        <i class="fa-solid fa-stop" aria-hidden="true"></i> Stop Timer
       </button>
     </form>
   </div>

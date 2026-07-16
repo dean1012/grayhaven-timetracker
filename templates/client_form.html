@@ -9,12 +9,12 @@
     <h1>{{ 'Edit Client' if editing else 'Add Client' }}</h1>
     <form method="post" class="form-stack" autocomplete="off" data-protonpass-ignore="true">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label>Client name<input name="name" value="{{ request.form.get('name', client.name if editing else '') }}" maxlength="200" required autofocus autocomplete="off" data-protonpass-ignore="true"></label>
-      <label>Contact name<input name="contact_name" value="{{ request.form.get('contact_name', client.contact_name if editing else '') }}" maxlength="200" required autocomplete="off" data-protonpass-ignore="true"></label>
-      <label>Contact email<input type="email" name="contact_email" value="{{ request.form.get('contact_email', client.contact_email if editing else '') }}" maxlength="255" required autocomplete="off" data-protonpass-ignore="true"></label>
+      <label>Client Name<input name="name" value="{{ request.form.get('name', client.name if editing else '') }}" maxlength="200" required autofocus autocomplete="off" data-protonpass-ignore="true"></label>
+      <label>Contact Name<input name="contact_name" value="{{ request.form.get('contact_name', client.contact_name if editing else '') }}" maxlength="200" required autocomplete="off" data-protonpass-ignore="true"></label>
+      <label>Contact Email<input type="email" name="contact_email" value="{{ request.form.get('contact_email', client.contact_email if editing else '') }}" maxlength="255" required autocomplete="off" data-protonpass-ignore="true"></label>
       <div class="form-actions">
         <a class="button button-secondary" href="{{ url_for('main.client', client_id=client.id) if editing else url_for('main.dashboard') }}">Cancel</a>
-        <button class="button button-primary" type="submit"><i class="fa-solid fa-check" aria-hidden="true"></i> {{ 'Update client' if editing else 'Save client' }}</button>
+        <button class="button button-primary" type="submit"><i class="fa-solid fa-check" aria-hidden="true"></i> {{ 'Update Client' if editing else 'Save Client' }}</button>
       </div>
     </form>
   </div>

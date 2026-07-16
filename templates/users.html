@@ -3,7 +3,7 @@
 {% block content %}
 <section class="page-heading">
   <div><p class="eyebrow">ACCESS MANAGEMENT</p><h1>Users</h1></div>
-  {% if can('user:add') %}<a class="button button-primary" href="{{ url_for('main.new_user') }}"><i class="fa-solid fa-user-plus" aria-hidden="true"></i> Add user</a>{% endif %}
+  {% if can('user:add') %}<a class="button button-primary" href="{{ url_for('main.new_user') }}"><i class="fa-solid fa-user-plus" aria-hidden="true"></i> Add User</a>{% endif %}
 </section>
 <section class="panel user-directory">
   <div class="table-scroll">
@@ -21,7 +21,7 @@
             <div class="row-actions">
               {% if can('user:edit') %}<a class="button button-secondary table-button" href="{{ url_for('main.edit_user', user_id=user.id) }}">Edit</a>{% endif %}
               {% if user.id != logged_user.id %}
-                {% if can('user:password_reset') %}<a class="button button-secondary table-button" href="{{ url_for('main.reset_user_password', user_id=user.id) }}">Reset password</a>{% endif %}
+                {% if can('user:password_reset') %}<a class="button button-secondary table-button" href="{{ url_for('main.reset_user_password', user_id=user.id) }}">Reset Password</a>{% endif %}
                 {% if can('user:edit') %}<form method="post" action="{{ url_for('main.toggle_user_admin', user_id=user.id) }}" data-confirm="{{ 'Demote this administrator to a standard user?' if user.is_admin else 'Promote this user to administrator?' }}" autocomplete="off" data-protonpass-ignore="true"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary table-button" type="submit">{{ 'Demote' if user.is_admin else 'Promote' }}</button></form><form method="post" action="{{ url_for('main.toggle_user_enabled', user_id=user.id) }}" data-confirm="{{ 'Disable this user and stop any active timer?' if user.is_enabled else 'Enable this user?' }}" autocomplete="off" data-protonpass-ignore="true"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button button-secondary table-button" type="submit">{{ 'Disable' if user.is_enabled else 'Enable' }}</button></form>{% endif %}
               {% endif %}
             </div>

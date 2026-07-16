@@ -288,7 +288,8 @@ def get_shared_report_client(token: str) -> Client:
     ):
         abort(404)
     client = get_session().scalar(
-        select(Client).where(Client.report_token == token)
+        select(Client)
+        .where(Client.report_token == token)
         .options(selectinload(Client.contracts))
     )
     if client is None:
@@ -759,8 +760,8 @@ def new_client() -> Any:
         return render_template("client_form.html")
     try:
         item = Client(
-            name=form_text("name", "Client name", 200),
-            contact_name=form_text("contact_name", "Contact name", 200),
+            name=form_text("name", "Client Name", 200),
+            contact_name=form_text("contact_name", "Contact Name", 200),
             contact_email=normalize_email(request.form.get("contact_email", "")),
             report_token=secrets.token_urlsafe(32),
             report_password_version=1,
@@ -785,8 +786,8 @@ def edit_client(client_id: int) -> Any:
     if request.method != "POST":
         return render_template("client_form.html", client=item)
     try:
-        item.name = form_text("name", "Client name", 200)
-        item.contact_name = form_text("contact_name", "Contact name", 200)
+        item.name = form_text("name", "Client Name", 200)
+        item.contact_name = form_text("contact_name", "Contact Name", 200)
         item.contact_email = normalize_email(request.form.get("contact_email", ""))
     except ValueError as exc:
         flash(str(exc), "error")
@@ -868,9 +869,7 @@ def client_report_password_confirmation(client_id: int) -> Any:
     item = cast(Client, get_or_404(Client, client_id))
     actor = cast(User, current_user())
     next_url = url_for("main.client", client_id=item.id)
-    confirmation_client_id = session.pop(
-        "report_password_confirmation_client_id", None
-    )
+    confirmation_client_id = session.pop("report_password_confirmation_client_id", None)
     confirmation_token = session.pop("report_password_confirmation_token", None)
     if confirmation_client_id != item.id or not isinstance(confirmation_token, str):
         return redirect(next_url)
@@ -910,8 +909,8 @@ def new_contract(client_id: int) -> Any:
             raise ValueError("Hourly rate must be between $0.00 and $1,000,000.00.")
         contract_item = Contract(
             client=client_item,
-            name=form_text("name", "Contract name", 200),
-            contact_name=form_text("contact_name", "Contact name", 200),
+            name=form_text("name", "Contract", 200),
+            contact_name=form_text("contact_name", "Contact Name", 200),
             contact_email=normalize_email(request.form.get("contact_email", "")),
             hourly_rate_cents=int(rate * 100),
         )
@@ -937,8 +936,8 @@ def edit_contract(contract_id: int) -> Any:
     if request.method != "POST":
         return render_template("contract_form.html", client=item.client, contract=item)
     try:
-        item.name = form_text("name", "Contract name", 200)
-        item.contact_name = form_text("contact_name", "Contact name", 200)
+        item.name = form_text("name", "Contract", 200)
+        item.contact_name = form_text("contact_name", "Contact Name", 200)
         item.contact_email = normalize_email(request.form.get("contact_email", ""))
     except ValueError as exc:
         flash(str(exc), "error")
@@ -1002,7 +1001,7 @@ def contract(contract_id: int) -> str:
 def new_task(contract_id: int) -> Any:
     contract_item = cast(Contract, get_or_404(Contract, contract_id))
     try:
-        name = form_text("name", "Task name", 200)
+        name = form_text("name", "Task Name", 200)
     except ValueError as exc:
         flash(str(exc), "error")
     else:
@@ -1024,7 +1023,7 @@ def new_task(contract_id: int) -> Any:
 def new_subtask(task_id: int) -> Any:
     task = cast(Task, get_or_404(Task, task_id))
     try:
-        name = form_text("name", "Subtask name", 200)
+        name = form_text("name", "Subtask Name", 200)
     except ValueError as exc:
         flash(str(exc), "error")
     else:
@@ -1047,7 +1046,7 @@ def new_subtask(task_id: int) -> Any:
 def rename_task(task_id: int) -> Any:
     task = cast(Task, get_or_404(Task, task_id))
     try:
-        task.name = form_text("name", "Task name", 200)
+        task.name = form_text("name", "Task Name", 200)
         get_session().commit()
     except ValueError as exc:
         flash(str(exc), "error")
@@ -1067,7 +1066,7 @@ def rename_task(task_id: int) -> Any:
 def rename_subtask(subtask_id: int) -> Any:
     subtask = cast(Subtask, get_or_404(Subtask, subtask_id))
     try:
-        subtask.name = form_text("name", "Subtask name", 200)
+        subtask.name = form_text("name", "Subtask Name", 200)
         get_session().commit()
     except ValueError as exc:
         flash(str(exc), "error")
@@ -1502,8 +1501,8 @@ def required_password_change() -> Any:
 def update_profile_name() -> Any:
     user = cast(User, current_user())
     try:
-        user.first_name = form_text("first_name", "First name", 100)
-        user.last_name = form_text("last_name", "Last name", 100)
+        user.first_name = form_text("first_name", "First Name", 100)
+        user.last_name = form_text("last_name", "Last Name", 100)
     except ValueError as exc:
         flash(str(exc), "error")
     else:
@@ -1722,8 +1721,8 @@ def new_user() -> Any:
         secret = pyotp.random_base32()
         user = User(
             email=email,
-            first_name=form_text("first_name", "First name", 100),
-            last_name=form_text("last_name", "Last name", 100),
+            first_name=form_text("first_name", "First Name", 100),
+            last_name=form_text("last_name", "Last Name", 100),
             password_hash=password_hash,
             totp_secret=secret,
             pending_totp_secret=None,
@@ -1776,8 +1775,8 @@ def edit_user(user_id: int) -> Any:
         existing = find_user_by_email(email)
         if existing is not None and existing.id != user.id:
             raise ValueError("A user with that email already exists.")
-        first_name = form_text("first_name", "First name", 100)
-        last_name = form_text("last_name", "Last name", 100)
+        first_name = form_text("first_name", "First Name", 100)
+        last_name = form_text("last_name", "Last Name", 100)
     except ValueError as exc:
         flash(str(exc), "error")
         return render_template(
@@ -1818,7 +1817,7 @@ def reset_user_password(user_id: int) -> Any:
             "Generate a temporary password, invalidate the user's existing "
             "sessions, and require a password change after sign-in."
         ),
-        "submit_label": "Reset user password",
+        "submit_label": "Reset User Password",
         "cancel_url": url_for("main.users"),
         "totp_required": bool(actor.totp_secret),
     }
@@ -1966,9 +1965,7 @@ def shared_report(token: str) -> Any:
                 else "The report password was not accepted.",
                 "error",
             )
-            return render_template(
-                "shared_report_login.html", client=client_item
-            ), 401
+            return render_template("shared_report_login.html", client=client_item), 401
         shared_report_limiter.clear(rate_key)
         session.permanent = True
         session["shared_report_authenticated_at"] = now_utc_timestamp()

@@ -29,7 +29,7 @@
         {% if can('audit:view') %}<a href="{{ url_for('main.audit_log') }}" {% if request.endpoint == 'main.audit_log' %}aria-current="page"{% endif %}><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Audit</a>{% endif %}
         <form method="post" action="{{ url_for('main.logout') }}" autocomplete="off" data-protonpass-ignore="true">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <button class="nav-button" type="submit"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Sign out</button>
+          <button class="nav-button" type="submit"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Sign Out</button>
         </form>
       </nav>
       <details class="mobile-nav">
@@ -41,7 +41,7 @@
           {% if can('audit:view') %}<a href="{{ url_for('main.audit_log') }}" {% if request.endpoint == 'main.audit_log' %}aria-current="page"{% endif %}><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Audit</a>{% endif %}
           <form method="post" action="{{ url_for('main.logout') }}" autocomplete="off" data-protonpass-ignore="true">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <button class="nav-button" type="submit"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Sign out</button>
+            <button class="nav-button" type="submit"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Sign Out</button>
           </form>
         </nav>
       </details>

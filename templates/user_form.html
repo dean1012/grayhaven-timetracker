@@ -2,19 +2,19 @@
 {% block title %}Add user · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block content %}
 <section class="narrow-content">
-  <a class="back-link" href="{{ url_for('main.users') }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to users</a>
+  <a class="back-link" href="{{ url_for('main.users') }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to Users</a>
   <div class="panel form-panel">
     <p class="eyebrow">ACCESS MANAGEMENT</p>
     <h1>Add User</h1>
     <p class="muted">The account is created as a standard user. A temporary password and authenticator setup will be shown once after creation.</p>
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label>First name<input name="first_name" value="{{ request.form.get('first_name', '') }}" maxlength="100" required autofocus autocomplete="off" data-protonpass-ignore="true"></label>
-      <label>Last name<input name="last_name" value="{{ request.form.get('last_name', '') }}" maxlength="100" required autocomplete="off" data-protonpass-ignore="true"></label>
-      <label>Email address<input type="email" name="email" value="{{ request.form.get('email', '') }}" maxlength="255" required></label>
+      <label>First Name<input name="first_name" value="{{ request.form.get('first_name', '') }}" maxlength="100" required autofocus autocomplete="off" data-protonpass-ignore="true"></label>
+      <label>Last Name<input name="last_name" value="{{ request.form.get('last_name', '') }}" maxlength="100" required autocomplete="off" data-protonpass-ignore="true"></label>
+      <label>Email Address<input type="email" name="email" value="{{ request.form.get('email', '') }}" maxlength="255" required></label>
       <div class="form-actions">
         <a class="button button-secondary" href="{{ url_for('main.users') }}">Cancel</a>
-        <button class="button button-primary" type="submit"><i class="fa-solid fa-user-plus" aria-hidden="true"></i> Create user</button>
+        <button class="button button-primary" type="submit"><i class="fa-solid fa-user-plus" aria-hidden="true"></i> Create User</button>
       </div>
     </form>
   </div>

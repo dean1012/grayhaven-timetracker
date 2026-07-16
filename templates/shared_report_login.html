@@ -9,8 +9,8 @@
     {% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack">{% for category, message in messages %}<div class="flash flash-{{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label>Report password<input type="password" name="report_password" maxlength="1024" required autocomplete="current-password" autofocus></label>
-      <div class="form-actions"><button class="button button-primary" type="submit"><i class="fa-solid fa-lock-open" aria-hidden="true"></i> View live report</button></div>
+      <label>Report Password<input type="password" name="report_password" maxlength="1024" required autocomplete="current-password" autofocus></label>
+      <div class="form-actions"><button class="button button-primary" type="submit"><i class="fa-solid fa-lock-open" aria-hidden="true"></i> View Live Report</button></div>
     </form>
   </div>
 </section>

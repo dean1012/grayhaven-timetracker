@@ -7,9 +7,9 @@
     <img class="auth-logo" src="{{ url_for('main.branding_asset', filename='grayhaven-logo-wordmark-dark.svg') }}" alt="Grayhaven Systems LLC">
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label>Email address<span class="input-with-icon"><i class="fa-solid fa-envelope" aria-hidden="true"></i><input type="email" name="email" autocomplete="username" maxlength="255" required autofocus></span></label>
+      <label>Email Address<span class="input-with-icon"><i class="fa-solid fa-envelope" aria-hidden="true"></i><input type="email" name="email" autocomplete="username" maxlength="255" required autofocus></span></label>
       <label>Password<span class="input-with-icon"><i class="fa-solid fa-lock" aria-hidden="true"></i><input type="password" name="password" autocomplete="current-password" maxlength="1024" required></span></label>
-      <button class="button button-primary" type="submit"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i> Sign in</button>
+      <button class="button button-primary" type="submit"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i> Sign In</button>
     </form>
   </div>
 </section>

@@ -96,6 +96,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .client-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
 .client-card { min-height: 290px; padding: 1.8rem; }
 .card-heading, .panel-heading, .task-top, .report-header, .form-actions, .heading-actions { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.panel-heading { margin-bottom: var(--space-sm); }
 .card-heading > i { color: var(--primary-accent); font-size: 2.2rem; }
 .card-heading h2 { font-size: 1.45rem; }
 .contact-line { display: flex; align-items: center; gap: .45rem; margin: 1.3rem 0; color: var(--cool-grey); font-size: .87rem; }
@@ -151,6 +152,9 @@ select { padding-right: 2.25rem; }
 .money-prefix { padding-left: .75rem; }
 .money-suffix { padding-right: .9rem; white-space: nowrap; }
 .money-input input { min-width: 0; padding: .65rem .35rem; border: 0; border-radius: 0; outline: 0; }
+.money-input input[type="number"] { appearance: textfield; }
+.money-input input[type="number"]::-webkit-inner-spin-button,
+.money-input input[type="number"]::-webkit-outer-spin-button { margin: 0; appearance: none; }
 .input-with-icon { position: relative; display: block; }
 .input-with-icon > i { position: absolute; top: 50%; left: .85rem; z-index: 1; color: var(--slate-grey); transform: translateY(-50%); pointer-events: none; transition: color var(--transition-fast); }
 .input-with-icon > input { padding-left: 2.65rem; }
