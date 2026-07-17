@@ -2158,14 +2158,14 @@ def change_password() -> Any:
         user.password_change_required = False
         user.session_version += 1
         get_session().commit()
-        session["session_version"] = user.session_version
         audit(
             "password_changed",
             user_id=user.id,
             sessions_invalidated=True,
         )
-        flash("Password changed successfully.", "success")
-        return redirect(url_for("main.dashboard" if was_required else "main.profile"))
+        session.clear()
+        flash("Password changed successfully. Please sign in again.", "success")
+        return redirect(url_for("main.login"))
     return redirect(
         url_for("main.required_password_change" if was_required else "main.profile")
     )

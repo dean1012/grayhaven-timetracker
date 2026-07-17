@@ -159,7 +159,6 @@ def _manifest_user(value: Any, index: int) -> BootstrapUser:
     except ValueError as exc:
         raise ConfigurationError(f"{label} contains invalid identity data") from exc
     password_hash = cast(str, value["password_hash"])
-    _validate_password_hash(password_hash, f"{label} password_hash")
     totp_secret = value.get("totp_secret")
     if totp_secret is not None and (
         not isinstance(totp_secret, str) or not valid_totp_secret(totp_secret)
@@ -205,30 +204,23 @@ def configured_bootstrap_users(app: Flask) -> list[BootstrapUser]:
     return users
 
 
-def _prior_fingerprints(
-    database: Session, spec: BootstrapUser
-) -> tuple[str | None, str | None]:
+def _prior_totp_fingerprint(database: Session, spec: BootstrapUser) -> str | None:
     if spec.metadata_key is None:
         raise ConfigurationError("Bootstrap user metadata key is missing")
     raw = _metadata(database, spec.metadata_key)
     if raw is None:
-        return None, None
+        return None
     try:
         stored = json.loads(raw)
     except json.JSONDecodeError:
-        return None, None
+        return None
     if not isinstance(stored, dict):
-        return None, None
-    password = stored.get("password")
+        return None
     totp = stored.get("totp")
-    return (
-        password if isinstance(password, str) else None,
-        totp if isinstance(totp, str) else None,
-    )
+    return totp if isinstance(totp, str) else None
 
 
-def _store_fingerprints(database: Session, spec: BootstrapUser) -> None:
-    password = _fingerprint(spec.password_hash)
+def _store_totp_fingerprint(database: Session, spec: BootstrapUser) -> None:
     totp = _fingerprint(spec.totp_secret) if spec.totp_secret is not None else None
     if spec.metadata_key is None:
         raise ConfigurationError("Bootstrap user metadata key is missing")
@@ -236,7 +228,7 @@ def _store_fingerprints(database: Session, spec: BootstrapUser) -> None:
         database,
         spec.metadata_key,
         json.dumps(
-            {"email": spec.email, "password": password, "totp": totp},
+            {"email": spec.email, "totp": totp},
             separators=(",", ":"),
             sort_keys=True,
         ),
@@ -244,20 +236,12 @@ def _store_fingerprints(database: Session, spec: BootstrapUser) -> None:
 
 
 def _apply_identity_and_authentication(
-    user: User, spec: BootstrapUser, prior_password: str | None, prior_totp: str | None
+    user: User, spec: BootstrapUser, prior_totp: str | None
 ) -> bool:
     changed = user.first_name != spec.first_name or user.last_name != spec.last_name
     user.first_name = spec.first_name
     user.last_name = spec.last_name
     authentication_changed = False
-    password_fingerprint = _fingerprint(spec.password_hash)
-    if (
-        prior_password != password_fingerprint
-        and user.password_hash != spec.password_hash
-    ):
-        user.password_hash = spec.password_hash
-        user.password_change_required = False
-        authentication_changed = True
     if spec.totp_secret is not None:
         totp_fingerprint = _fingerprint(spec.totp_secret)
         if prior_totp != totp_fingerprint and user.totp_secret != spec.totp_secret:
@@ -292,6 +276,7 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
         user = database.scalar(select(User).where(User.email == spec.email))
         created = user is None
         if user is None:
+            _validate_password_hash(spec.password_hash, "Bootstrap user password_hash")
             user = User(
                 email=spec.email,
                 first_name=spec.first_name,
@@ -310,10 +295,10 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
             previous_state: dict[str, str | bool] = {}
         else:
             previous_state = _audit_user_state(user)
-            prior_password, prior_totp = _prior_fingerprints(database, spec)
+            prior_totp = _prior_totp_fingerprint(database, spec)
             prior_totp_secret = user.totp_secret
             changed_by_email[spec.email] = _apply_identity_and_authentication(
-                user, spec, prior_password, prior_totp
+                user, spec, prior_totp
             )
             if user.totp_secret != prior_totp_secret:
                 reset_totp_replay_state(database, user.id)
@@ -323,7 +308,7 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
                 )
                 user.role = "admin"
                 user.is_enabled = True
-        _store_fingerprints(database, spec)
+        _store_totp_fingerprint(database, spec)
         records.append((spec, user, created, previous_state))
 
     # Promote or enable desired administrators before demoting or disabling any
