@@ -1351,11 +1351,11 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         self.seed = self.seed_contract(entry_user_id=self.user.id)
 
-    def test_admin_report_html_and_pdf(self) -> None:
+    def test_admin_live_report(self) -> None:
         self.login()
         html = self.client.get(f"/reports/{self.seed.contract_id}")
         self.assertEqual(html.status_code, 200)
-        self.assertIn(b"Contract Time Report", html.data)
+        self.assertIn(b"Client Time Report", html.data)
         self.assertIn(b"data-live-report", html.data)
         self.assertIn(
             f'data-live-url="/reports/{self.seed.contract_id}/live"'.encode(),
@@ -1380,10 +1380,6 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         self.assertEqual(changed.status_code, 200)
         self.assertIn(b'data-active="true"', changed.data)
-        pdf = self.client.get(f"/reports/{self.seed.contract_id}.pdf")
-        self.assertEqual(pdf.status_code, 200)
-        self.assertEqual(pdf.mimetype, "application/pdf")
-        self.assertTrue(pdf.data.startswith(b"%PDF-"))
         with session_scope(self.app) as database:
             active_entry = database.scalar(
                 select(TimeEntry).where(TimeEntry.stopped_at.is_(None))
@@ -1392,7 +1388,6 @@ class ReportAndSessionRouteTests(AppTestCase):
             self.assertIsNone(active_entry.stopped_at)
         self.assertEqual(self.client.get("/reports/9999").status_code, 404)
         self.assertEqual(self.client.get("/reports/9999/live").status_code, 404)
-        self.assertEqual(self.client.get("/reports/9999.pdf").status_code, 404)
         self.assertEqual(
             self.app.test_client()
             .get(f"/reports/{self.seed.contract_id}/live")

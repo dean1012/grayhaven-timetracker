@@ -12,7 +12,6 @@ from .auth import current_user
 
 AUDIT_VIEW = "audit:view"
 REPORT_VIEW = "report:view"
-REPORT_GENERATE = "report:generate"
 REPORT_SHARE = "report:share"
 CLIENT_ADD = "client:add"
 CLIENT_VIEW = "client:view"
@@ -46,7 +45,6 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         {
             AUDIT_VIEW,
             REPORT_VIEW,
-            REPORT_GENERATE,
             REPORT_SHARE,
             CLIENT_ADD,
             CLIENT_VIEW,

@@ -15,9 +15,7 @@
   <div class="heading-actions">
     {% if can('client:edit') %}<a class="icon-button" href="{{ url_for('main.edit_client', client_id=client.id) }}" title="Update Client" aria-label="Update Client"><i class="fa-solid fa-pen" aria-hidden="true"></i></a>{% endif %}
     {% if can('client:delete') %}<a class="icon-button danger" href="{{ url_for('main.delete_client', client_id=client.id) }}" title="Delete Client" aria-label="Delete Client"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>{% endif %}
-    {% if can('contract:add') %}<a class="icon-button accent" href="{{ url_for('main.new_contract', client_id=client.id) }}" title="New Contract" aria-label="New Contract"><i class="fa-solid fa-plus" aria-hidden="true"></i></a>{% endif %}
-    {% if can('report:view') %}<a class="icon-button" href="{{ url_for('main.report_view', client_id=client.id) }}" title="View Report" aria-label="View Report"><i class="fa-solid fa-eye" aria-hidden="true"></i></a>{% endif %}
-    {% if can('report:generate') %}<a class="icon-button accent" href="{{ url_for('main.report_pdf', client_id=client.id) }}" title="Generate Report" aria-label="Generate Report"><i class="fa-solid fa-file-pdf" aria-hidden="true"></i></a>{% endif %}
+    {% if can('report:view') %}<a class="icon-button" href="{{ url_for('main.report_view', client_id=client.id) }}" title="View Live Report" aria-label="View Live Report"><i class="fa-solid fa-eye" aria-hidden="true"></i></a>{% endif %}
   </div>
 </section>
 {% if can('report:share') %}<section class="panel report-share-panel">
@@ -38,6 +36,7 @@
 <section class="panel contract-directory">
   <div class="panel-heading">
     <div><p class="eyebrow">CONTRACTS</p><h2>Contract Directory</h2></div>
+    {% if can('contract:add') %}<a class="icon-button accent" href="{{ url_for('main.new_contract', client_id=client.id) }}" title="New Contract" aria-label="New Contract"><i class="fa-solid fa-plus" aria-hidden="true"></i></a>{% endif %}
   </div>
   {% for contract in client.contracts %}
   <div class="contract-row contract-row-detailed">

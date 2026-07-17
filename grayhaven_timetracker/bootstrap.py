@@ -325,8 +325,38 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
         )
     ).all()
     for item in stale_items:
-        if item.key not in configured_manifest_keys:
-            database.delete(item)
+        if item.key in configured_manifest_keys:
+            continue
+        try:
+            stored = json.loads(item.value)
+            email = stored.get("email") if isinstance(stored, dict) else None
+        except json.JSONDecodeError:
+            email = None
+        if not isinstance(email, str):
+            continue
+        user = database.scalar(select(User).where(User.email == email))
+        if user is None or not user.is_enabled:
+            continue
+        _stop_active_timer(database, user)
+        user.is_enabled = False
+        user.session_version += 1
+        records.append(
+            (
+                BootstrapUser(
+                    email=user.email,
+                    first_name=user.first_name,
+                    last_name=user.last_name,
+                    password_hash=user.password_hash,
+                    totp_secret=user.totp_secret,
+                    role=user.role,
+                    enabled=False,
+                    metadata_key=item.key,
+                ),
+                user,
+                False,
+            )
+        )
+        changed_by_email[user.email] = True
 
     return [
         BootstrapOutcome(
@@ -334,6 +364,8 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
             outcome=(
                 "created"
                 if created
+                else "disabled"
+                if changed_by_email[spec.email] and not user.is_enabled
                 else "updated"
                 if changed_by_email[spec.email]
                 else "unchanged"

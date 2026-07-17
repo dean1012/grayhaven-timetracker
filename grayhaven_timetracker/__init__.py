@@ -82,17 +82,19 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     with session_scope(app) as database:
         bootstrap_outcomes = reconcile_bootstrap_users(app, database)
         for bootstrap_outcome in bootstrap_outcomes:
+            if bootstrap_outcome.outcome == "unchanged":
+                continue
             user = bootstrap_outcome.user
             record_audit_event(
                 database,
-                "bootstrap_user_reconciled",
+                f"user_{bootstrap_outcome.outcome}",
                 source="system",
                 details={
                     "enabled": user.is_enabled,
                     "email": user.email,
-                    "outcome": bootstrap_outcome.outcome,
+                    "managed_by": "bootstrap",
                     "role": user.role,
-                    "user_id": user.id,
+                    "user": f"{user.full_name} (ID: {user.id})",
                 },
             )
         record_audit_event(

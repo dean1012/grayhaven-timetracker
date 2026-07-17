@@ -614,7 +614,8 @@ class BootstrapTests(AppTestCase):
             )
             assert managed_admin is not None and managed_user is not None
             self.assertEqual(
-                [item.outcome for item in outcomes], ["created", "created"]
+                [item.outcome for item in outcomes],
+                ["created", "created", "disabled"],
             )
             self.assertTrue(managed_admin.is_admin)
             self.assertIsNone(managed_admin.totp_secret)
@@ -638,7 +639,7 @@ class BootstrapTests(AppTestCase):
             managed_user = database.get(User, managed_user_id)
             entry = database.get(TimeEntry, seed.entry_id)
             assert managed_user is not None and entry is not None
-            self.assertEqual(outcomes[1].outcome, "updated")
+            self.assertEqual(outcomes[1].outcome, "disabled")
             self.assertFalse(managed_user.is_enabled)
             self.assertIsNotNone(entry.stopped_at)
 
@@ -652,11 +653,16 @@ class BootstrapTests(AppTestCase):
 
         self.app.config["BOOTSTRAP_USERS"] = json.dumps(manifest[:1])
         with session_scope(self.app) as database:
-            reconcile_bootstrap_users(self.app, database)
+            outcomes = reconcile_bootstrap_users(self.app, database)
             managed_user = database.get(User, managed_user_id)
             assert managed_user is not None
-            self.assertTrue(managed_user.is_enabled)
-            self.assertFalse(is_deployment_managed_user(database, managed_user.email))
+            self.assertEqual(outcomes[-1].outcome, "disabled")
+            self.assertFalse(managed_user.is_enabled)
+            self.assertTrue(is_deployment_managed_user(database, managed_user.email))
+            self.assertEqual(
+                reconcile_bootstrap_users(self.app, database)[-1].outcome,
+                "unchanged",
+            )
 
     def test_manifest_bootstrap_rejects_unsafe_or_ambiguous_entries(self) -> None:
         valid = {

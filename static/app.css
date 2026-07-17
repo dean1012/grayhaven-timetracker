@@ -203,16 +203,14 @@ small { color: var(--cool-grey); font-weight: 400; }
 .rename-control[open] > summary { color: var(--primary-accent); background: color-mix(in srgb, var(--primary-accent) 10%, transparent); border-color: var(--charcoal-border); }
 .rename-popover { position: absolute; top: calc(100% + .6rem); right: 0; z-index: 10; display: grid; grid-template-columns: minmax(240px, 1fr) auto; align-items: end; gap: .65rem; width: 390px; padding: 1rem; background: var(--deep-graphite); border: 1px solid var(--charcoal-border); border-radius: var(--border-radius); box-shadow: var(--popover-shadow); }
 .rename-popover input { min-height: 36px; padding: .45rem .6rem; }
-.subtask-list { position: relative; margin-left: 1.65rem; }
-.subtask-list::before { position: absolute; top: 0; bottom: 0; left: 38px; width: 1px; background: var(--charcoal-border); content: ""; }
-.subtask-row { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; column-gap: .65rem; min-height: 44px; padding: .35rem 0; }
-.subtask-timer { z-index: 1; grid-column: 1; }
-.subtask-name { display: flex; grid-column: 2; align-items: center; gap: .7rem; min-width: 0; padding-left: .55rem; color: var(--soft-white); font-size: .9rem; }
+.subtask-list { margin-left: 1.65rem; }
+.subtask-row { display: grid; grid-template-columns: minmax(32px, max-content) minmax(0, 1fr) auto; align-items: center; column-gap: .65rem; min-height: 44px; padding: .35rem 0; }
+.subtask-timer { display: flex; grid-column: 1; align-items: center; min-height: 32px; padding-right: .65rem; border-right: 1px solid var(--charcoal-border); }
+.subtask-name { display: flex; grid-column: 2; align-items: center; gap: .7rem; min-width: 0; color: var(--soft-white); font-size: .9rem; }
 .subtask-name i { flex: 0 0 auto; color: var(--cool-grey); }
 .subtask-name span { min-width: 0; overflow-wrap: anywhere; }
 .subtask-row .row-actions { grid-column: 3; }
-.subtask-running { display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; color: var(--alert-error); background: transparent; }
-.subtask-empty { margin: .8rem 0; font-size: .82rem; }
+.subtask-empty { margin: .8rem 0 .8rem 46px; font-size: .82rem; }
 .subtask-add { margin-top: .75rem; margin-left: 46px; }
 .subtask-add input { width: 245px; min-height: 34px; font-size: .82rem; }
 .empty-state { padding: 4rem; text-align: center; }
@@ -397,7 +395,6 @@ small { color: var(--cool-grey); font-weight: 400; }
   .timer-elapsed { margin-right: auto; text-align: left; }
   .task-top { align-items: flex-start; }
   .subtask-list { margin-left: .35rem; }
-  .subtask-list::before { left: 38px; }
   .subtask-row { align-items: start; }
   .subtask-row .row-actions { justify-self: end; }
   .subtask-add input { width: auto; min-width: 0; flex: 1; }

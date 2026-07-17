@@ -356,7 +356,19 @@ async function reconcileLiveReport() {
       setLiveReportStatus("Live", "live");
       return;
     }
-    if (response.redirected || [401, 403, 404].includes(response.status)) {
+    if (response.redirected) {
+      reportReconciliationStopped = true;
+      window.location.replace(response.url);
+      return;
+    }
+    if (response.status === 404) {
+      reportReconciliationStopped = true;
+      const reportUrl = new URL(article.dataset.liveUrl || "", window.location.origin);
+      reportUrl.pathname = reportUrl.pathname.replace(/\/live$/, "");
+      window.location.replace(reportUrl.href);
+      return;
+    }
+    if ([401, 403].includes(response.status)) {
       reportReconciliationStopped = true;
       setLiveReportStatus("Access ended", "ended");
       return;

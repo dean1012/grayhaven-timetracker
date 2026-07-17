@@ -27,7 +27,6 @@ from flask import (
     redirect,
     render_template,
     request,
-    send_file,
     send_from_directory,
     session,
     url_for,
@@ -80,7 +79,6 @@ from .permissions import (
     CONTRACT_DELETE,
     CONTRACT_EDIT,
     CONTRACT_VIEW,
-    REPORT_GENERATE,
     REPORT_SHARE,
     REPORT_VIEW,
     TASK_ADD,
@@ -105,7 +103,6 @@ from .reports import (
     ClientReport,
     ContractReport,
     build_client_report,
-    build_pdf,
     duration_seconds,
     format_datetime,
     format_duration,
@@ -122,6 +119,9 @@ sensitive_action_limiter = LoginLimiter()
 REPORT_PASSWORD_CONFIRMATION_TTL_SECONDS = 120
 AUDIT_SOURCES = frozenset({"admin", "user", "public", "system"})
 AUDIT_PAGE_SIZE = 50
+HIDDEN_AUDIT_EVENTS = frozenset(
+    {"audit_log_viewed", "bootstrap_user_reconciled", "http_request"}
+)
 PENDING_LOGIN_TTL_SECONDS = 300
 PENDING_LOGIN_SESSION_KEYS = (
     "pending_login_expires_at",
@@ -239,6 +239,26 @@ def audit(event: str, **fields: Any) -> None:
         candidate_id = actor_id if isinstance(actor_id, int) else fields.get("user_id")
         if isinstance(candidate_id, int):
             actor = database.get(User, candidate_id)
+    label_fields = {
+        "client_id": ("client", Client, "name"),
+        "contract_id": ("contract", Contract, "name"),
+        "previous_contract_id": ("previous_contract", Contract, "name"),
+        "task_id": ("task", Task, "name"),
+        "subtask_id": ("subtask", Subtask, "name"),
+        "user_id": ("user", User, "full_name"),
+        "time_entry_id": ("time_entry", TimeEntry, None),
+    }
+    for field, (label, model, attribute) in label_fields.items():
+        identifier = fields.pop(field, None)
+        if not isinstance(identifier, int):
+            continue
+        item = database.get(model, identifier)
+        if item is None:
+            fields[label] = f"Deleted record (ID: {identifier})"
+        elif attribute is None:
+            fields[label] = f"Time entry (ID: {identifier})"
+        else:
+            fields[label] = audit_object_label(getattr(item, attribute), identifier)
     try:
         record_audit_event(
             database,
@@ -1878,7 +1898,16 @@ def delete_time_entry(entry_id: int) -> Any:
     if entry.stopped_at is None:
         abort(409, "Stop an active timer before deleting it.")
     contract_id = entry.task.contract_id
-    user_id = entry.user_id
+    client_label = audit_object_label(entry.task.contract.client.name, entry.task.contract.client_id)
+    contract_label = audit_object_label(entry.task.contract.name, contract_id)
+    task_label = audit_object_label(entry.task.name, entry.task_id)
+    subtask_label = (
+        audit_object_label(entry.subtask.name, entry.subtask_id)
+        if entry.subtask is not None and entry.subtask_id is not None
+        else None
+    )
+    user_label = audit_object_label(entry.user.full_name, entry.user_id)
+    entry_label = f"Time entry (ID: {entry.id})"
     actor = cast(User, current_user())
     confirmation = {
         "eyebrow": "DELETE SESSION",
@@ -1911,9 +1940,12 @@ def delete_time_entry(entry_id: int) -> Any:
     audit(
         "time_entry_deleted",
         actor_id=actor.id,
-        user_id=user_id,
-        contract_id=contract_id,
-        time_entry_id=entry_id,
+        user=user_label,
+        client=client_label,
+        contract=contract_label,
+        task=task_label,
+        subtask=subtask_label,
+        time_entry=entry_label,
     )
     flash("Time session deleted.", "success")
     return redirect(url_for("main.contract_sessions", contract_id=contract_id))
@@ -2081,9 +2113,9 @@ def audit_log() -> str:
     if page < 1 or (actor_id is not None and actor_id < 1):
         abort(400)
 
-    # Request telemetry belongs to Nginx. Preserve historical rows in storage
-    # without presenting them as application audit actions.
-    conditions = [AuditEvent.event != "http_request"]
+    # Historical telemetry and reconciliation noise remain immutable in storage,
+    # but only meaningful application actions belong in the audit experience.
+    conditions = [AuditEvent.event.not_in(HIDDEN_AUDIT_EVENTS)]
     if source_filter:
         conditions.append(AuditEvent.source == source_filter)
     if event_filter:
@@ -2100,7 +2132,7 @@ def audit_log() -> str:
         abort(404)
     events = database.scalars(
         select(AuditEvent.event)
-        .where(AuditEvent.event != "http_request")
+        .where(AuditEvent.event.not_in(HIDDEN_AUDIT_EVENTS))
         .distinct()
         .order_by(AuditEvent.event)
     ).all()
@@ -2123,13 +2155,6 @@ def audit_log() -> str:
         }.items()
         if value
     }
-    audit(
-        "audit_log_viewed",
-        page=page,
-        source_filter=source_filter or "all",
-        event_filter=event_filter or "all",
-        actor_filter=actor_id,
-    )
     return render_template(
         "audit_log.html",
         items=items,
@@ -2497,33 +2522,4 @@ def report_live(client_id: int) -> Any:
         report,
         shared_report=False,
         live_report_url=url_for("main.report_live", client_id=client_item.id),
-    )
-
-
-@main.get("/reports/<int:client_id>.pdf")
-@permission_required(REPORT_GENERATE)
-def report_pdf(client_id: int) -> Any:
-    client_item = cast(Client, get_or_404(Client, client_id))
-    report = build_client_report(
-        get_session(),
-        client_item,
-        cast(str, current_app.config["DISPLAY_TIMEZONE"]),
-    )
-    pdf = build_pdf(
-        report,
-        Path(cast(str, current_app.config["BRANDING_PATH"])),
-        cast(str, current_app.config["CONTACT_URL"]),
-    )
-    filename = f"client-time-report-{client_item.id}.pdf"
-    audit(
-        "report_generated",
-        user_id=cast(User, current_user()).id,
-        client_id=client_item.id,
-    )
-    return send_file(
-        pdf,
-        as_attachment=True,
-        download_name=filename,
-        mimetype="application/pdf",
-        max_age=0,
     )

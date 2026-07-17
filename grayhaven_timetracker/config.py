@@ -165,7 +165,7 @@ def validate_branding(path: str) -> None:
 
 
 def validate_contact_url(value: str) -> None:
-    """Require a complete HTTPS contact link for HTML and PDF reports."""
+    """Require a complete HTTPS contact link for live reports."""
     try:
         parsed = urlsplit(value)
         _ = parsed.port
