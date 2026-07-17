@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import hashlib
+import re
 import secrets
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -558,6 +559,29 @@ def get_or_404(model: type[Any], identifier: int) -> Any:
     return item
 
 
+def deleted_resource_parent_id(
+    events: tuple[str, ...], child_key: str, child_id: int, parent_key: str
+) -> int | None:
+    """Recover a deleted resource's still-readable parent from immutable audit data."""
+    statement = (
+        select(AuditEvent)
+        .where(AuditEvent.event.in_(events))
+        .order_by(AuditEvent.id.desc())
+    )
+    for event in get_session().scalars(statement):
+        details = event.details
+        child_label = details.get(child_key)
+        parent_label = details.get(parent_key)
+        if not isinstance(child_label, str) or not isinstance(parent_label, str):
+            continue
+        if f"(ID: {child_id})" not in child_label:
+            continue
+        match = re.search(r"\(ID:\s*(\d+)\)", parent_label)
+        if match:
+            return int(match.group(1))
+    return None
+
+
 def time_entry_allowed(
     entry: TimeEntry, own_permission: str, any_permission: str
 ) -> bool:
@@ -668,6 +692,63 @@ def datetime_local_value(value: datetime, timezone_name: str) -> str:
 def register_routes(app: Flask) -> None:
     app.before_request(load_current_user)
     app.register_blueprint(main)
+
+    @app.errorhandler(404)
+    def redirect_missing_resource(error: Any) -> Any:
+        """Send stale authenticated resource pages to their nearest live parent."""
+        path = request.path
+        if path.startswith("/api/") or request.method not in {"GET", "HEAD", "POST"}:
+            return error
+
+        client_match = re.fullmatch(
+            r"/(?:clients|reports)/(\d+)(?:/.*)?", path
+        )
+        if client_match:
+            return redirect(url_for("main.dashboard"))
+
+        contract_match = re.fullmatch(r"/contracts/(\d+)(?:/.*)?", path)
+        if contract_match:
+            contract_id = int(contract_match.group(1))
+            client_id = deleted_resource_parent_id(
+                ("contract_deleted",), "contract", contract_id, "client"
+            )
+            if client_id is not None and get_session().get(Client, client_id):
+                return redirect(url_for("main.client", client_id=client_id))
+            return redirect(url_for("main.dashboard"))
+
+        task_match = re.fullmatch(r"/tasks/(\d+)(?:/.*)?", path)
+        if task_match:
+            task_id = int(task_match.group(1))
+            contract_id = deleted_resource_parent_id(
+                ("task_deleted",), "task", task_id, "contract"
+            )
+            if contract_id is not None and get_session().get(Contract, contract_id):
+                return redirect(url_for("main.contract", contract_id=contract_id))
+            return redirect(url_for("main.dashboard"))
+
+        subtask_match = re.fullmatch(r"/subtasks/(\d+)(?:/.*)?", path)
+        if subtask_match:
+            subtask_id = int(subtask_match.group(1))
+            contract_id = deleted_resource_parent_id(
+                ("subtask_deleted",), "subtask", subtask_id, "contract"
+            )
+            if contract_id is not None and get_session().get(Contract, contract_id):
+                return redirect(url_for("main.contract", contract_id=contract_id))
+            return redirect(url_for("main.dashboard"))
+
+        session_match = re.fullmatch(r"/sessions/(\d+)(?:/.*)?", path)
+        if session_match:
+            entry_id = int(session_match.group(1))
+            contract_id = deleted_resource_parent_id(
+                ("time_entry_deleted",), "time_entry", entry_id, "contract"
+            )
+            if contract_id is not None and get_session().get(Contract, contract_id):
+                return redirect(
+                    url_for("main.contract_sessions", contract_id=contract_id)
+                )
+            return redirect(url_for("main.dashboard"))
+
+        return error
 
     def live_page_etag() -> str:
         """Fingerprint application state without volatile rendered markup."""
