@@ -70,6 +70,15 @@
         </div>
         {% endif %}
       {% endwith %}
+      {% set stale_messages = {
+        'client_deleted': 'The client was deleted.',
+        'contract_deleted': 'The contract was deleted.',
+        'task_deleted': 'The task was deleted.',
+        'subtask_deleted': 'The subtask was deleted.',
+        'time_entry_deleted': 'This time entry was deleted.',
+        'time_entry_moved': 'This time entry has been moved.'
+      } %}
+      {% if request.args.get('stale') in stale_messages %}<div class="flash-stack"><div class="flash flash-warning" role="status">{{ stale_messages[request.args.get('stale')] }}</div></div>{% endif %}
       <div data-live-region="active-timer">{% if active_entry %}{% include "active_timer.html" %}{% endif %}</div>
       {% block content %}{% endblock %}
     </div>

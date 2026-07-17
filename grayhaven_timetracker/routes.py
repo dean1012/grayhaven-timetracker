@@ -605,6 +605,11 @@ def created_resource_parent_id(
     return None
 
 
+def stale_resource_redirect(endpoint: str, notice: str, **values: Any) -> Any:
+    """Redirect with a short-lived destination notice for a stale page."""
+    return redirect(url_for(endpoint, **values, stale=notice))
+
+
 def time_entry_allowed(
     entry: TimeEntry, own_permission: str, any_permission: str
 ) -> bool:
@@ -727,8 +732,7 @@ def register_routes(app: Flask) -> None:
             r"/(?:clients|reports)/(\d+)(?:/.*)?", path
         )
         if client_match:
-            flash("The client was deleted.", "warning")
-            return redirect(url_for("main.dashboard"))
+            return stale_resource_redirect("main.dashboard", "client_deleted")
 
         contract_match = re.fullmatch(r"/contracts/(\d+)(?:/.*)?", path)
         if contract_match:
@@ -737,10 +741,10 @@ def register_routes(app: Flask) -> None:
                 ("contract_deleted",), "contract", contract_id, "client"
             )
             if client_id is not None and get_session().get(Client, client_id):
-                flash("The contract was deleted.", "warning")
-                return redirect(url_for("main.client", client_id=client_id))
-            flash("The contract was deleted.", "warning")
-            return redirect(url_for("main.dashboard"))
+                return stale_resource_redirect(
+                    "main.client", "contract_deleted", client_id=client_id
+                )
+            return stale_resource_redirect("main.dashboard", "contract_deleted")
 
         task_match = re.fullmatch(r"/tasks/(\d+)(?:/.*)?", path)
         if task_match:
@@ -749,10 +753,10 @@ def register_routes(app: Flask) -> None:
                 ("task_deleted",), "task", task_id, "contract"
             )
             if contract_id is not None and get_session().get(Contract, contract_id):
-                flash("The task was deleted.", "warning")
-                return redirect(url_for("main.contract", contract_id=contract_id))
-            flash("The task was deleted.", "warning")
-            return redirect(url_for("main.dashboard"))
+                return stale_resource_redirect(
+                    "main.contract", "task_deleted", contract_id=contract_id
+                )
+            return stale_resource_redirect("main.dashboard", "task_deleted")
 
         subtask_match = re.fullmatch(r"/subtasks/(\d+)(?:/.*)?", path)
         if subtask_match:
@@ -761,10 +765,10 @@ def register_routes(app: Flask) -> None:
                 ("subtask_deleted",), "subtask", subtask_id, "contract"
             )
             if contract_id is not None and get_session().get(Contract, contract_id):
-                flash("The subtask was deleted.", "warning")
-                return redirect(url_for("main.contract", contract_id=contract_id))
-            flash("The subtask was deleted.", "warning")
-            return redirect(url_for("main.dashboard"))
+                return stale_resource_redirect(
+                    "main.contract", "subtask_deleted", contract_id=contract_id
+                )
+            return stale_resource_redirect("main.dashboard", "subtask_deleted")
 
         session_match = re.fullmatch(r"/sessions/(\d+)(?:/.*)?", path)
         if session_match:
@@ -773,12 +777,10 @@ def register_routes(app: Flask) -> None:
                 "time entry", entry_id, "contract"
             )
             if contract_id is not None and get_session().get(Contract, contract_id):
-                flash("This time entry was deleted.", "warning")
-                return redirect(
-                    url_for("main.contract_sessions", contract_id=contract_id)
+                return stale_resource_redirect(
+                    "main.contract_sessions", "time_entry_deleted", contract_id=contract_id
                 )
-            flash("This time entry was deleted.", "warning")
-            return redirect(url_for("main.dashboard"))
+            return stale_resource_redirect("main.dashboard", "time_entry_deleted")
 
         return (
             render_template(
@@ -2034,14 +2036,12 @@ def edit_time_entry(entry_id: int) -> Any:
     else:
         abort(404)
     if original_contract_id != contract_item.id:
-        flash("This time entry has been moved.", "warning")
+        notice = "time_entry_moved"
         if database.get(Contract, original_contract_id) is not None:
-            return redirect(
-                url_for(
-                    "main.contract_sessions", contract_id=original_contract_id
-                )
+            return stale_resource_redirect(
+                "main.contract_sessions", notice, contract_id=original_contract_id
             )
-        return redirect(url_for("main.dashboard"))
+        return stale_resource_redirect("main.dashboard", notice)
     client_item = contract_item.client
     previous_details = audit_time_entry_details(entry)
     previous_started_at = entry.started_at

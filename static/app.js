@@ -504,6 +504,12 @@ document.querySelectorAll(".flash").forEach((flash) => {
   }, 4500);
 });
 
+const staleNoticeUrl = new URL(window.location.href);
+if (staleNoticeUrl.searchParams.has("stale")) {
+  staleNoticeUrl.searchParams.delete("stale");
+  window.history.replaceState({}, "", staleNoticeUrl.href);
+}
+
 function datetimeLocalNow(timeZone) {
   const values = new Intl.DateTimeFormat("en-CA", {
     timeZone,
