@@ -14,7 +14,6 @@ from flask import (
     redirect,
     render_template,
     request,
-    session,
     url_for,
 )
 from flask_wtf.csrf import CSRFError, CSRFProtect
@@ -35,7 +34,6 @@ from .config import (
 from .database import init_app as init_database
 from .database import rollback_request_session, session_scope
 from .logging_config import configure_logging
-from .models import User
 from .routes import register_routes
 
 csrf = CSRFProtect()
@@ -105,7 +103,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         )
     register_request_logging(app)
     register_routes(app)
-    register_request_auditing(app)
     register_security_headers(app)
     register_error_handlers(app)
     return app
@@ -144,69 +141,6 @@ def register_request_logging(app: Flask) -> None:
                 "user_agent": request.user_agent.string[:512],
             },
         )
-        return response
-
-
-def register_request_auditing(app: Flask) -> None:
-    """Persist authenticated actions and security-relevant public actions."""
-    audit_logger = logging.getLogger("grayhaven_timetracker.audit")
-
-    @app.after_request
-    def persist_request_audit(response: Response) -> Response:
-        if request.endpoint in {"main.health", "main.branding_asset", "static"}:
-            return response
-        if (
-            request.endpoint in {"main.report_live", "main.shared_report_live"}
-            and response.status_code == 304
-        ):
-            return response
-
-        database = getattr(g, "database_session", None)
-        owns_database = database is None
-        if database is None:
-            factory = app.extensions["database_session_factory"]
-            database = factory()
-        typed_database = database
-        actor = getattr(g, "current_user", None)
-        shared_report_request = request.endpoint in {
-            "main.shared_report",
-            "main.shared_report_live",
-        }
-        if actor is None and not shared_report_request:
-            actor_id = session.get("user_id")
-            if isinstance(actor_id, int):
-                actor = typed_database.get(User, actor_id)
-        public_action = (
-            request.endpoint in {"main.login", "main.login_authenticator"}
-            and request.method == "POST"
-        ) or (shared_report_request and response.status_code != 404)
-        if actor is None and not public_action:
-            if owns_database:
-                typed_database.close()
-            return response
-        try:
-            record_audit_event(
-                typed_database,
-                "http_request",
-                source=actor.role if actor else "public",
-                actor=actor,
-                ip_address=request.remote_addr,
-                method=request.method,
-                path=safe_audit_path(request.path),
-                status_code=response.status_code,
-                user_agent=request.user_agent.string,
-                details={"endpoint": request.endpoint or "unmatched"},
-            )
-            typed_database.commit()
-        except Exception:
-            typed_database.rollback()
-            audit_logger.exception(
-                "audit persistence failed",
-                extra={"event": "audit_persistence_failed"},
-            )
-        finally:
-            if owns_database:
-                typed_database.close()
         return response
 
 

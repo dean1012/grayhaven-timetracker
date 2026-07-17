@@ -184,7 +184,9 @@ input::placeholder { color: var(--slate-grey); }
 label { display: grid; gap: .45rem; color: var(--soft-white); font-size: .86rem; font-weight: 500; }
 small { color: var(--cool-grey); font-weight: 400; }
 .task-item { margin-top: 1.5rem; padding: 1.2rem; background: color-mix(in srgb, var(--deep-graphite) 42%, transparent); border: 1px solid color-mix(in srgb, var(--charcoal-border) 78%, transparent); border-radius: var(--border-radius); }
-.task-name { min-width: 0; overflow-wrap: anywhere; }
+.task-name { display: flex; align-items: center; min-width: 0; overflow-wrap: anywhere; }
+.task-name strong { min-width: 0; }
+.task-name form, .task-name .status-pill { flex: 0 0 auto; margin-left: .45rem; }
 .task-top strong { color: var(--soft-white); font-size: 1rem; }
 .task-icon { margin-right: .65rem; color: var(--primary-accent); }
 .row-actions { display: flex; align-items: center; gap: .35rem; }
@@ -201,13 +203,17 @@ small { color: var(--cool-grey); font-weight: 400; }
 .rename-control[open] > summary { color: var(--primary-accent); background: color-mix(in srgb, var(--primary-accent) 10%, transparent); border-color: var(--charcoal-border); }
 .rename-popover { position: absolute; top: calc(100% + .6rem); right: 0; z-index: 10; display: grid; grid-template-columns: minmax(240px, 1fr) auto; align-items: end; gap: .65rem; width: 390px; padding: 1rem; background: var(--deep-graphite); border: 1px solid var(--charcoal-border); border-radius: var(--border-radius); box-shadow: var(--popover-shadow); }
 .rename-popover input { min-height: 36px; padding: .45rem .6rem; }
-.subtask-list { margin-left: 1.65rem; padding-left: 1.2rem; border-left: 1px solid var(--charcoal-border); }
-.subtask-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-height: 44px; padding: .35rem 0; }
-.subtask-row > div:first-child { display: flex; align-items: center; gap: .7rem; color: var(--soft-white); font-size: .9rem; }
-.subtask-row > div:first-child i { color: var(--cool-grey); }
+.subtask-list { position: relative; margin-left: 1.65rem; }
+.subtask-list::before { position: absolute; top: 0; bottom: 0; left: 38px; width: 1px; background: var(--charcoal-border); content: ""; }
+.subtask-row { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; column-gap: .65rem; min-height: 44px; padding: .35rem 0; }
+.subtask-timer { z-index: 1; grid-column: 1; }
+.subtask-name { display: flex; grid-column: 2; align-items: center; gap: .7rem; min-width: 0; padding-left: .55rem; color: var(--soft-white); font-size: .9rem; }
+.subtask-name i { flex: 0 0 auto; color: var(--cool-grey); }
+.subtask-name span { min-width: 0; overflow-wrap: anywhere; }
+.subtask-row .row-actions { grid-column: 3; }
+.subtask-running { display: inline-grid; place-items: center; width: 32px; height: 32px; padding: 0; color: var(--alert-error); background: transparent; }
 .subtask-empty { margin: .8rem 0; font-size: .82rem; }
-.subtask-add { margin-top: .75rem; }
-.subtask-add > i { color: var(--cool-grey); }
+.subtask-add { margin-top: .75rem; margin-left: 46px; }
 .subtask-add input { width: 245px; min-height: 34px; font-size: .82rem; }
 .empty-state { padding: 4rem; text-align: center; }
 .empty-state i { margin-bottom: 1rem; color: var(--light-surface-accent); font-size: 2rem; }
@@ -390,9 +396,10 @@ small { color: var(--cool-grey); font-weight: 400; }
   .active-timer-actions { flex-wrap: wrap; }
   .timer-elapsed { margin-right: auto; text-align: left; }
   .task-top { align-items: flex-start; }
-  .subtask-list { margin-left: .35rem; padding-left: .85rem; }
-  .subtask-row { align-items: flex-start; flex-wrap: wrap; }
-  .subtask-row .row-actions { margin-left: auto; }
+  .subtask-list { margin-left: .35rem; }
+  .subtask-list::before { left: 38px; }
+  .subtask-row { align-items: start; }
+  .subtask-row .row-actions { justify-self: end; }
   .subtask-add input { width: auto; min-width: 0; flex: 1; }
   .rename-popover { position: fixed; top: 30%; right: 1rem; left: 1rem; width: auto; }
   .auth-panel { width: 100%; padding: 2rem; }
@@ -428,8 +435,7 @@ small { color: var(--cool-grey); font-weight: 400; }
   :root { --container-padding: .8rem; }
   h1 { font-size: 1.75rem; }
   .client-card, .task-panel, .contract-directory, .user-directory, .session-directory, .audit-directory, .form-panel, .report-panel { padding: 1rem; }
-  .inline-form, .subtask-add { align-items: stretch; flex-direction: column; }
-  .inline-form .button { width: 100%; }
+  .subtask-add { align-items: stretch; flex-direction: column; margin-left: 46px; }
   .active-timer-context { align-items: flex-start; flex-direction: column; }
   .active-timer-context i { display: none; }
   .report-header img { width: 145px; }

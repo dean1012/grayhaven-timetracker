@@ -32,7 +32,7 @@
   <div class="audit-summary"><span>{{ total }} event{{ '' if total == 1 else 's' }}</span><span>Page {{ page }} of {{ page_count }}</span></div>
   <div class="table-scroll">
     <table class="data-table audit-table">
-      <thead><tr><th>Time</th><th>Source</th><th>Actor</th><th>Action</th><th>Request</th><th>Details</th></tr></thead>
+      <thead><tr><th>Time</th><th>Source</th><th>Actor</th><th>Action</th><th>Details</th></tr></thead>
       <tbody>
       {% for item in items %}
         <tr>
@@ -40,11 +40,10 @@
           <td><span class="status-pill audit-source audit-source-{{ item.source }}">{{ item.source|title }}</span></td>
           <td>{% if item.actor_name %}{{ item.actor_name }}<small class="table-note">{{ item.actor_email }}</small>{% else %}<span class="muted">{{ 'Application' if item.source == 'system' else 'Unauthenticated' }}</span>{% endif %}</td>
           <td><strong>{{ item.event.replace('_', ' ')|title }}</strong></td>
-          <td>{% if item.method %}<span class="audit-request-method">{{ item.method }}</span> <code>{{ item.path }}</code><small class="table-note">HTTP {{ item.status_code if item.status_code else '—' }}{% if item.ip_address %} · {{ item.ip_address }}{% endif %}</small>{% else %}<span class="muted">System event</span>{% endif %}</td>
           <td>{% if item.details %}<dl class="audit-details">{% for key, value in item.details.items() %}<div><dt>{{ key.replace('_', ' ') }}</dt><dd>{{ value if value is not none else '—' }}</dd></div>{% endfor %}</dl>{% else %}<span class="muted">—</span>{% endif %}</td>
         </tr>
       {% else %}
-        <tr><td colspan="6">No audit events match the selected filters.</td></tr>
+        <tr><td colspan="5">No audit events match the selected filters.</td></tr>
       {% endfor %}
       </tbody>
     </table>

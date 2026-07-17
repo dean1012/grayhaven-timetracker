@@ -33,7 +33,7 @@ from flask import (
     url_for,
 )
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -73,9 +73,11 @@ from .models import (
 from .permissions import (
     AUDIT_VIEW,
     CLIENT_ADD,
+    CLIENT_DELETE,
     CLIENT_EDIT,
     CLIENT_VIEW,
     CONTRACT_ADD,
+    CONTRACT_DELETE,
     CONTRACT_EDIT,
     CONTRACT_VIEW,
     REPORT_GENERATE,
@@ -237,17 +239,12 @@ def audit(event: str, **fields: Any) -> None:
         candidate_id = actor_id if isinstance(actor_id, int) else fields.get("user_id")
         if isinstance(candidate_id, int):
             actor = database.get(User, candidate_id)
-    ip_address = fields.pop("ip", None) or request.remote_addr
     try:
         record_audit_event(
             database,
             event,
             source=actor.role if actor else "public",
             actor=actor,
-            ip_address=str(ip_address) if ip_address else None,
-            method=request.method,
-            path=request.path,
-            user_agent=request.user_agent.string,
             details=fields,
         )
         database.commit()
@@ -347,6 +344,61 @@ def sensitive_action_credentials_valid(user: User) -> bool:
 def sensitive_action_rate_key(user: User) -> str:
     """Scope administrator reauthentication limits to actor and source IP."""
     return f"{user.id}|{request.remote_addr or 'unknown'}"
+
+
+def audit_object_label(name: str, identifier: int) -> str:
+    """Render one deleted or affected object without requiring a follow-up lookup."""
+    return f"{name} (ID: {identifier})"
+
+
+def sensitive_action_failure(
+    actor: User,
+    confirmation: dict[str, Any],
+    event: str,
+    **details: Any,
+) -> Any | None:
+    """Return a reauthentication failure response or clear a valid challenge."""
+    rate_key = sensitive_action_rate_key(actor)
+    if sensitive_action_limiter.blocked(rate_key):
+        audit(f"{event}_rate_limited", actor_id=actor.id, **details)
+        abort(429)
+    if sensitive_action_credentials_valid(actor):
+        sensitive_action_limiter.clear(rate_key)
+        return None
+    sensitive_action_limiter.record_failure(rate_key)
+    audit(f"{event}_rejected", actor_id=actor.id, **details)
+    flash("The administrator credentials were not accepted.", "error")
+    return render_template("sensitive_action_form.html", **confirmation), 400
+
+
+def purge_subtask_data(subtask_id: int) -> int:
+    """Delete one subtask and its time records, never its audit history."""
+    database = get_session()
+    deleted_time = database.execute(
+        delete(TimeEntry).where(TimeEntry.subtask_id == subtask_id)
+    ).rowcount
+    database.execute(delete(Subtask).where(Subtask.id == subtask_id))
+    return deleted_time or 0
+
+
+def purge_task_data(task_ids: Any) -> int:
+    """Delete tasks, their subtasks, and their time records without audit loss."""
+    database = get_session()
+    deleted_time = database.execute(
+        delete(TimeEntry).where(TimeEntry.task_id.in_(task_ids))
+    ).rowcount
+    database.execute(delete(Subtask).where(Subtask.task_id.in_(task_ids)))
+    database.execute(delete(Task).where(Task.id.in_(task_ids)))
+    return deleted_time or 0
+
+
+def purge_contract_data(contract_ids: Any) -> int:
+    """Delete contracts and dependent work data without deleting audit events."""
+    database = get_session()
+    task_ids = select(Task.id).where(Task.contract_id.in_(contract_ids))
+    deleted_time = purge_task_data(task_ids)
+    database.execute(delete(Contract).where(Contract.id.in_(contract_ids)))
+    return deleted_time
 
 
 def shared_report_url(token: str) -> str:
@@ -862,6 +914,50 @@ def edit_client(client_id: int) -> Any:
     return redirect(url_for("main.client", client_id=item.id))
 
 
+@main.route("/clients/<int:client_id>/delete", methods=["GET", "POST"])
+@permission_required(CLIENT_DELETE)
+def delete_client(client_id: int) -> Any:
+    """Delete a client and dependent work data after administrator reauthentication."""
+    database = get_session()
+    item = cast(Client, get_or_404(Client, client_id))
+    actor = cast(User, current_user())
+    confirmation = {
+        "eyebrow": "DELETE CLIENT",
+        "title": item.name,
+        "description": (
+            "Delete this client, all contracts, tasks, subtasks, and recorded "
+            "time. Audit history is retained. This cannot be undone."
+        ),
+        "submit_label": "Delete Client",
+        "cancel_url": url_for("main.client", client_id=item.id),
+        "breadcrumb_parent_label": item.name,
+        "breadcrumb_parent_url": url_for("main.client", client_id=item.id),
+        "breadcrumb_label": "Delete Client",
+        "totp_required": bool(actor.totp_secret),
+    }
+    if request.method != "POST":
+        return render_template("sensitive_action_form.html", **confirmation)
+    client_label = audit_object_label(item.name, item.id)
+    failure = sensitive_action_failure(
+        actor, confirmation, "client_delete", client=client_label
+    )
+    if failure is not None:
+        return failure
+    deleted_time = purge_contract_data(
+        select(Contract.id).where(Contract.client_id == item.id)
+    )
+    database.execute(delete(Client).where(Client.id == item.id))
+    database.commit()
+    audit(
+        "client_deleted",
+        actor_id=actor.id,
+        client=client_label,
+        deleted_time_entries=deleted_time,
+    )
+    flash("Client and associated work data deleted.", "success")
+    return redirect(url_for("main.dashboard"))
+
+
 @main.route("/clients/<int:client_id>/report-password/reset", methods=["GET", "POST"])
 @permission_required(REPORT_SHARE)
 def reset_client_report_password(client_id: int) -> Any:
@@ -1052,6 +1148,58 @@ def edit_contract(contract_id: int) -> Any:
     return redirect(url_for("main.contract", contract_id=item.id))
 
 
+@main.route("/contracts/<int:contract_id>/delete", methods=["GET", "POST"])
+@permission_required(CONTRACT_DELETE)
+def delete_contract(contract_id: int) -> Any:
+    """Delete a contract and its work data after administrator reauthentication."""
+    database = get_session()
+    item = cast(Contract, get_or_404(Contract, contract_id))
+    actor = cast(User, current_user())
+    client_id = item.client_id
+    client_name = item.client.name
+    contract_name = item.name
+    confirmation = {
+        "eyebrow": "DELETE CONTRACT",
+        "title": item.name,
+        "description": (
+            "Delete this contract, all tasks, subtasks, and recorded time. Audit "
+            "history is retained. This cannot be undone."
+        ),
+        "submit_label": "Delete Contract",
+        "cancel_url": url_for("main.contract", contract_id=item.id),
+        "breadcrumb_parent_label": client_name,
+        "breadcrumb_parent_url": url_for("main.client", client_id=client_id),
+        "breadcrumb_label": "Delete Contract",
+        "totp_required": bool(actor.totp_secret),
+    }
+    if request.method != "POST":
+        return render_template("sensitive_action_form.html", **confirmation)
+    client_label = audit_object_label(client_name, client_id)
+    contract_label = audit_object_label(contract_name, item.id)
+    failure = sensitive_action_failure(
+        actor,
+        confirmation,
+        "contract_delete",
+        client=client_label,
+        contract=contract_label,
+    )
+    if failure is not None:
+        return failure
+    deleted_time = purge_contract_data(
+        select(Contract.id).where(Contract.id == item.id)
+    )
+    database.commit()
+    audit(
+        "contract_deleted",
+        actor_id=actor.id,
+        client=client_label,
+        contract=contract_label,
+        deleted_time_entries=deleted_time,
+    )
+    flash("Contract and associated work data deleted.", "success")
+    return redirect(url_for("main.client", client_id=client_id))
+
+
 @main.get("/contracts/<int:contract_id>")
 @permission_required(CONTRACT_VIEW)
 def contract(contract_id: int) -> str:
@@ -1214,16 +1362,18 @@ def delete_task(task_id: int) -> Any:
     actor = cast(User, current_user())
     if not actor.is_admin:
         abort(403)
-    has_time = database.scalar(
-        select(func.count(TimeEntry.id)).where(TimeEntry.task_id == task.id)
-    )
-    if has_time:
-        abort(409, "Tasks with recorded time cannot be deleted.")
+    client_name = task.contract.client.name
+    contract_name = task.contract.name
+    contract_id = task.contract_id
+    task_label = audit_object_label(task.name, task.id)
+    contract_label = audit_object_label(contract_name, contract_id)
+    client_label = audit_object_label(client_name, task.contract.client_id)
     confirmation = {
         "eyebrow": "DELETE TASK",
         "title": task.name,
         "description": (
-            "Delete this task and all of its subtasks. This cannot be undone."
+            "Delete this task, all subtasks, and recorded time. Audit history is "
+            "retained. This cannot be undone."
         ),
         "submit_label": "Delete Task",
         "cancel_url": url_for("main.contract", contract_id=task.contract_id),
@@ -1234,27 +1384,25 @@ def delete_task(task_id: int) -> Any:
     }
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
-    rate_key = sensitive_action_rate_key(actor)
-    if sensitive_action_limiter.blocked(rate_key):
-        abort(429)
-    if not sensitive_action_credentials_valid(actor):
-        sensitive_action_limiter.record_failure(rate_key)
-        audit("task_delete_rejected", actor_id=actor.id, task_id=task.id)
-        flash("The administrator credentials were not accepted.", "error")
-        return render_template("sensitive_action_form.html", **confirmation), 400
-    sensitive_action_limiter.clear(rate_key)
-    contract_id = task.contract_id
-    database.delete(task)
-    try:
-        database.commit()
-    except IntegrityError:
-        database.rollback()
-        abort(409, "Tasks with recorded time cannot be deleted.")
+    failure = sensitive_action_failure(
+        actor,
+        confirmation,
+        "task_delete",
+        client=client_label,
+        contract=contract_label,
+        task=task_label,
+    )
+    if failure is not None:
+        return failure
+    deleted_time = purge_task_data(select(Task.id).where(Task.id == task.id))
+    database.commit()
     audit(
         "task_deleted",
         actor_id=actor.id,
-        contract_id=contract_id,
-        task_id=task_id,
+        client=client_label,
+        contract=contract_label,
+        task=task_label,
+        deleted_time_entries=deleted_time,
     )
     flash("Task deleted.", "success")
     return redirect(url_for("main.contract", contract_id=contract_id))
@@ -1268,16 +1416,21 @@ def delete_subtask(subtask_id: int) -> Any:
     actor = cast(User, current_user())
     if not actor.is_admin:
         abort(403)
-    has_time = database.scalar(
-        select(func.count(TimeEntry.id)).where(TimeEntry.subtask_id == subtask.id)
-    )
-    if has_time:
-        abort(409, "Subtasks with recorded time cannot be deleted.")
     contract_id = subtask.task.contract_id
+    client_name = subtask.task.contract.client.name
+    contract_name = subtask.task.contract.name
+    task_name = subtask.task.name
+    client_label = audit_object_label(client_name, subtask.task.contract.client_id)
+    contract_label = audit_object_label(contract_name, contract_id)
+    task_label = audit_object_label(task_name, subtask.task_id)
+    subtask_label = audit_object_label(subtask.name, subtask.id)
     confirmation = {
         "eyebrow": "DELETE SUBTASK",
         "title": subtask.name,
-        "description": "Delete this subtask. This cannot be undone.",
+        "description": (
+            "Delete this subtask and recorded time. Audit history is retained. "
+            "This cannot be undone."
+        ),
         "submit_label": "Delete Subtask",
         "cancel_url": url_for("main.contract", contract_id=contract_id),
         "breadcrumb_parent_label": subtask.task.contract.name,
@@ -1287,27 +1440,27 @@ def delete_subtask(subtask_id: int) -> Any:
     }
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
-    rate_key = sensitive_action_rate_key(actor)
-    if sensitive_action_limiter.blocked(rate_key):
-        abort(429)
-    if not sensitive_action_credentials_valid(actor):
-        sensitive_action_limiter.record_failure(rate_key)
-        audit("subtask_delete_rejected", actor_id=actor.id, subtask_id=subtask.id)
-        flash("The administrator credentials were not accepted.", "error")
-        return render_template("sensitive_action_form.html", **confirmation), 400
-    sensitive_action_limiter.clear(rate_key)
-    database.delete(subtask)
-    try:
-        database.commit()
-    except IntegrityError:
-        database.rollback()
-        abort(409, "Subtasks with recorded time cannot be deleted.")
+    failure = sensitive_action_failure(
+        actor,
+        confirmation,
+        "subtask_delete",
+        client=client_label,
+        contract=contract_label,
+        task=task_label,
+        subtask=subtask_label,
+    )
+    if failure is not None:
+        return failure
+    deleted_time = purge_subtask_data(subtask.id)
+    database.commit()
     audit(
         "subtask_deleted",
         actor_id=actor.id,
-        contract_id=contract_id,
-        task_id=subtask.task_id,
-        subtask_id=subtask_id,
+        client=client_label,
+        contract=contract_label,
+        task=task_label,
+        subtask=subtask_label,
+        deleted_time_entries=deleted_time,
     )
     flash("Subtask deleted.", "success")
     return redirect(url_for("main.contract", contract_id=contract_id))
