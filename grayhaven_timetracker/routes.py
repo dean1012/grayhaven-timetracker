@@ -915,6 +915,7 @@ def complete_login(user: User, ip: str, next_url: str | None) -> Any:
     session["authenticated_at"] = now_utc_timestamp()
     session["user_id"] = user.id
     session["session_version"] = user.session_version
+    session["user_role"] = user.role
     audit("login_succeeded", user_id=user.id, source_ip=ip)
     if user.password_change_required:
         return redirect(url_for("main.required_password_change"))
@@ -2810,6 +2811,7 @@ def toggle_user_admin(user_id: int) -> Any:
     sensitive_action_limiter.clear(rate_key)
     previous_role = user.role
     user.role = "user" if user.role == "admin" else "admin"
+    user.session_version += 1
     try:
         database.commit()
     except IntegrityError:

@@ -221,6 +221,11 @@ def load_current_user() -> None:
     now = now_utc_timestamp()
     maximum_age = current_app.permanent_session_lifetime.total_seconds()
     user = get_session().get(User, user_id)
+    privileges_updated = (
+        user is not None
+        and session.get("session_version") != user.session_version
+        and session.get("user_role") != user.role
+    )
     if (
         user is None
         or not user.is_enabled
@@ -230,6 +235,8 @@ def load_current_user() -> None:
         or session.get("session_version") != user.session_version
     ):
         session.clear()
+        if privileges_updated:
+            session["auth_notice"] = "privileges_updated"
         g.current_user = None
         return
     g.current_user = user

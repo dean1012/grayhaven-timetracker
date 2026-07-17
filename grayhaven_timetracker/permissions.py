@@ -6,7 +6,7 @@ from collections.abc import Callable
 from functools import wraps
 from typing import ParamSpec, TypeVar, cast
 
-from flask import abort, redirect, request, url_for
+from flask import abort, redirect, request, session, url_for
 
 from .auth import current_user
 
@@ -110,7 +110,10 @@ def permission_required(permission: str) -> Callable[[Callable[P, R]], Callable[
         def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
             if current_user() is None:
                 next_path = request.full_path.rstrip("?")
-                return cast(R, redirect(url_for("main.login", next=next_path)))
+                login_values = {"next": next_path}
+                if session.get("auth_notice") == "privileges_updated":
+                    login_values["auth_notice"] = "privileges_updated"
+                return cast(R, redirect(url_for("main.login", **login_values)))
             if not can(permission):
                 abort(403)
             return view(*args, **kwargs)
