@@ -2706,7 +2706,7 @@ def reset_user_password(user_id: int) -> Any:
     )
 
 
-@main.post("/users/<int:user_id>/toggle-enabled")
+@main.route("/users/<int:user_id>/toggle-enabled", methods=["GET", "POST"])
 @permission_required(USER_EDIT)
 def toggle_user_enabled(user_id: int) -> Any:
     database = get_session()
@@ -2714,6 +2714,33 @@ def toggle_user_enabled(user_id: int) -> Any:
     user = cast(User, get_or_404(User, user_id))
     if user.id == actor.id:
         abort(409, "Administrators cannot disable their current account.")
+    confirmation = {
+        "eyebrow": "DISABLE USER" if user.is_enabled else "ENABLE USER",
+        "title": user.full_name,
+        "description": (
+            "Disable this user and stop any active timer?"
+            if user.is_enabled
+            else "Enable this user and allow sign-in again?"
+        ),
+        "submit_label": "Disable User" if user.is_enabled else "Enable User",
+        "cancel_url": url_for("main.users"),
+        "breadcrumb_parent_label": "Users",
+        "breadcrumb_parent_url": url_for("main.users"),
+        "breadcrumb_label": "Disable User" if user.is_enabled else "Enable User",
+        "totp_required": bool(actor.totp_secret),
+    }
+    if request.method != "POST":
+        return render_template("sensitive_action_form.html", **confirmation)
+    rate_key = sensitive_action_rate_key(actor)
+    if sensitive_action_limiter.blocked(rate_key):
+        audit("user_enabled_change_rate_limited", actor_id=actor.id, user_id=user.id, source_ip=request.remote_addr)
+        abort(429)
+    if not sensitive_action_credentials_valid(actor):
+        sensitive_action_limiter.record_failure(rate_key)
+        audit("user_enabled_change_rejected", actor_id=actor.id, user_id=user.id, source_ip=request.remote_addr)
+        flash("The administrator credentials were not accepted.", "error")
+        return render_template("sensitive_action_form.html", **confirmation), 400
+    sensitive_action_limiter.clear(rate_key)
     previous_enabled = user.is_enabled
     user.is_enabled = not user.is_enabled
     user.session_version += 1
@@ -2734,12 +2761,14 @@ def toggle_user_enabled(user_id: int) -> Any:
         "user_enabled" if user.is_enabled else "user_disabled",
         actor_id=actor.id,
         user_id=user.id,
+        source_ip=request.remote_addr,
         changes=audit_changes(enabled=(previous_enabled, user.is_enabled)),
     )
+    flash("User enabled." if user.is_enabled else "User disabled.", "success")
     return redirect(url_for("main.users"))
 
 
-@main.post("/users/<int:user_id>/toggle-admin")
+@main.route("/users/<int:user_id>/toggle-admin", methods=["GET", "POST"])
 @permission_required(USER_EDIT)
 def toggle_user_admin(user_id: int) -> Any:
     database = get_session()
@@ -2747,6 +2776,34 @@ def toggle_user_admin(user_id: int) -> Any:
     user = cast(User, get_or_404(User, user_id))
     if user.id == actor.id:
         abort(409, "Administrators cannot change their current role.")
+    promoting = not user.is_admin
+    confirmation = {
+        "eyebrow": "PROMOTE USER" if promoting else "DEMOTE ADMINISTRATOR",
+        "title": user.full_name,
+        "description": (
+            "Promote this user to administrator?"
+            if promoting
+            else "Demote this administrator to a standard user?"
+        ),
+        "submit_label": "Promote User" if promoting else "Demote User",
+        "cancel_url": url_for("main.users"),
+        "breadcrumb_parent_label": "Users",
+        "breadcrumb_parent_url": url_for("main.users"),
+        "breadcrumb_label": "Promote User" if promoting else "Demote User",
+        "totp_required": bool(actor.totp_secret),
+    }
+    if request.method != "POST":
+        return render_template("sensitive_action_form.html", **confirmation)
+    rate_key = sensitive_action_rate_key(actor)
+    if sensitive_action_limiter.blocked(rate_key):
+        audit("user_role_change_rate_limited", actor_id=actor.id, user_id=user.id, source_ip=request.remote_addr)
+        abort(429)
+    if not sensitive_action_credentials_valid(actor):
+        sensitive_action_limiter.record_failure(rate_key)
+        audit("user_role_change_rejected", actor_id=actor.id, user_id=user.id, source_ip=request.remote_addr)
+        flash("The administrator credentials were not accepted.", "error")
+        return render_template("sensitive_action_form.html", **confirmation), 400
+    sensitive_action_limiter.clear(rate_key)
     previous_role = user.role
     user.role = "user" if user.role == "admin" else "admin"
     try:
@@ -2758,8 +2815,10 @@ def toggle_user_admin(user_id: int) -> Any:
         "user_role_changed",
         actor_id=actor.id,
         user_id=user.id,
+        source_ip=request.remote_addr,
         changes=audit_changes(role=(previous_role, user.role)),
     )
+    flash("User promoted to administrator." if user.is_admin else "User demoted to standard user.", "success")
     return redirect(url_for("main.users"))
 
 
