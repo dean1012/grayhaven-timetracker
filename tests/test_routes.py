@@ -397,6 +397,12 @@ class AuditRouteTests(AppTestCase):
                 )
             )
             self.assertFalse(any(item.event == "http_request" for item in events))
+            record_audit_event(
+                database,
+                "http_request",
+                source="public",
+                details={"endpoint": "legacy"},
+            )
             for index in range(55):
                 record_audit_event(
                     database,
@@ -409,6 +415,7 @@ class AuditRouteTests(AppTestCase):
         filtered = self.client.get("/audit?source=system&event=pagination_test&page=2")
         self.assertEqual(filtered.status_code, 200)
         self.assertIn(b"Page 2 of 2", filtered.data)
+        self.assertNotIn(b"Http Request", self.client.get("/audit").data)
         self.assertEqual(
             self.client.get(f"/audit?actor={admin_id}").status_code,
             200,

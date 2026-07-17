@@ -2081,7 +2081,9 @@ def audit_log() -> str:
     if page < 1 or (actor_id is not None and actor_id < 1):
         abort(400)
 
-    conditions = []
+    # Request telemetry belongs to Nginx. Preserve historical rows in storage
+    # without presenting them as application audit actions.
+    conditions = [AuditEvent.event != "http_request"]
     if source_filter:
         conditions.append(AuditEvent.source == source_filter)
     if event_filter:
@@ -2097,7 +2099,10 @@ def audit_log() -> str:
     if page > page_count:
         abort(404)
     events = database.scalars(
-        select(AuditEvent.event).distinct().order_by(AuditEvent.event)
+        select(AuditEvent.event)
+        .where(AuditEvent.event != "http_request")
+        .distinct()
+        .order_by(AuditEvent.event)
     ).all()
     actors = database.scalars(
         select(User).order_by(User.last_name, User.first_name, User.id)
