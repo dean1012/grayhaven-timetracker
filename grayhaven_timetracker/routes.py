@@ -2471,7 +2471,10 @@ def users() -> str:
         get_session()
         .scalars(
             select(User).order_by(
-                User.is_enabled.desc(), User.last_name, User.first_name
+                User.is_enabled.desc(),
+                func.lower(User.last_name),
+                func.lower(User.first_name),
+                User.id,
             )
         )
         .all()
