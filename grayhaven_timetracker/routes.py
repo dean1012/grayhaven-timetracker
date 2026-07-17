@@ -121,6 +121,8 @@ sensitive_action_limiter = LoginLimiter()
 REPORT_PASSWORD_CONFIRMATION_TTL_SECONDS = 120
 AUDIT_SOURCES = frozenset({"admin", "user", "public", "system"})
 AUDIT_PAGE_SIZE = 50
+USER_PAGE_SIZE = 25
+SESSION_PAGE_SIZE = 25
 HIDDEN_AUDIT_EVENTS = frozenset(
     {"audit_log_viewed", "bootstrap_user_reconciled", "http_request"}
 )
@@ -1948,6 +1950,12 @@ def new_time_entry(contract_id: int) -> Any:
 def contract_sessions(contract_id: int) -> str:
     if not (can(TIME_ENTRY_VIEW_OWN) or can(TIME_ENTRY_VIEW_ANY)):
         abort(403)
+    try:
+        page = int(request.args.get("page", "1"))
+    except ValueError:
+        abort(400)
+    if page < 1:
+        abort(400)
     contract_item = get_session().scalar(
         select(Contract)
         .where(Contract.id == contract_id)
@@ -1955,20 +1963,37 @@ def contract_sessions(contract_id: int) -> str:
     )
     if contract_item is None:
         abort(404)
+    conditions = [Task.contract_id == contract_id]
+    if not can(TIME_ENTRY_VIEW_ANY):
+        conditions.append(TimeEntry.user_id == cast(User, current_user()).id)
+    database = get_session()
+    total = int(
+        database.scalar(
+            select(func.count(TimeEntry.id))
+            .join(TimeEntry.task)
+            .where(*conditions)
+        )
+        or 0
+    )
+    page_count = max(1, (total + SESSION_PAGE_SIZE - 1) // SESSION_PAGE_SIZE)
+    if page > page_count:
+        return redirect(
+            url_for("main.contract_sessions", contract_id=contract_id, page=page_count)
+        )
     statement = (
         select(TimeEntry)
         .join(TimeEntry.task)
-        .where(Task.contract_id == contract_id)
+        .where(*conditions)
         .options(
             selectinload(TimeEntry.user),
             selectinload(TimeEntry.task),
             selectinload(TimeEntry.subtask),
         )
         .order_by(TimeEntry.started_at.desc(), TimeEntry.id.desc())
+        .offset((page - 1) * SESSION_PAGE_SIZE)
+        .limit(SESSION_PAGE_SIZE)
     )
-    if not can(TIME_ENTRY_VIEW_ANY):
-        statement = statement.where(TimeEntry.user_id == cast(User, current_user()).id)
-    entries = get_session().scalars(statement).all()
+    entries = database.scalars(statement).all()
     snapshot_at = now_utc()
     session_rows = [
         {
@@ -1987,7 +2012,20 @@ def contract_sessions(contract_id: int) -> str:
         "sessions.html",
         contract=contract_item,
         session_rows=session_rows,
+        total=total,
         show_users=can(TIME_ENTRY_VIEW_ANY),
+        page=page,
+        page_count=page_count,
+        previous_url=(
+            url_for("main.contract_sessions", contract_id=contract_id, page=page - 1)
+            if page > 1
+            else None
+        ),
+        next_url=(
+            url_for("main.contract_sessions", contract_id=contract_id, page=page + 1)
+            if page < page_count
+            else None
+        ),
         timezone_info=ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"])),
     )
 
@@ -2467,19 +2505,41 @@ def disable_totp() -> Any:
 @main.get("/users")
 @permission_required(USER_VIEW)
 def users() -> str:
-    user_list = (
-        get_session()
-        .scalars(
-            select(User).order_by(
-                User.is_enabled.desc(),
-                func.lower(User.last_name),
-                func.lower(User.first_name),
-                User.id,
-            )
+    try:
+        page = int(request.args.get("page", "1"))
+    except ValueError:
+        abort(400)
+    if page < 1:
+        abort(400)
+    database = get_session()
+    total = int(database.scalar(select(func.count(User.id))) or 0)
+    page_count = max(1, (total + USER_PAGE_SIZE - 1) // USER_PAGE_SIZE)
+    if page > page_count:
+        return redirect(url_for("main.users", page=page_count))
+    user_list = database.scalars(
+        select(User)
+        .order_by(
+            User.is_enabled.desc(),
+            func.lower(User.last_name),
+            func.lower(User.first_name),
+            User.id,
         )
-        .all()
+        .offset((page - 1) * USER_PAGE_SIZE)
+        .limit(USER_PAGE_SIZE)
+    ).all()
+    return render_template(
+        "users.html",
+        users=user_list,
+        total=total,
+        page=page,
+        page_count=page_count,
+        previous_url=(
+            url_for("main.users", page=page - 1) if page > 1 else None
+        ),
+        next_url=(
+            url_for("main.users", page=page + 1) if page < page_count else None
+        ),
     )
-    return render_template("users.html", users=user_list)
 
 
 @main.get("/audit")
@@ -2521,8 +2581,19 @@ def audit_log() -> str:
         database.scalar(select(func.count(AuditEvent.id)).where(*conditions)) or 0
     )
     page_count = max(1, (total + AUDIT_PAGE_SIZE - 1) // AUDIT_PAGE_SIZE)
+    query_parameters: dict[str, Any] = {
+        key: value
+        for key, value in {
+            "source": source_filter,
+            "event": event_filter,
+            "actor": actor_filter,
+        }.items()
+        if value
+    }
     if page > page_count:
-        abort(404)
+        return redirect(
+            url_for("main.audit_log", page=page_count, **query_parameters)
+        )
     events = database.scalars(
         select(AuditEvent.event)
         .where(AuditEvent.event.not_in(HIDDEN_AUDIT_EVENTS))
@@ -2539,15 +2610,6 @@ def audit_log() -> str:
         .offset((page - 1) * AUDIT_PAGE_SIZE)
         .limit(AUDIT_PAGE_SIZE)
     ).all()
-    query_parameters: dict[str, Any] = {
-        key: value
-        for key, value in {
-            "source": source_filter,
-            "event": event_filter,
-            "actor": actor_filter,
-        }.items()
-        if value
-    }
     return render_template(
         "audit_log.html",
         items=items,

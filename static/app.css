@@ -296,8 +296,9 @@ small { color: var(--cool-grey); font-weight: 400; }
 .audit-table code { color: var(--cool-grey); overflow-wrap: anywhere; }
 .audit-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: 1rem; margin-bottom: 1.25rem; }
 .audit-filter-actions { display: flex; gap: .65rem; }
-.audit-summary, .pagination { display: flex; align-items: center; justify-content: space-between; gap: 1rem; color: var(--cool-grey); font-size: .82rem; }
+.audit-summary, .table-summary, .pagination { display: flex; align-items: center; justify-content: space-between; gap: 1rem; color: var(--cool-grey); font-size: .82rem; }
 .audit-summary { padding: .8rem 0; border-top: 1px solid var(--charcoal-border); }
+.table-summary { padding: .8rem 0; }
 .pagination { margin-top: 1.25rem; }
 .audit-source { min-width: 4.5rem; text-align: center; }
 .audit-source-admin { background: color-mix(in srgb, var(--alert-error) 15%, transparent); }

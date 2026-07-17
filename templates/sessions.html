@@ -16,6 +16,7 @@
   {% if can('time_entry:add_own') or can('time_entry:add_any') %}<a class="icon-button accent" href="{{ url_for('main.new_time_entry', contract_id=contract.id) }}" title="New Session" aria-label="New Session"><i class="fa-solid fa-plus" aria-hidden="true"></i></a>{% endif %}
 </section>
 <section class="panel session-directory" data-live-region="contract-sessions">
+  <div class="table-summary"><span>{{ total }} session{{ '' if total == 1 else 's' }}</span><span>Page {{ page }} of {{ page_count }}</span></div>
   <div class="table-scroll">
     <table class="data-table session-table">
       <thead><tr>{% if show_users %}<th>User</th>{% endif %}<th>Task / Subtask</th><th>Start</th><th>End</th><th>Duration</th><th>Actions</th></tr></thead>
@@ -36,5 +37,6 @@
       </tbody>
     </table>
   </div>
+  {% if previous_url or next_url %}<nav class="pagination" aria-label="Session pages">{% if previous_url %}<a class="button button-secondary" href="{{ previous_url }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ page }} of {{ page_count }}</span>{% if next_url %}<a class="button button-secondary" href="{{ next_url }}">Next <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></a>{% else %}<span></span>{% endif %}</nav>{% endif %}
 </section>
 {% endblock %}

@@ -6,6 +6,7 @@
   {% if can('user:add') %}<a class="icon-button accent" href="{{ url_for('main.new_user') }}" title="New User" aria-label="New User"><i class="fa-solid fa-user-plus" aria-hidden="true"></i></a>{% endif %}
 </section>
 <section class="panel user-directory" data-live-region="user-directory">
+  <div class="table-summary"><span>{{ total }} user{{ '' if total == 1 else 's' }}</span><span>Page {{ page }} of {{ page_count }}</span></div>
   <div class="table-scroll">
     <table class="data-table user-table">
       <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>TOTP</th><th>Status</th><th>Actions</th></tr></thead>
@@ -32,5 +33,6 @@
       </tbody>
     </table>
   </div>
+  {% if previous_url or next_url %}<nav class="pagination" aria-label="User pages">{% if previous_url %}<a class="button button-secondary" href="{{ previous_url }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ page }} of {{ page_count }}</span>{% if next_url %}<a class="button button-secondary" href="{{ next_url }}">Next <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></a>{% else %}<span></span>{% endif %}</nav>{% endif %}
 </section>
 {% endblock %}
