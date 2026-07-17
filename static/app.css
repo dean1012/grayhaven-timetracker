@@ -204,7 +204,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .rename-popover { position: absolute; top: calc(100% + .6rem); right: 0; z-index: 10; display: grid; grid-template-columns: minmax(240px, 1fr) auto; align-items: end; gap: .65rem; width: 390px; padding: 1rem; background: var(--deep-graphite); border: 1px solid var(--charcoal-border); border-radius: var(--border-radius); box-shadow: var(--popover-shadow); }
 .rename-popover input { min-height: 36px; padding: .45rem .6rem; }
 .subtask-list { margin-left: 1.65rem; }
-.subtask-row { display: grid; grid-template-columns: minmax(32px, max-content) minmax(0, 1fr) auto; align-items: center; column-gap: .65rem; min-height: 44px; padding: .35rem 0; }
+.subtask-row { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; column-gap: .65rem; min-height: 44px; padding: .35rem 0; }
 .subtask-timer { display: flex; grid-column: 1; align-items: center; min-height: 32px; padding-right: .65rem; border-right: 1px solid var(--charcoal-border); }
 .subtask-name { display: flex; grid-column: 2; align-items: center; gap: .7rem; min-width: 0; color: var(--soft-white); font-size: .9rem; }
 .subtask-name span { min-width: 0; overflow-wrap: anywhere; }
