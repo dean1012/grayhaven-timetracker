@@ -2,15 +2,15 @@
 {% block title %}{{ client.name }} · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block breadcrumbs %}
 <nav class="breadcrumbs" aria-label="Breadcrumb">
-  <ol><li aria-current="page">{{ client.name }}</li></ol>
+  <ol><li aria-current="page"><span class="breadcrumb-label" title="{{ client.name }}">{{ client.name }}</span></li></ol>
 </nav>
 {% endblock %}
 {% block content %}
 <section class="page-heading">
   <div>
     <p class="eyebrow">CLIENT</p>
-    <h1>{{ client.name }}</h1>
-    <p class="muted contact-line"><i class="fa-solid fa-address-card" aria-hidden="true"></i> {{ client.contact_name }} <span>·</span> <a href="mailto:{{ client.contact_email }}">{{ client.contact_email }}</a></p>
+    <h1 class="truncate-text" title="{{ client.name }}">{{ client.name }}</h1>
+    <p class="muted contact-line"><i class="fa-solid fa-address-card" aria-hidden="true"></i> <span class="client-contact-name truncate-text" title="{{ client.contact_name }}">{{ client.contact_name }}</span> <span class="contact-separator">·</span> <a class="external-link client-contact-email" href="mailto:{{ client.contact_email }}" title="{{ client.contact_email }}"><span class="truncate-text">{{ client.contact_email }}</span></a></p>
   </div>
   <div class="heading-actions">
     {% if can('client:edit') %}<a class="button button-secondary" href="{{ url_for('main.edit_client', client_id=client.id) }}"><i class="fa-solid fa-pen" aria-hidden="true"></i> Edit Client</a>{% endif %}
@@ -23,7 +23,7 @@
   </div>
   <div class="report-link-row">
     <span class="secret-value client-report-link" data-copy-value="{{ report_url }}">
-      <a href="{{ report_url }}" target="_blank" rel="noopener noreferrer">{{ report_url }}</a>
+      <a href="{{ report_url }}" target="_blank" rel="noopener noreferrer" title="{{ report_url }}">{{ report_url }}</a>
       <span class="report-link-actions">
         <button class="icon-button" type="button" data-copy-target=".client-report-link" title="Copy report link" aria-label="Copy report link"><i class="fa-solid fa-copy" aria-hidden="true"></i><span class="visually-hidden">Copy report link</span></button>
         <a class="icon-button" href="{{ report_mailto }}" title="Share report link by email" aria-label="Share report link by email"><i class="fa-solid fa-envelope" aria-hidden="true"></i><span class="visually-hidden">Share report link by email</span></a>
@@ -41,14 +41,17 @@
     <a class="contract-name-link" href="{{ url_for('main.contract', contract_id=contract.id) }}">
       <span class="contract-identity">
       <i class="fa-solid fa-file-signature" aria-hidden="true"></i>
-      <strong>{{ contract.name }}</strong>
+      <strong class="truncate-text" title="{{ contract.name }}">{{ contract.name }}</strong>
       </span>
     </a>
     <span class="contract-contact-details">
       <span class="contract-contact-identity"><i class="fa-solid fa-address-card" aria-hidden="true"></i><strong title="{{ contract.contact_name }}">{{ contract.contact_name }}</strong></span>
-      <a class="contract-contact-email" href="mailto:{{ contract.contact_email }}?subject={{ ('RE: ' ~ client.name ~ '/' ~ contract.name ~ ' Contract')|urlencode }}" title="{{ contract.contact_email }}">{{ contract.contact_email }}</a>
+      <a class="contract-contact-email external-link" href="mailto:{{ contract.contact_email }}?subject={{ ('RE: ' ~ client.name ~ '/' ~ contract.name ~ ' Contract')|urlencode }}" title="{{ contract.contact_email }}"><span class="truncate-text">{{ contract.contact_email }}</span></a>
     </span>
-    <a class="rate" href="{{ url_for('main.contract', contract_id=contract.id) }}">{{ format_money(contract.hourly_rate) }}/hr <i class="fa-solid fa-chevron-right" aria-hidden="true"></i></a>
+    <span class="contract-rate-details">
+      <span class="rate">{{ format_money(contract.hourly_rate) }}/hr</span>
+      <a class="icon-button contract-row-action" href="{{ url_for('main.contract', contract_id=contract.id) }}" title="Open {{ contract.name }}" aria-label="Open {{ contract.name }}"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></a>
+    </span>
   </div>
   {% else %}
   <div class="empty-state"><p>No contracts created for this client.</p></div>

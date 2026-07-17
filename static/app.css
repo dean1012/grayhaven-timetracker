@@ -88,13 +88,16 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .app-viewport { min-height: 0; overflow-y: auto; flex: 1 1 auto; }
 .page-shell { width: min(1680px, calc(100% - var(--container-padding) - var(--container-padding))); margin: 0 auto; padding: 3.3rem 0 5rem; }
 .page-heading { display: flex; align-items: end; justify-content: space-between; gap: 2rem; margin-bottom: 2.4rem; }
+.page-heading > :first-child { min-width: 0; }
 .page-heading.compact { align-items: start; }
 .eyebrow { margin-bottom: .65rem; color: var(--primary-accent); font-size: .72rem; font-weight: 700; letter-spacing: .16em; }
 .muted { color: var(--cool-grey); }
 .back-link { display: inline-flex; gap: .5rem; align-items: center; margin-bottom: 1.15rem; font-size: .87rem; }
-.breadcrumbs { margin-bottom: 1.5rem; font-size: .84rem; }
-.breadcrumbs ol { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin: 0; padding: 0; list-style: none; }
-.breadcrumbs li { display: flex; align-items: center; min-width: 0; color: var(--soft-white); font-weight: var(--font-weight-medium); }
+.truncate-text, .breadcrumb-label { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.breadcrumbs { width: min(1680px, calc(100% - var(--container-padding) - var(--container-padding))); margin: 0 auto; padding: .55rem 0 .7rem; font-size: .84rem; }
+.breadcrumbs ol { display: flex; align-items: center; gap: .5rem; min-width: 0; margin: 0; padding: 0; overflow: hidden; list-style: none; }
+.breadcrumbs li { display: flex; flex: 0 1 auto; align-items: center; min-width: 0; color: var(--soft-white); font-weight: var(--font-weight-medium); }
+.breadcrumbs li:last-child { flex: 1 1 auto; }
 .breadcrumbs li + li::before { margin-right: .5rem; color: var(--cool-grey); content: "›"; }
 .breadcrumbs a { color: var(--primary-accent); }
 .breadcrumbs a:hover { color: var(--standard-hover); }
@@ -105,24 +108,28 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .panel-heading { margin-bottom: var(--space-sm); }
 .card-heading > i { color: var(--primary-accent); font-size: 2.2rem; }
 .card-heading h2 { font-size: 1.45rem; }
-.contact-line { display: flex; align-items: center; gap: .45rem; margin: 1.3rem 0; color: var(--cool-grey); font-size: .87rem; }
+.contact-line { display: flex; align-items: center; gap: .45rem; min-width: 0; margin: 1.3rem 0; color: var(--cool-grey); font-size: .87rem; }
+.client-contact-name, .client-contact-email { flex: 0 1 auto; min-width: 0; }
 .contact-line i { color: var(--primary-accent); }
-.contact-line span { color: var(--charcoal-border); }
+.contact-line .contact-separator { color: var(--charcoal-border); }
 .contract-list { margin: 1.1rem 0 1.3rem; border-top: 1px solid var(--charcoal-border); }
 .contract-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .9rem .2rem; color: var(--soft-white); border-bottom: 1px solid color-mix(in srgb, var(--charcoal-border) 60%, transparent); font-size: .92rem; }
 .contract-name-link { display: flex; align-items: center; min-width: 0; color: var(--soft-white); }
 .contract-identity { display: flex; align-items: center; gap: 1rem; min-width: 0; overflow-wrap: anywhere; }
-.contract-row-detailed { display: grid; grid-template-columns: minmax(0, 36rem) minmax(0, 14rem) minmax(0, 1fr) auto; padding-block: 1rem; }
+.contract-row-detailed { display: grid; grid-template-columns: minmax(0, 36rem) minmax(0, 14rem) minmax(0, 1fr) auto; padding: 1rem .6rem; border-radius: var(--border-radius-sm); transition: background var(--transition-fast); }
+.contract-row-detailed:hover { background: color-mix(in srgb, var(--primary-accent) 7%, transparent); }
 .contract-contact-details { display: contents; }
 .contract-contact-identity { display: flex; align-items: center; gap: .5rem; min-width: 0; }
 .contract-contact-identity i { color: var(--primary-accent); }
 .contract-row-detailed .contract-identity strong { color: var(--soft-white); font-weight: 600; }
 .contract-contact-identity strong { min-width: 0; overflow: hidden; color: var(--cool-grey); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
-.contract-contact-email { min-width: 0; overflow: hidden; color: var(--primary-accent); text-overflow: ellipsis; white-space: nowrap; }
-.contract-contact-email:hover { color: var(--standard-hover); }
+.contract-contact-email { min-width: 0; overflow: hidden; color: var(--primary-accent); }
+.contract-contact-email .truncate-text { color: inherit; }
 .contract-row i { color: var(--primary-accent); }
 .contract-row .rate { color: var(--cool-grey); font-size: .82rem; }
 .contract-row .rate i { margin-left: .7rem; color: var(--cool-grey); }
+.contract-rate-details { display: flex; align-items: center; justify-self: end; gap: .35rem; white-space: nowrap; }
+.contract-row-action i { margin: 0; color: inherit; }
 .button { display: inline-flex; align-items: center; justify-content: center; gap: .55rem; min-height: 42px; padding: .65rem 1rem; border: 1px solid var(--charcoal-border); border-radius: var(--border-radius); font-size: .87rem; font-weight: var(--font-weight-semibold); transition: color var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast); }
 .button:disabled, .icon-button:disabled { opacity: .42; cursor: not-allowed; }
 .button:focus-visible, .icon-button:focus-visible, input:focus-visible, select:focus-visible, .text-link:focus-visible, .nav-button:focus-visible { outline: 2px solid var(--primary-accent); outline-offset: 3px; }
@@ -250,7 +257,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .report-share-panel { margin-bottom: 1.5rem; padding: 1.4rem 1.7rem; }
 .report-link-row { display: flex; align-items: center; gap: .65rem; }
 .report-link-row .client-report-link { display: flex; align-items: center; flex: 1; min-width: 0; gap: .65rem; margin: 0; }
-.report-link-row .client-report-link > a { display: block; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.report-link-row .client-report-link > a { display: block; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .report-link-actions { display: flex; flex: 0 0 auto; align-items: center; gap: .45rem; }
 .report-link-actions .icon-button i { display: block; line-height: 1; }
 .share-panel > div:first-child { max-width: 760px; }
@@ -345,13 +352,24 @@ small { color: var(--cool-grey); font-weight: 400; }
   :root { --container-padding: 2rem; }
 }
 
-@media (width <1280px) and (width >=768px) {
+@media (width <1328px) and (width >=1096px) {
   .contract-row-detailed { grid-template-columns: minmax(0, 36rem) minmax(0, 1fr) auto; }
   .contract-contact-details { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; column-gap: .5rem; row-gap: .25rem; min-width: 0; }
   .contract-contact-identity { display: contents; }
   .contract-contact-identity i { grid-column: 1; grid-row: 1; align-self: center; }
   .contract-contact-identity strong { grid-column: 2; grid-row: 1; }
   .contract-contact-email { grid-column: 2; grid-row: 2; }
+}
+
+@media (width <1096px) {
+  .contract-row-detailed { grid-template-columns: minmax(0, 1fr); align-items: start; }
+  .contract-row-detailed .contract-name-link { min-width: 0; }
+  .contract-contact-details { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; column-gap: .5rem; row-gap: .25rem; min-width: 0; }
+  .contract-contact-identity { display: contents; }
+  .contract-contact-identity i { grid-column: 1; grid-row: 1; align-self: center; }
+  .contract-contact-identity strong { grid-column: 2; grid-row: 1; }
+  .contract-contact-email { grid-column: 2; grid-row: 2; }
+  .contract-rate-details { justify-self: start; }
 }
 
 @media (width <768px) {
@@ -366,16 +384,6 @@ small { color: var(--cool-grey); font-weight: 400; }
   .inline-form { width: 100%; }
   .inline-form input { width: auto; min-width: 0; flex: 1; }
   .client-card, .task-panel, .contract-directory, .user-directory, .session-directory, .audit-directory, .report-panel { padding: 1.25rem; }
-  .contract-row { align-items: flex-start; flex-wrap: wrap; }
-  .contract-row .rate { margin-left: auto; }
-  .contract-row-detailed { grid-template-columns: minmax(0, 1fr); }
-  .contract-row-detailed .contract-name-link { grid-column: 1 / -1; min-width: 0; }
-  .contract-contact-details { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; column-gap: .5rem; row-gap: .25rem; min-width: 0; }
-  .contract-contact-identity { display: contents; }
-  .contract-contact-identity i { grid-column: 1; grid-row: 1; align-self: center; }
-  .contract-contact-identity strong { grid-column: 2; grid-row: 1; }
-  .contract-contact-email { grid-column: 2; grid-row: 2; }
-  .contract-row-detailed .rate { grid-column: 1 / -1; justify-self: start; margin-left: 0; }
   .contact-line { align-items: flex-start; flex-wrap: wrap; overflow-wrap: anywhere; }
   .active-timer { align-items: stretch; flex-direction: column; gap: 1rem; }
   .share-panel { align-items: stretch; flex-direction: column; }

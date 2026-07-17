@@ -47,11 +47,11 @@
         </nav>
       </details>
     </div>
+    {% block breadcrumbs %}{% endblock %}
   </header>
   {% endif %}
   <main class="app-viewport">
     <div class="page-shell">
-      {% block breadcrumbs %}{% endblock %}
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
         <div class="flash-stack">

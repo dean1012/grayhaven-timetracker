@@ -3,14 +3,14 @@
 {% block breadcrumbs %}
 <nav class="breadcrumbs" aria-label="Breadcrumb">
   <ol>
-    <li><a href="{{ url_for('main.client', client_id=contract.client.id) }}">{{ contract.client.name }}</a></li>
-    <li aria-current="page">{{ contract.name }}</li>
+    <li><a class="breadcrumb-label" href="{{ url_for('main.client', client_id=contract.client.id) }}" title="{{ contract.client.name }}">{{ contract.client.name }}</a></li>
+    <li aria-current="page"><span class="breadcrumb-label" title="{{ contract.name }}">{{ contract.name }}</span></li>
   </ol>
 </nav>
 {% endblock %}
 {% block content %}
 <section class="page-heading">
-  <div><p class="eyebrow">CONTRACT</p><h1>{{ contract.name }}</h1><p class="muted">{{ format_money(contract.hourly_rate) }} per hour</p></div>
+  <div><p class="eyebrow">CONTRACT</p><h1 class="truncate-text" title="{{ contract.name }}">{{ contract.name }}</h1><p class="muted">{{ format_money(contract.hourly_rate) }} per hour</p></div>
   <div class="heading-actions">
     {% if can('contract:edit') %}<a class="button button-secondary" href="{{ url_for('main.edit_contract', contract_id=contract.id) }}"><i class="fa-solid fa-pen" aria-hidden="true"></i> Edit</a>{% endif %}
     {% if can('time_entry:view_own') or can('time_entry:view_any') %}<a class="button button-secondary" href="{{ url_for('main.contract_sessions', contract_id=contract.id) }}"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> Sessions</a>{% endif %}
