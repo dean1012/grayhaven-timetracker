@@ -19,7 +19,9 @@ import pyotp
 from flask import (
     Blueprint,
     Flask,
+    Response,
     abort,
+    after_this_request,
     current_app,
     flash,
     redirect,
@@ -30,6 +32,7 @@ from flask import (
     session,
     url_for,
 )
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -131,6 +134,9 @@ SHARED_REPORT_SESSION_KEYS = (
     "shared_report_client_id",
     "shared_report_password_version",
 )
+SHARED_REPORT_COOKIE_PREFIX = "grayhaven_timetracker_report_"
+SHARED_REPORT_COOKIE_PATH = "/shared/reports/"
+SHARED_REPORT_COOKIE_SALT = "shared-report-session-v1"
 REPORT_PASSWORD_CONFIRMATION_SESSION_KEYS = (
     "report_password_confirmation_client_id",
     "report_password_confirmation_token",
@@ -260,12 +266,67 @@ def audit(event: str, **fields: Any) -> None:
         )
 
 
+def shared_report_cookie_name(client: Client) -> str:
+    """Return the independent cookie name for one client's report session."""
+    return f"{SHARED_REPORT_COOKIE_PREFIX}{client.id}"
+
+
+def shared_report_serializer() -> URLSafeTimedSerializer:
+    """Build the isolated signer for report authorization cookies."""
+    return URLSafeTimedSerializer(
+        current_app.secret_key,
+        salt=SHARED_REPORT_COOKIE_SALT,
+    )
+
+
+def set_shared_report_cookie(response: Response, client: Client) -> Response:
+    """Attach a signed report-only authorization cookie to a response."""
+    value = shared_report_serializer().dumps(
+        {
+            "client_id": client.id,
+            "password_version": client.report_password_version,
+        }
+    )
+    response.set_cookie(
+        shared_report_cookie_name(client),
+        value,
+        max_age=int(current_app.permanent_session_lifetime.total_seconds()),
+        secure=bool(current_app.config["SESSION_COOKIE_SECURE"]),
+        httponly=True,
+        samesite="Lax",
+        path=SHARED_REPORT_COOKIE_PATH,
+    )
+    return response
+
+
+def shared_report_cookie_allowed(client: Client) -> bool:
+    """Validate the independent signed cookie for one client report."""
+    value = request.cookies.get(shared_report_cookie_name(client))
+    if not value:
+        return False
+    try:
+        payload = shared_report_serializer().loads(
+            value,
+            max_age=int(current_app.permanent_session_lifetime.total_seconds()),
+        )
+    except (BadSignature, SignatureExpired):
+        return False
+    return bool(
+        isinstance(payload, dict)
+        and payload.get("client_id") == client.id
+        and payload.get("password_version") == client.report_password_version
+    )
+
+
 def shared_report_access_allowed(client: Client) -> bool:
-    """Validate client report access stored in the signed browser session."""
+    """Validate isolated report access and migrate a valid legacy session."""
+    if shared_report_cookie_allowed(client):
+        return True
+
     authenticated_at = session.get("shared_report_authenticated_at")
     now = now_utc_timestamp()
     maximum_age = current_app.permanent_session_lifetime.total_seconds()
-    allowed = bool(
+    legacy_allowed = bool(
         session.get("shared_report_client_id") == client.id
         and session.get("shared_report_password_version")
         == client.report_password_version
@@ -273,10 +334,11 @@ def shared_report_access_allowed(client: Client) -> bool:
         and authenticated_at <= now + 60
         and now - authenticated_at <= maximum_age
     )
-    if not allowed:
-        for key in SHARED_REPORT_SESSION_KEYS:
-            session.pop(key, None)
-    return allowed
+    for key in SHARED_REPORT_SESSION_KEYS:
+        session.pop(key, None)
+    if legacy_allowed:
+        after_this_request(lambda response: set_shared_report_cookie(response, client))
+    return legacy_allowed
 
 
 def get_shared_report_client(token: str) -> Client:
@@ -2024,14 +2086,14 @@ def shared_report(token: str) -> Any:
             )
             return render_template("shared_report_login.html", client=client_item), 401
         shared_report_limiter.clear(rate_key)
-        session.permanent = True
-        session["shared_report_authenticated_at"] = now_utc_timestamp()
-        session["shared_report_client_id"] = client_item.id
-        session["shared_report_password_version"] = client_item.report_password_version
         audit(
             "shared_report_access_granted",
             client_id=client_item.id,
             ip=ip,
+        )
+        return set_shared_report_cookie(
+            redirect(url_for("main.shared_report", token=token)),
+            client_item,
         )
     report = build_client_report(
         get_session(), client_item, cast(str, current_app.config["DISPLAY_TIMEZONE"])
@@ -2055,7 +2117,7 @@ def shared_report(token: str) -> Any:
 def shared_report_live(token: str) -> Any:
     client_item = get_shared_report_client(token)
     if not shared_report_access_allowed(client_item):
-        abort(401)
+        return redirect(url_for("main.shared_report", token=token))
     report = build_client_report(
         get_session(), client_item, cast(str, current_app.config["DISPLAY_TIMEZONE"])
     )

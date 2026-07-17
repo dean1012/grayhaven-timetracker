@@ -1373,7 +1373,7 @@ class ReportAndSessionRouteTests(AppTestCase):
             anonymous.post(
                 f"/shared/reports/{token}", data={"report_password": report_password}
             ).status_code,
-            200,
+            302,
         )
         self.assertEqual(
             self.client.post(f"/clients/{self.seed.client_id}/report-link").status_code,
@@ -1480,15 +1480,33 @@ class ReportAndSessionRouteTests(AppTestCase):
             429,
         )
         routes.shared_report_limiter = LoginLimiter()
-        shared = anonymous.post(
+        authenticated = anonymous.post(
             f"/shared/reports/{first_token}",
             data={"report_password": report_password},
         )
+        self.assertEqual(authenticated.status_code, 302)
+        self.assertEqual(
+            authenticated.headers["Location"], f"/shared/reports/{first_token}"
+        )
+        shared = anonymous.get(f"/shared/reports/{first_token}")
         self.assertEqual(shared.status_code, 200)
+        report_cookie_name = routes.shared_report_cookie_name(client)
+        self.assertIsNotNone(
+            anonymous.get_cookie(
+                report_cookie_name,
+                path=routes.SHARED_REPORT_COOKIE_PATH,
+            )
+        )
         self.assertIn(b"Live Client Report", shared.data)
         self.assertIn(b"Estimated Cost", shared.data)
         self.assertNotIn(b"Equivalent Cost", shared.data)
         self.assertNotIn(b"morgan@example.invalid", shared.data)
+        with anonymous.session_transaction() as application_session:
+            application_session.clear()
+        self.assertIn(
+            b"Live Client Report",
+            anonymous.get(f"/shared/reports/{first_token}").data,
+        )
         shared_etag_match = re.search(rb'data-live-etag="([0-9a-f]{64})"', shared.data)
         assert shared_etag_match is not None
         shared_etag = shared_etag_match.group(1).decode()
@@ -1496,7 +1514,7 @@ class ReportAndSessionRouteTests(AppTestCase):
             self.app.test_client()
             .get(f"/shared/reports/{first_token}/live")
             .status_code,
-            401,
+            302,
         )
         live = anonymous.get(
             f"/shared/reports/{first_token}/live",
@@ -1504,20 +1522,20 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         self.assertEqual(live.status_code, 304)
         self.assertEqual(live.headers.get("ETag"), f'"{shared_etag}"')
-        with anonymous.session_transaction() as report_session:
-            report_session["shared_report_authenticated_at"] = (
-                time.time() - self.app.permanent_session_lifetime.total_seconds() - 1
-            )
+        anonymous.delete_cookie(
+            report_cookie_name,
+            path=routes.SHARED_REPORT_COOKIE_PATH,
+        )
         self.assertEqual(
             anonymous.get(f"/shared/reports/{first_token}/live").status_code,
-            401,
+            302,
         )
         self.assertEqual(
             anonymous.post(
                 f"/shared/reports/{first_token}",
                 data={"report_password": report_password},
             ).status_code,
-            200,
+            302,
         )
 
         with patch(
@@ -1563,7 +1581,7 @@ class ReportAndSessionRouteTests(AppTestCase):
                 f"/shared/reports/{second_token}",
                 data={"report_password": replacement_password},
             ).status_code,
-            200,
+            302,
         )
         with session_scope(self.app) as database:
             client = database.get(Client, self.seed.client_id)

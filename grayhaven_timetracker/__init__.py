@@ -7,7 +7,16 @@ import time
 from datetime import timedelta
 from typing import Any
 
-from flask import Flask, Response, g, render_template, request, session
+from flask import (
+    Flask,
+    Response,
+    g,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
 from flask_wtf.csrf import CSRFError, CSRFProtect
 from werkzeug.exceptions import SecurityError
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -173,21 +182,18 @@ def register_request_auditing(app: Flask) -> None:
             database = factory()
         typed_database = database
         actor = getattr(g, "current_user", None)
-        if actor is None:
+        shared_report_request = request.endpoint in {
+            "main.shared_report",
+            "main.shared_report_live",
+        }
+        if actor is None and not shared_report_request:
             actor_id = session.get("user_id")
             if isinstance(actor_id, int):
                 actor = typed_database.get(User, actor_id)
         public_action = (
             request.endpoint in {"main.login", "main.login_authenticator"}
             and request.method == "POST"
-        ) or (
-            request.endpoint in {"main.shared_report", "main.shared_report_live"}
-            and response.status_code != 404
-            and (
-                request.method == "POST"
-                or isinstance(session.get("shared_report_client_id"), int)
-            )
-        )
+        ) or (shared_report_request and response.status_code != 404)
         if actor is None and not public_action:
             if owns_database:
                 typed_database.close()
@@ -254,10 +260,14 @@ def register_error_handlers(app: Flask) -> None:
             status,
         )
 
-    app.register_error_handler(
-        CSRFError,
-        lambda _: error_page(400, "The form expired or could not be verified."),
-    )
+    def csrf_error(_: CSRFError) -> Any:
+        if request.endpoint == "main.shared_report":
+            token = (request.view_args or {}).get("token")
+            if isinstance(token, str):
+                return redirect(url_for("main.shared_report", token=token))
+        return error_page(400, "The form expired or could not be verified.")
+
+    app.register_error_handler(CSRFError, csrf_error)
     app.register_error_handler(
         SecurityError,
         lambda _: ("Bad Request", 400, {"Content-Type": "text/plain; charset=utf-8"}),

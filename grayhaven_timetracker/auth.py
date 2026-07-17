@@ -210,6 +210,9 @@ def current_user() -> User | None:
 
 
 def load_current_user() -> None:
+    if request.endpoint in {"main.shared_report", "main.shared_report_live"}:
+        g.current_user = None
+        return
     user_id = session.get("user_id")
     if not isinstance(user_id, int):
         g.current_user = None
