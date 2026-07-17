@@ -414,22 +414,37 @@ if (liveReport) {
   });
 }
 
-function livePageHasUnsavedChanges(page) {
-  if (page.querySelector("details[open]")) {
-    return true;
-  }
-  return Array.from(page.querySelectorAll("input, select, textarea")).some((field) => {
-    if (!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement)
-      || field.type === "hidden") {
+function editableFields(form) {
+  return Array.from(form.querySelectorAll("input, select, textarea")).filter((field) => {
+    if (!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement)) {
       return false;
     }
-    if (field instanceof HTMLInputElement && ["checkbox", "radio"].includes(field.type)) {
-      return field.checked !== field.defaultChecked;
+    return !["hidden", "button", "reset", "submit"].includes(field.type);
+  });
+}
+
+function preserveLivePageInputs(page, replacement) {
+  const replacementForms = new Map();
+  replacement.querySelectorAll("form").forEach((form) => {
+    const key = `${form.method}:${form.action}`;
+    replacementForms.set(key, [...(replacementForms.get(key) || []), form]);
+  });
+  page.querySelectorAll("form").forEach((form) => {
+    const key = `${form.method}:${form.action}`;
+    const replacementForm = replacementForms.get(key)?.shift();
+    if (!replacementForm) {
+      return;
     }
-    if (field instanceof HTMLSelectElement) {
-      return Array.from(field.options).some((option) => option.selected !== option.defaultSelected);
-    }
-    return field.value !== field.defaultValue;
+    editableFields(form).forEach((field, index) => {
+      const replacementField = editableFields(replacementForm)[index];
+      if (
+        replacementField
+        && replacementField.tagName === field.tagName
+        && replacementField.getAttribute("name") === field.getAttribute("name")
+      ) {
+        replacementField.replaceWith(field);
+      }
+    });
   });
 }
 
@@ -438,7 +453,7 @@ let livePageEtag = "";
 
 async function reconcileLivePage() {
   const page = document.querySelector("[data-live-page]");
-  if (!page || livePageRequestActive || livePageHasUnsavedChanges(page)) {
+  if (!page || livePageRequestActive) {
     return;
   }
   livePageRequestActive = true;
@@ -467,6 +482,7 @@ async function reconcileLivePage() {
     }
     const viewport = document.querySelector(".app-viewport");
     const scrollTop = viewport instanceof HTMLElement ? viewport.scrollTop : 0;
+    preserveLivePageInputs(page, replacement);
     page.replaceWith(replacement);
     if (viewport instanceof HTMLElement) {
       viewport.scrollTop = scrollTop;
