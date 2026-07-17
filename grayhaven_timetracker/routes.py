@@ -1248,6 +1248,7 @@ def reset_client_report_password(client_id: int) -> Any:
             "existing report sessions across this client's contracts."
         ),
         "submit_label": "Generate Password",
+        "submit_icon": "fa-key",
         "cancel_url": url_for("main.client", client_id=item.id),
         "breadcrumb_parent_label": item.name,
         "breadcrumb_parent_url": url_for("main.client", client_id=item.id),
@@ -2768,6 +2769,7 @@ def reset_user_password(user_id: int) -> Any:
             "sessions, and require a password change after sign-in."
         ),
         "submit_label": "Reset User Password",
+        "submit_icon": "fa-key",
         "cancel_url": url_for("main.users"),
         "breadcrumb_parent_label": "Users",
         "breadcrumb_parent_url": url_for("main.users"),
