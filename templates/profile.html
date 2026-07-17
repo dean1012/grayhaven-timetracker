@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Profile · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li aria-current="page"><span class="breadcrumb-label" title="Profile">Profile</span></li></ol></nav>{% endblock %}
 {% block content %}
 <section class="narrow-content"><div class="page-heading compact"><div><p class="eyebrow">ACCOUNT</p><h1>Profile</h1></div></div>
   <div class="panel form-panel"><h2>Name</h2><form method="post" action="{{ url_for('main.update_profile_name') }}" class="form-stack" autocomplete="off" data-protonpass-ignore="true"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>First Name<input name="first_name" value="{{ user.first_name }}" maxlength="100" required autocomplete="off" data-protonpass-ignore="true"></label><label>Last Name<input name="last_name" value="{{ user.last_name }}" maxlength="100" required autocomplete="off" data-protonpass-ignore="true"></label><div class="form-actions"><button class="button button-primary" type="submit"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Update Name</button></div></form></div>

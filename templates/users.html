@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Users · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li aria-current="page"><span class="breadcrumb-label" title="Users">Users</span></li></ol></nav>{% endblock %}
 {% block content %}
 <section class="page-heading">
   <div><p class="eyebrow">ACCESS MANAGEMENT</p><h1>Users</h1></div>

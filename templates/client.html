@@ -2,7 +2,7 @@
 {% block title %}{{ client.name }} · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block breadcrumbs %}
 <nav class="breadcrumbs" aria-label="Breadcrumb">
-  <ol><li aria-current="page"><span class="breadcrumb-label" title="{{ client.name }}">{{ client.name }}</span></li></ol>
+  <ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li aria-current="page"><span class="breadcrumb-label" title="{{ client.name }}">{{ client.name }}</span></li></ol>
 </nav>
 {% endblock %}
 {% block content %}

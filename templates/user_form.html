@@ -2,6 +2,7 @@
 {% block title %}New User · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block breadcrumbs %}
 <nav class="breadcrumbs" aria-label="Breadcrumb"><ol>
+  <li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li>
   <li><a class="breadcrumb-label" href="{{ url_for('main.users') }}" title="Users">Users</a></li>
   <li aria-current="page"><span class="breadcrumb-label" title="New User">New User</span></li>
 </ol></nav>

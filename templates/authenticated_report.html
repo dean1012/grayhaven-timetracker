@@ -1,4 +1,4 @@
 {% extends "base.html" %}
 {% block title %}Client Time Report · {{ report.client.name }} · Grayhaven Systems LLC Time Tracker{% endblock %}
-{% block breadcrumbs %}<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.client', client_id=report.client.id) }}" title="{{ report.client.name }}">{{ report.client.name }}</a></li><li aria-current="page"><span class="breadcrumb-label" title="Client Time Report">Client Time Report</span></li></ol></nav>{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li><a class="breadcrumb-label" href="{{ url_for('main.client', client_id=report.client.id) }}" title="{{ report.client.name }}">{{ report.client.name }}</a></li><li aria-current="page"><span class="breadcrumb-label" title="Client Time Report">Client Time Report</span></li></ol></nav>{% endblock %}
 {% block content %}{% include "_report_content.html" %}{% endblock %}

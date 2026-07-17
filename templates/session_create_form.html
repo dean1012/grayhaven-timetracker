@@ -2,6 +2,7 @@
 {% block title %}New Session · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block breadcrumbs %}
 <nav class="breadcrumbs" aria-label="Breadcrumb"><ol>
+  <li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li>
   <li><a class="breadcrumb-label" href="{{ url_for('main.client', client_id=contract.client.id) }}" title="{{ contract.client.name }}">{{ contract.client.name }}</a></li>
   <li><a class="breadcrumb-label" href="{{ url_for('main.contract', contract_id=contract.id) }}" title="{{ contract.name }}">{{ contract.name }}</a></li>
   <li><a class="breadcrumb-label" href="{{ url_for('main.contract_sessions', contract_id=contract.id) }}" title="Sessions">Sessions</a></li>

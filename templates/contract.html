@@ -3,6 +3,7 @@
 {% block breadcrumbs %}
 <nav class="breadcrumbs" aria-label="Breadcrumb">
   <ol>
+    <li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li>
     <li><a class="breadcrumb-label" href="{{ url_for('main.client', client_id=contract.client.id) }}" title="{{ contract.client.name }}">{{ contract.client.name }}</a></li>
     <li aria-current="page"><span class="breadcrumb-label" title="{{ contract.name }}">{{ contract.name }}</span></li>
   </ol>
