@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import hashlib
 import secrets
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -685,6 +686,23 @@ def register_routes(app: Flask) -> None:
         ):
             return redirect(url_for("main.required_password_change"))
         return None
+
+    @app.after_request
+    def conditional_live_page_response(response: Response) -> Response:
+        """Return an inexpensive 304 response for unchanged live page fragments."""
+        if (
+            request.headers.get("X-Grayhaven-Live-Refresh") != "1"
+            or request.method != "GET"
+            or response.status_code != 200
+            or response.mimetype != "text/html"
+        ):
+            return response
+        etag = hashlib.sha256(response.get_data()).hexdigest()
+        response.set_etag(etag)
+        if request.if_none_match.contains(etag):
+            response.status_code = 304
+            response.set_data(b"")
+        return response
 
     @app.context_processor
     def inject_globals() -> dict[str, Any]:

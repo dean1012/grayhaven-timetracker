@@ -111,10 +111,8 @@ function formatDuration(totalSeconds) {
   return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
-const runningTimers = Array.from(document.querySelectorAll("[data-timer-start]"));
-
 function updateRunningTimers() {
-  runningTimers.forEach((timer) => {
+  document.querySelectorAll("[data-timer-start]").forEach((timer) => {
     const startedAt = Date.parse(timer.dataset.timerStart || "");
     if (Number.isNaN(startedAt)) {
       return;
@@ -124,10 +122,8 @@ function updateRunningTimers() {
   });
 }
 
-if (runningTimers.length > 0) {
-  updateRunningTimers();
-  window.setInterval(updateRunningTimers, 1000);
-}
+updateRunningTimers();
+window.setInterval(updateRunningTimers, 1000);
 
 const moneyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -414,6 +410,85 @@ if (liveReport) {
     if (!document.hidden) {
       updateLiveReportCounters();
       reconcileLiveReport();
+    }
+  });
+}
+
+function livePageHasUnsavedChanges(page) {
+  if (page.querySelector("details[open]")) {
+    return true;
+  }
+  return Array.from(page.querySelectorAll("input, select, textarea")).some((field) => {
+    if (!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement)
+      || field.type === "hidden") {
+      return false;
+    }
+    if (field instanceof HTMLInputElement && ["checkbox", "radio"].includes(field.type)) {
+      return field.checked !== field.defaultChecked;
+    }
+    if (field instanceof HTMLSelectElement) {
+      return Array.from(field.options).some((option) => option.selected !== option.defaultSelected);
+    }
+    return field.value !== field.defaultValue;
+  });
+}
+
+let livePageRequestActive = false;
+let livePageEtag = "";
+
+async function reconcileLivePage() {
+  const page = document.querySelector("[data-live-page]");
+  if (!page || livePageRequestActive || document.hidden || livePageHasUnsavedChanges(page)) {
+    return;
+  }
+  livePageRequestActive = true;
+  try {
+    const response = await window.fetch(window.location.href, {
+      credentials: "same-origin",
+      headers: {
+        "If-None-Match": livePageEtag,
+        "X-Grayhaven-Live-Refresh": "1",
+      },
+    });
+    if (response.status === 304) {
+      return;
+    }
+    if (response.redirected) {
+      window.location.replace(response.url);
+      return;
+    }
+    if (!response.ok) {
+      return;
+    }
+    const documentFragment = new DOMParser().parseFromString(await response.text(), "text/html");
+    const replacement = documentFragment.querySelector("[data-live-page]");
+    if (!replacement) {
+      return;
+    }
+    const viewport = document.querySelector(".app-viewport");
+    const scrollTop = viewport instanceof HTMLElement ? viewport.scrollTop : 0;
+    page.replaceWith(replacement);
+    if (viewport instanceof HTMLElement) {
+      viewport.scrollTop = scrollTop;
+    }
+    livePageEtag = response.headers.get("ETag") || "";
+    updateRunningTimers();
+  } catch {
+    // The next scheduled conditional refresh will retry without disrupting work.
+  } finally {
+    livePageRequestActive = false;
+  }
+}
+
+const livePage = document.querySelector("[data-live-page]");
+if (livePage) {
+  window.setInterval(
+    reconcileLivePage,
+    Number(livePage.dataset.liveIntervalMs) || 3000,
+  );
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      reconcileLivePage();
     }
   });
 }
