@@ -3,7 +3,7 @@
 {% block body_class %}auth-page{% endblock %}
 {% block content %}
 <section class="auth-layout">
-  {% if request.args.get('auth_notice') == 'privileges_updated' %}<div class="flash-stack"><div class="flash flash-warning" role="status">Your privileges were updated. Please sign in again.</div></div>{% endif %}
+  {% if request.args.get('auth_notice') == 'privileges_updated' %}<div class="flash-stack"><div class="flash flash-warning" role="status">Your privileges were updated. Please sign in again.</div></div>{% elif request.args.get('auth_notice') == 'account_disabled' %}<div class="flash-stack"><div class="flash flash-warning" role="status">Your account was disabled. Please contact an administrator.</div></div>{% endif %}
   <div class="auth-panel panel">
     <img class="auth-logo" src="{{ url_for('main.branding_asset', filename='grayhaven-logo-wordmark-dark.svg') }}" alt="Grayhaven Systems LLC">
     <form method="post" class="form-stack">

@@ -226,6 +226,7 @@ def load_current_user() -> None:
         and session.get("session_version") != user.session_version
         and session.get("user_role") != user.role
     )
+    account_disabled = user is not None and not user.is_enabled
     if (
         user is None
         or not user.is_enabled
@@ -237,6 +238,8 @@ def load_current_user() -> None:
         session.clear()
         if privileges_updated:
             session["auth_notice"] = "privileges_updated"
+        elif account_disabled:
+            session["auth_notice"] = "account_disabled"
         g.current_user = None
         return
     g.current_user = user
