@@ -207,7 +207,6 @@ small { color: var(--cool-grey); font-weight: 400; }
 .subtask-row { display: grid; grid-template-columns: minmax(32px, max-content) minmax(0, 1fr) auto; align-items: center; column-gap: .65rem; min-height: 44px; padding: .35rem 0; }
 .subtask-timer { display: flex; grid-column: 1; align-items: center; min-height: 32px; padding-right: .65rem; border-right: 1px solid var(--charcoal-border); }
 .subtask-name { display: flex; grid-column: 2; align-items: center; gap: .7rem; min-width: 0; color: var(--soft-white); font-size: .9rem; }
-.subtask-name i { flex: 0 0 auto; color: var(--cool-grey); }
 .subtask-name span { min-width: 0; overflow-wrap: anywhere; }
 .subtask-row .row-actions { grid-column: 3; }
 .subtask-empty { margin: .8rem 0 .8rem 46px; font-size: .82rem; }
