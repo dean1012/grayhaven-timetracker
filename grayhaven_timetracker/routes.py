@@ -2718,11 +2718,13 @@ def toggle_user_enabled(user_id: int) -> Any:
         "eyebrow": "DISABLE USER" if user.is_enabled else "ENABLE USER",
         "title": user.full_name,
         "description": (
-            "Disable this user and stop any active timer?"
+            "This will disable the user and stop any active timers immediately."
             if user.is_enabled
-            else "Enable this user and allow sign-in again?"
+            else "This will enable the user immediately."
         ),
         "submit_label": "Disable User" if user.is_enabled else "Enable User",
+        "submit_class": "button-stop" if user.is_enabled else "button-primary",
+        "submit_icon": "fa-user-xmark" if user.is_enabled else "fa-user-check",
         "cancel_url": url_for("main.users"),
         "breadcrumb_parent_label": "Users",
         "breadcrumb_parent_url": url_for("main.users"),
@@ -2781,15 +2783,17 @@ def toggle_user_admin(user_id: int) -> Any:
         "eyebrow": "PROMOTE USER" if promoting else "DEMOTE ADMINISTRATOR",
         "title": user.full_name,
         "description": (
-            "Promote this user to administrator?"
+            "This user will immediately become an administrator."
             if promoting
-            else "Demote this administrator to a standard user?"
+            else "This user will immediately lose administrator privileges."
         ),
-        "submit_label": "Promote User" if promoting else "Demote User",
+        "submit_label": "Promote User" if promoting else "Demote Administrator",
+        "submit_class": "button-stop" if promoting else "button-primary",
+        "submit_icon": "fa-user-gear" if promoting else "fa-user",
         "cancel_url": url_for("main.users"),
         "breadcrumb_parent_label": "Users",
         "breadcrumb_parent_url": url_for("main.users"),
-        "breadcrumb_label": "Promote User" if promoting else "Demote User",
+        "breadcrumb_label": "Promote User" if promoting else "Demote Administrator",
         "totp_required": bool(actor.totp_secret),
     }
     if request.method != "POST":

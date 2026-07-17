@@ -12,7 +12,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="password" name="current_password" maxlength="1024" required autocomplete="current-password" aria-label="Re-enter password" autofocus>
       {% if totp_required %}<label>Authenticator Code<input name="totp" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength="7" required autocomplete="off" data-protonpass-ignore="true"></label>{% endif %}
-      <div class="form-actions"><a class="button button-secondary" href="{{ cancel_url }}">Cancel</a><button class="button button-primary" type="submit"><i class="fa-solid {{ 'fa-trash' if 'DELETE' in eyebrow else 'fa-shield-halved' }}" aria-hidden="true"></i> {{ submit_label }}</button></div>
+      <div class="form-actions"><a class="button button-secondary" href="{{ cancel_url }}">Cancel</a><button class="button {{ submit_class|default('button-primary') }}" type="submit"><i class="fa-solid {{ submit_icon|default('fa-trash' if 'DELETE' in eyebrow else 'fa-shield-halved') }}" aria-hidden="true"></i> {{ submit_label }}</button></div>
     </form>
   </div>
 </section>
