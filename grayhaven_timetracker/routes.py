@@ -2372,13 +2372,12 @@ def new_user() -> Any:
             raise ValueError("A user with that email already exists.")
         temporary_password = generate_temporary_password()
         password_hash = hash_password(temporary_password)
-        secret = pyotp.random_base32()
         user = User(
             email=email,
             first_name=form_text("first_name", "First Name", 100),
             last_name=form_text("last_name", "Last Name", 100),
             password_hash=password_hash,
-            totp_secret=secret,
+            totp_secret=None,
             pending_totp_secret=None,
             role="user",
             is_enabled=True,
@@ -2406,16 +2405,13 @@ def new_user() -> Any:
             "Last Name": user.last_name,
             "Role": user.role,
             "Enabled": user.is_enabled,
-            "Two-Factor Authentication": "Provisioned",
+            "Two-Factor Authentication": "Not configured",
         },
     )
-    uri = provisioning_uri(user, secret)
     return render_template(
         "user_created.html",
         user=user,
         temporary_password=temporary_password,
-        secret=secret,
-        qr_code=qr_data_uri(uri),
     )
 
 

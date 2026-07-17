@@ -8,7 +8,7 @@
 <section class="panel user-directory">
   <div class="table-scroll">
     <table class="data-table user-table">
-      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Password</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>
       {% for user in users %}
         <tr>
@@ -16,7 +16,6 @@
           <td>{{ user.email }}</td>
           <td>{{ 'Administrator' if user.is_admin else 'Standard user' }}</td>
           <td><span class="status-pill {{ 'status-enabled' if user.is_enabled else 'status-disabled' }}">{{ 'Enabled' if user.is_enabled else 'Disabled' }}</span></td>
-          <td>{% if user.password_change_required %}<span class="status-pill status-warning">Change required</span>{% else %}<span class="muted">Current</span>{% endif %}</td>
           <td>
             <div class="row-actions">
               {% if user.id == logged_user.id %}<span class="status-pill status-enabled">Current Account</span>{% endif %}

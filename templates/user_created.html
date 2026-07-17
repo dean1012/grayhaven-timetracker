@@ -5,14 +5,13 @@
   <div class="panel form-panel">
     <p class="eyebrow">USER CREATED</p>
     <h1>{{ user.full_name }}</h1>
-    <p class="muted">Securely give both items below to the user before leaving this page. They will not be displayed again.</p>
+    <p class="muted">Securely give this temporary password to the user before leaving this page. It will not be displayed again.</p>
     <h2>Temporary Password</h2>
-    <div class="secret-value">{{ temporary_password }}</div>
-    <p class="muted">The user must replace this password immediately after signing in.</p>
-    <h2>Authenticator Setup</h2>
-    <p class="muted">Have the user scan this QR code or enter the secret manually.</p>
-    <img class="totp-qr" src="{{ qr_code }}" alt="Authenticator setup QR code for {{ user.full_name }}">
-    <div class="secret-value">{{ secret }}</div>
+    <div class="secret-value secret-copy-value" data-copy-value="{{ temporary_password }}">
+      <span class="secret-text">{{ temporary_password }}</span>
+      <span class="report-link-actions"><button class="icon-button" type="button" data-copy-target=".secret-copy-value" title="Copy password" aria-label="Copy password"><i class="fa-solid fa-copy" aria-hidden="true"></i><span class="visually-hidden">Copy password</span></button></span>
+    </div>
+    <p class="muted">The user must replace this password immediately after signing in. They may configure two-factor authentication later from Profile.</p>
     <div class="form-actions"><a class="button button-primary" href="{{ url_for('main.users') }}">Done</a></div>
   </div>
 </section>
