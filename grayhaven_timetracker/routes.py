@@ -1077,6 +1077,7 @@ def reset_client_report_password(client_id: int) -> Any:
             "client_report_password_reset_rate_limited",
             actor_id=actor.id,
             client_id=item.id,
+            source_ip=request.remote_addr,
         )
         abort(429)
     if not sensitive_action_credentials_valid(actor):
@@ -1085,6 +1086,7 @@ def reset_client_report_password(client_id: int) -> Any:
             "client_report_password_reset_rejected",
             actor_id=actor.id,
             client_id=item.id,
+            source_ip=request.remote_addr,
         )
         flash("The administrator credentials were not accepted.", "error")
         return render_template("sensitive_action_form.html", **confirmation), 400
@@ -1097,6 +1099,7 @@ def reset_client_report_password(client_id: int) -> Any:
         "client_report_password_reset",
         actor_id=actor.id,
         client_id=item.id,
+        source_ip=request.remote_addr,
         changes=audit_changes(
             report_access_version=(
                 item.report_password_version - 1,
@@ -2161,6 +2164,7 @@ def change_password() -> Any:
         audit(
             "password_changed",
             user_id=user.id,
+            source_ip=request.remote_addr,
             sessions_invalidated=True,
         )
         session.clear()
@@ -2179,6 +2183,7 @@ def setup_totp() -> str:
         abort(409, "Disable the active two-factor method before setting up a new one.")
     user.pending_totp_secret = pyotp.random_base32()
     get_session().commit()
+    audit("totp_setup_started", user_id=user.id, source_ip=request.remote_addr)
     uri = provisioning_uri(user, user.pending_totp_secret)
     return render_template(
         "totp_setup.html",
@@ -2198,6 +2203,12 @@ def confirm_totp() -> Any:
     if not secret or not consume_totp(
         user, request.form.get("totp", ""), secret=secret
     ):
+        audit(
+            "totp_setup_rejected",
+            user_id=user.id,
+            source_ip=request.remote_addr,
+            reason="verification_code",
+        )
         flash("The verification code was not accepted. Setup was not enabled.", "error")
         return redirect(url_for("main.profile")), 400
     user.totp_secret = secret
@@ -2205,7 +2216,12 @@ def confirm_totp() -> Any:
     user.session_version += 1
     get_session().commit()
     session["session_version"] = user.session_version
-    audit("totp_enabled", user_id=user.id, sessions_invalidated=True)
+    audit(
+        "totp_enabled",
+        user_id=user.id,
+        source_ip=request.remote_addr,
+        sessions_invalidated=True,
+    )
     flash("Two-factor authentication has been enabled.", "success")
     return redirect(url_for("main.profile"))
 
@@ -2219,6 +2235,12 @@ def disable_totp() -> Any:
     if not verify_password(
         user.password_hash, request.form.get("current_password", "")
     ) or not consume_totp(user, request.form.get("totp", "")):
+        audit(
+            "totp_disable_rejected",
+            user_id=user.id,
+            source_ip=request.remote_addr,
+            reason="reauthentication",
+        )
         flash("The password or verification code was not accepted.", "error")
         return redirect(url_for("main.profile")), 400
     user.totp_secret = None
@@ -2227,7 +2249,12 @@ def disable_totp() -> Any:
     user.session_version += 1
     get_session().commit()
     session["session_version"] = user.session_version
-    audit("totp_disabled", user_id=user.id, sessions_invalidated=True)
+    audit(
+        "totp_disabled",
+        user_id=user.id,
+        source_ip=request.remote_addr,
+        sessions_invalidated=True,
+    )
     flash("Two-factor authentication has been disabled.", "success")
     return redirect(url_for("main.profile"))
 
@@ -2481,6 +2508,7 @@ def reset_user_password(user_id: int) -> Any:
             "user_password_reset_rate_limited",
             actor_id=actor.id,
             user_id=user.id,
+            source_ip=request.remote_addr,
         )
         abort(429)
     if not sensitive_action_credentials_valid(actor):
@@ -2489,6 +2517,7 @@ def reset_user_password(user_id: int) -> Any:
             "user_password_reset_rejected",
             actor_id=actor.id,
             user_id=user.id,
+            source_ip=request.remote_addr,
         )
         flash("The administrator credentials were not accepted.", "error")
         return render_template("sensitive_action_form.html", **confirmation), 400
@@ -2502,6 +2531,7 @@ def reset_user_password(user_id: int) -> Any:
         "user_password_reset",
         actor_id=actor.id,
         user_id=user.id,
+        source_ip=request.remote_addr,
         sessions_invalidated=True,
         must_change_at_next_sign_in=True,
     )
