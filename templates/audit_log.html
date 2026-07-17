@@ -9,23 +9,23 @@
 </section>
 <section class="panel audit-directory">
   <form method="get" class="audit-filters" autocomplete="off" data-protonpass-ignore="true">
-    <label>Source
+    <label>Source<span class="select-control">
       <select name="source" autocomplete="off" data-protonpass-ignore="true">
         <option value="">All sources</option>
         {% for source in ('admin', 'user', 'public', 'system') %}<option value="{{ source }}" {% if source_filter == source %}selected{% endif %}>{{ source|title }}</option>{% endfor %}
-      </select>
+      </select><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span>
     </label>
-    <label>Action
+    <label>Action<span class="select-control">
       <select name="event" autocomplete="off" data-protonpass-ignore="true">
         <option value="">All actions</option>
         {% for event in events %}<option value="{{ event }}" {% if event_filter == event %}selected{% endif %}>{{ event.replace('_', ' ')|title }}</option>{% endfor %}
-      </select>
+      </select><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span>
     </label>
-    <label>Actor
+    <label>Actor<span class="select-control">
       <select name="actor" autocomplete="off" data-protonpass-ignore="true">
         <option value="">All actors</option>
         {% for actor in actors %}<option value="{{ actor.id }}" {% if actor_filter == actor.id|string %}selected{% endif %}>{{ actor.full_name }} · {{ actor.email }}</option>{% endfor %}
-      </select>
+      </select><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span>
     </label>
     <div class="audit-filter-actions"><a class="button button-secondary" href="{{ url_for('main.audit_log') }}">Clear</a><button class="button button-primary" type="submit"><i class="fa-solid fa-filter" aria-hidden="true"></i> Apply Filters</button></div>
   </form>

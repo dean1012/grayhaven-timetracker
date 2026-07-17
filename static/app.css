@@ -295,6 +295,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .audit-table { min-width: 1320px; }
 .audit-table code { color: var(--cool-grey); overflow-wrap: anywhere; }
 .audit-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: 1rem; margin-bottom: 1.25rem; }
+.audit-filters .select-control i { right: 1.5rem; }
 .audit-filter-actions { display: flex; gap: .65rem; }
 .audit-summary, .table-summary, .pagination { display: flex; align-items: center; justify-content: space-between; gap: 1rem; color: var(--cool-grey); font-size: .82rem; }
 .audit-summary { padding: .8rem 0; border-top: 1px solid var(--charcoal-border); }
@@ -348,6 +349,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .summary-card strong { color: var(--soft-white); font-size: 1.7rem; }
 .report-page > .panel { padding: 1.7rem; margin-bottom: 1.5rem; }
 .report-panel { padding: 1.7rem; }
+.report-panel + .report-panel { margin-top: 1.5rem; }
 .data-table { width: 100%; border-collapse: collapse; font-size: .86rem; }
 .data-table th, .data-table td { padding: .85rem .7rem; text-align: left; vertical-align: top; border-bottom: 1px solid color-mix(in srgb, var(--charcoal-border) 65%, transparent); }
 .data-table th { color: var(--primary-accent); font-size: .73rem; letter-spacing: .1em; text-transform: uppercase; }
