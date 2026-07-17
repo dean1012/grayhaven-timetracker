@@ -11,15 +11,16 @@
   <div class="panel form-panel">
     <p class="eyebrow">ACCESS MANAGEMENT</p>
     <h1>New User</h1>
-    <p class="muted">The account is created as a User. A temporary password and authenticator setup will be shown once after creation.</p>
-    <form method="post" class="form-stack">
+    <p class="muted">Select the account role. A temporary password and authenticator setup will be shown once after creation.</p>
+    <form method="post" class="form-stack" data-role-create-form>
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>First Name<input name="first_name" value="{{ request.form.get('first_name', '') }}" maxlength="100" required autofocus autocomplete="off" data-protonpass-ignore="true"></label>
       <label>Last Name<input name="last_name" value="{{ request.form.get('last_name', '') }}" maxlength="100" required autocomplete="off" data-protonpass-ignore="true"></label>
       <label>Email Address<input type="email" name="email" value="{{ request.form.get('email', '') }}" maxlength="255" required></label>
+      <label>Role<span class="select-control"><select name="role" required autocomplete="off" data-protonpass-ignore="true"><option value="user" {% if request.form.get('role', 'user') == 'user' %}selected{% endif %}>User</option><option value="admin" {% if request.form.get('role') == 'admin' %}selected{% endif %}>Administrator</option></select><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span></label>
       <div class="form-actions">
         <a class="button button-secondary" href="{{ url_for('main.users') }}">Cancel</a>
-        <button class="button button-primary" type="submit"><i class="fa-solid fa-user-plus" aria-hidden="true"></i> Create User</button>
+        <button class="button button-primary" type="submit" data-role-create-submit><i class="fa-solid fa-user-plus" aria-hidden="true" data-role-create-icon></i> <span data-role-create-label>Create User</span></button>
       </div>
     </form>
   </div>

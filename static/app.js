@@ -493,6 +493,26 @@ document.querySelectorAll(".flash").forEach((flash) => {
   }, 4500);
 });
 
+document.querySelectorAll("[data-role-create-form]").forEach((form) => {
+  const role = form.querySelector("[name=role]");
+  const submit = form.querySelector("[data-role-create-submit]");
+  const icon = form.querySelector("[data-role-create-icon]");
+  const label = form.querySelector("[data-role-create-label]");
+  if (!(role instanceof HTMLSelectElement) || !(submit instanceof HTMLButtonElement)
+    || !(icon instanceof HTMLElement) || !(label instanceof HTMLElement)) {
+    return;
+  }
+  const update = () => {
+    const administrator = role.value === "admin";
+    submit.classList.toggle("button-primary", !administrator);
+    submit.classList.toggle("button-stop", administrator);
+    icon.className = `fa-solid ${administrator ? "fa-user-gear" : "fa-user-plus"}`;
+    label.textContent = administrator ? "Create Administrator" : "Create User";
+  };
+  role.addEventListener("change", update);
+  update();
+});
+
 const staleNoticeUrl = new URL(window.location.href);
 if (staleNoticeUrl.searchParams.has("stale")) {
   staleNoticeUrl.searchParams.delete("stale");

@@ -2574,6 +2574,9 @@ def new_user() -> Any:
         email = normalize_email(request.form.get("email", ""))
         if find_user_by_email(email):
             raise ValueError("A user with that email already exists.")
+        role = request.form.get("role", "user").strip()
+        if role not in {"admin", "user"}:
+            raise ValueError("Select a valid user role.")
         temporary_password = generate_temporary_password()
         password_hash = hash_password(temporary_password)
         user = User(
@@ -2583,7 +2586,7 @@ def new_user() -> Any:
             password_hash=password_hash,
             totp_secret=None,
             pending_totp_secret=None,
-            role="user",
+            role=role,
             is_enabled=True,
             password_change_required=True,
             session_version=1,
