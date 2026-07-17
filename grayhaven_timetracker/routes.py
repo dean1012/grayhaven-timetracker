@@ -2469,7 +2469,11 @@ def disable_totp() -> Any:
 def users() -> str:
     user_list = (
         get_session()
-        .scalars(select(User).order_by(User.last_name, User.first_name))
+        .scalars(
+            select(User).order_by(
+                User.is_enabled.desc(), User.last_name, User.first_name
+            )
+        )
         .all()
     )
     return render_template("users.html", users=user_list)
