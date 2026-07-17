@@ -106,12 +106,12 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .contract-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .9rem .2rem; color: var(--soft-white); border-bottom: 1px solid color-mix(in srgb, var(--charcoal-border) 60%, transparent); font-size: .92rem; }
 .contract-name-link { display: flex; align-items: center; min-width: 0; color: var(--soft-white); }
 .contract-identity { display: flex; align-items: center; gap: 1rem; min-width: 0; overflow-wrap: anywhere; }
-.contract-row-detailed { display: grid; grid-template-columns: minmax(0, 18rem) minmax(0, 18rem) minmax(0, 1fr) auto; padding-block: 1rem; }
+.contract-row-detailed { display: grid; grid-template-columns: minmax(0, 36rem) minmax(0, 14rem) minmax(0, 1fr) auto; padding-block: 1rem; }
 .contract-contact-identity { display: flex; align-items: center; gap: .5rem; min-width: 0; }
 .contract-contact-identity i { color: var(--primary-accent); }
 .contract-row-detailed .contract-identity strong { color: var(--soft-white); font-weight: 600; }
-.contract-contact-identity strong { min-width: 0; color: var(--cool-grey); font-weight: 400; overflow-wrap: anywhere; }
-.contract-contact-email { min-width: 0; color: var(--primary-accent); overflow-wrap: anywhere; }
+.contract-contact-identity strong { min-width: 0; overflow: hidden; color: var(--cool-grey); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.contract-contact-email { min-width: 0; overflow: hidden; color: var(--primary-accent); text-overflow: ellipsis; white-space: nowrap; }
 .contract-contact-email:hover { color: var(--standard-hover); }
 .contract-row i { color: var(--primary-accent); }
 .contract-row .rate { color: var(--cool-grey); font-size: .82rem; }
