@@ -414,38 +414,21 @@ if (liveReport) {
   });
 }
 
-function editableFields(form) {
-  return Array.from(form.querySelectorAll("input, select, textarea")).filter((field) => {
-    if (!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement)) {
-      return false;
-    }
-    return !["hidden", "button", "reset", "submit"].includes(field.type);
-  });
-}
+function replaceLiveRegions(page, replacement) {
+  const currentRegions = Array.from(page.querySelectorAll("[data-live-region]"));
+  const replacementRegions = Array.from(replacement.querySelectorAll("[data-live-region]"));
+  let replaced = false;
 
-function preserveLivePageInputs(page, replacement) {
-  const replacementForms = new Map();
-  replacement.querySelectorAll("form").forEach((form) => {
-    const key = `${form.method}:${form.action}`;
-    replacementForms.set(key, [...(replacementForms.get(key) || []), form]);
-  });
-  page.querySelectorAll("form").forEach((form) => {
-    const key = `${form.method}:${form.action}`;
-    const replacementForm = replacementForms.get(key)?.shift();
-    if (!replacementForm) {
-      return;
+  currentRegions.forEach((region) => {
+    const name = region.dataset.liveRegion;
+    const replacementRegion = replacementRegions.find((candidate) => candidate.dataset.liveRegion === name);
+    if (replacementRegion) {
+      region.replaceWith(replacementRegion);
+      replaced = true;
     }
-    editableFields(form).forEach((field, index) => {
-      const replacementField = editableFields(replacementForm)[index];
-      if (
-        replacementField
-        && replacementField.tagName === field.tagName
-        && replacementField.getAttribute("name") === field.getAttribute("name")
-      ) {
-        replacementField.replaceWith(field);
-      }
-    });
   });
+
+  return replaced;
 }
 
 let livePageRequestActive = false;
@@ -480,12 +463,8 @@ async function reconcileLivePage() {
     if (!replacement) {
       return;
     }
-    const viewport = document.querySelector(".app-viewport");
-    const scrollTop = viewport instanceof HTMLElement ? viewport.scrollTop : 0;
-    preserveLivePageInputs(page, replacement);
-    page.replaceWith(replacement);
-    if (viewport instanceof HTMLElement) {
-      viewport.scrollTop = scrollTop;
+    if (!replaceLiveRegions(page, replacement)) {
+      return;
     }
     livePageEtag = response.headers.get("ETag") || "";
     updateRunningTimers();

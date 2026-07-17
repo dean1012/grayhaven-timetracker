@@ -19,6 +19,7 @@
 </section>
 <section class="panel task-panel">
   <div class="panel-heading"><div><p class="eyebrow">WORK BREAKDOWN</p><h2>Tasks &amp; Subtasks</h2></div>{% if can('task:add') %}<form method="post" action="{{ url_for('main.new_task', contract_id=contract.id) }}" class="inline-form" autocomplete="off" data-protonpass-ignore="true"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input name="name" maxlength="200" placeholder="New task name" required autocomplete="off" data-protonpass-ignore="true"><button class="icon-button accent" type="submit" title="New Task" aria-label="New Task"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></form>{% endif %}</div>
+  <div data-live-region="contract-tasks">
   {% for task in contract.tasks %}
   <article class="task-item">
     <div class="task-top"><div class="task-name"><i class="fa-solid fa-layer-group task-icon" aria-hidden="true"></i><strong>{{ task.name }}</strong>{% if active_entry and active_entry.task_id == task.id and not active_entry.subtask_id %}<span class="status-pill status-running"><i class="fa-solid fa-circle" aria-hidden="true"></i> Running</span>{% elif can('timer:start') %}<form method="post" action="{{ url_for('main.start_timer') }}" autocomplete="off" data-protonpass-ignore="true"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="task_id" value="{{ task.id }}"><button class="icon-button accent" type="submit" title="{{ 'Stop the active timer first' if active_entry else 'Start task timer' }}" aria-label="Start timer for {{ task.name }}" {% if active_entry %}disabled{% endif %}><i class="fa-solid fa-play" aria-hidden="true"></i></button></form>{% endif %}</div><div class="row-actions">
@@ -36,5 +37,6 @@
     </div>
   </article>
   {% else %}<div class="empty-state"><i class="fa-solid fa-list-check" aria-hidden="true"></i><p>No tasks yet. Add the first task above.</p></div>{% endfor %}
+  </div>
 </section>
 {% endblock %}

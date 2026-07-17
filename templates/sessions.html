@@ -15,7 +15,7 @@
   </div>
   {% if can('time_entry:add_own') or can('time_entry:add_any') %}<a class="icon-button accent" href="{{ url_for('main.new_time_entry', contract_id=contract.id) }}" title="New Session" aria-label="New Session"><i class="fa-solid fa-plus" aria-hidden="true"></i></a>{% endif %}
 </section>
-<section class="panel session-directory">
+<section class="panel session-directory" data-live-region="contract-sessions">
   <div class="table-scroll">
     <table class="data-table session-table">
       <thead><tr>{% if show_users %}<th>User</th>{% endif %}<th>Task / Subtask</th><th>Start</th><th>End</th><th>Duration</th><th>Actions</th></tr></thead>

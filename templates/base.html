@@ -63,7 +63,7 @@
         </div>
         {% endif %}
       {% endwith %}
-      {% if active_entry %}{% include "active_timer.html" %}{% endif %}
+      <div data-live-region="active-timer">{% if active_entry %}{% include "active_timer.html" %}{% endif %}</div>
       {% block content %}{% endblock %}
     </div>
   </main>

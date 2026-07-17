@@ -33,7 +33,7 @@
     </span>
   </div>
 </section>{% endif %}
-<section class="panel contract-directory">
+<section class="panel contract-directory" data-live-region="client-contracts">
   <div class="panel-heading">
     <div><p class="eyebrow">CONTRACTS</p><h2>Contract Directory</h2></div>
     {% if can('contract:add') %}<a class="icon-button accent" href="{{ url_for('main.new_contract', client_id=client.id) }}" title="New Contract" aria-label="New Contract"><i class="fa-solid fa-plus" aria-hidden="true"></i></a>{% endif %}

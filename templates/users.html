@@ -5,7 +5,7 @@
   <div><p class="eyebrow">ACCESS MANAGEMENT</p><h1>Users</h1></div>
   {% if can('user:add') %}<a class="icon-button accent" href="{{ url_for('main.new_user') }}" title="New User" aria-label="New User"><i class="fa-solid fa-user-plus" aria-hidden="true"></i></a>{% endif %}
 </section>
-<section class="panel user-directory">
+<section class="panel user-directory" data-live-region="user-directory">
   <div class="table-scroll">
     <table class="data-table user-table">
       <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>

@@ -29,6 +29,7 @@
     </label>
     <div class="audit-filter-actions"><a class="button button-secondary" href="{{ url_for('main.audit_log') }}">Clear</a><button class="button button-primary" type="submit"><i class="fa-solid fa-filter" aria-hidden="true"></i> Apply Filters</button></div>
   </form>
+  <div data-live-region="audit-results">
   <div class="audit-summary"><span>{{ total }} event{{ '' if total == 1 else 's' }}</span><span>Page {{ page }} of {{ page_count }}</span></div>
   <div class="table-scroll">
     <table class="data-table audit-table">
@@ -49,5 +50,6 @@
     </table>
   </div>
   {% if previous_url or next_url %}<nav class="pagination" aria-label="Audit log pages">{% if previous_url %}<a class="button button-secondary" href="{{ previous_url }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ page }} of {{ page_count }}</span>{% if next_url %}<a class="button button-secondary" href="{{ next_url }}">Next <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></a>{% else %}<span></span>{% endif %}</nav>{% endif %}
+  </div>
 </section>
 {% endblock %}
