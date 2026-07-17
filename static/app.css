@@ -291,6 +291,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .table-scroll { overflow-x: auto; }
 .session-table { min-width: 1040px; }
 .user-table { min-width: 1180px; }
+.user-table .status-pill { display: inline-flex; align-items: center; justify-content: flex-start; width: 9rem; text-align: left; }
 .audit-table { min-width: 1320px; }
 .audit-table code { color: var(--cool-grey); overflow-wrap: anywhere; }
 .audit-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: 1rem; margin-bottom: 1.25rem; }
