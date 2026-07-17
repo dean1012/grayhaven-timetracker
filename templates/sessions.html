@@ -30,7 +30,7 @@
           <td>{{ entry.task.name }}{% if entry.subtask %} → {{ entry.subtask.name }}{% endif %}</td>
           <td>{{ format_datetime(entry.started_at, timezone_info) }}</td>
           <td>{% if entry.stopped_at %}{{ format_datetime(row.ended_at, timezone_info) }}{% else %}<span class="status-pill status-running"><i class="fa-solid fa-circle" aria-hidden="true"></i> Running</span>{% endif %}</td>
-          <td>{{ format_duration(row.seconds) }}</td>
+          <td{% if not entry.stopped_at %} data-session-start="{{ entry.started_at.isoformat() }}Z"{% endif %}>{{ format_duration(row.seconds) }}</td>
           {% if show_actions %}<td><div class="row-actions">{% if row.can_edit %}<a class="icon-button" href="{{ url_for('main.edit_time_entry', entry_id=entry.id) }}" title="Update Session" aria-label="Update Session"><i class="fa-solid fa-pen" aria-hidden="true"></i></a>{% endif %}{% if row.can_delete %}<a class="icon-button danger" href="{{ url_for('main.delete_time_entry', entry_id=entry.id) }}" title="Delete Session" aria-label="Delete Session"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>{% endif %}{% if not row.can_edit and not row.can_delete %}<span class="muted">{{ 'Running' if not entry.stopped_at else 'Administrator only' }}</span>{% endif %}</div></td>{% endif %}
         </tr>
       {% else %}

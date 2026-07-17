@@ -109,6 +109,14 @@ function updateRunningTimers() {
     const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
     timer.textContent = formatDuration(elapsed);
   });
+  document.querySelectorAll("[data-session-start]").forEach((duration) => {
+    const startedAt = Date.parse(duration.dataset.sessionStart || "");
+    if (Number.isNaN(startedAt)) {
+      return;
+    }
+    const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    duration.textContent = formatDuration(elapsed);
+  });
 }
 
 updateRunningTimers();
