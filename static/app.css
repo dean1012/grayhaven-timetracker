@@ -290,6 +290,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .share-form label { min-width: 145px; }
 .table-scroll { overflow-x: auto; }
 .session-table { min-width: 1040px; }
+.my-session-table { min-width: 1240px; }
 .user-table { min-width: 1180px; }
 .user-table .status-pill { display: inline-flex; align-items: center; justify-content: flex-start; width: 9rem; text-align: left; }
 .audit-table { min-width: 1320px; }

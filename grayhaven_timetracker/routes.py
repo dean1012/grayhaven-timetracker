@@ -89,7 +89,9 @@ from .permissions import (
     TIME_ENTRY_ADD_ANY,
     TIME_ENTRY_ADD_OWN,
     TIME_ENTRY_DELETE_ANY,
+    TIME_ENTRY_DELETE_OWN,
     TIME_ENTRY_EDIT_ANY,
+    TIME_ENTRY_EDIT_OWN,
     TIME_ENTRY_VIEW_ANY,
     TIME_ENTRY_VIEW_OWN,
     TIMER_START,
@@ -2024,6 +2026,74 @@ def contract_sessions(contract_id: int) -> str:
         ),
         next_url=(
             url_for("main.contract_sessions", contract_id=contract_id, page=page + 1)
+            if page < page_count
+            else None
+        ),
+        timezone_info=ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"])),
+    )
+
+
+@main.get("/sessions")
+@permission_required(TIME_ENTRY_VIEW_OWN)
+def my_sessions() -> str:
+    """Render the authenticated user's sessions across all contracts."""
+    try:
+        page = int(request.args.get("page", "1"))
+    except ValueError:
+        abort(400)
+    if page < 1:
+        abort(400)
+    user = cast(User, current_user())
+    database = get_session()
+    condition = TimeEntry.user_id == user.id
+    total = int(database.scalar(select(func.count(TimeEntry.id)).where(condition)) or 0)
+    page_count = max(1, (total + SESSION_PAGE_SIZE - 1) // SESSION_PAGE_SIZE)
+    if page > page_count:
+        return redirect(url_for("main.my_sessions", page=page_count))
+    entries = database.scalars(
+        select(TimeEntry)
+        .where(condition)
+        .options(
+            selectinload(TimeEntry.task)
+            .selectinload(Task.contract)
+            .selectinload(Contract.client),
+            selectinload(TimeEntry.subtask),
+        )
+        .order_by(
+            TimeEntry.stopped_at.is_(None).desc(),
+            func.coalesce(TimeEntry.stopped_at, TimeEntry.started_at).desc(),
+            TimeEntry.id.desc(),
+        )
+        .offset((page - 1) * SESSION_PAGE_SIZE)
+        .limit(SESSION_PAGE_SIZE)
+    ).all()
+    snapshot_at = now_utc()
+    session_rows = [
+        {
+            "entry": entry,
+            "ended_at": entry.stopped_at or max(snapshot_at, entry.started_at),
+            "seconds": duration_seconds(
+                entry.started_at,
+                entry.stopped_at or max(snapshot_at, entry.started_at),
+            ),
+            "can_edit": entry.stopped_at is not None
+            and (can(TIME_ENTRY_EDIT_OWN) or can(TIME_ENTRY_EDIT_ANY)),
+            "can_delete": entry.stopped_at is not None
+            and (can(TIME_ENTRY_DELETE_OWN) or can(TIME_ENTRY_DELETE_ANY)),
+        }
+        for entry in entries
+    ]
+    return render_template(
+        "my_sessions.html",
+        session_rows=session_rows,
+        total=total,
+        page=page,
+        page_count=page_count,
+        previous_url=(
+            url_for("main.my_sessions", page=page - 1) if page > 1 else None
+        ),
+        next_url=(
+            url_for("main.my_sessions", page=page + 1)
             if page < page_count
             else None
         ),

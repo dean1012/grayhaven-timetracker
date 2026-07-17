@@ -17,9 +17,10 @@
 <body class="app-body {% block body_class %}{% endblock %}">
   {% if logged_user %}
   {% set profile_active = request.endpoint in ('main.profile', 'main.required_password_change', 'main.change_password', 'main.setup_totp', 'main.confirm_totp', 'main.disable_totp', 'main.update_profile_name') %}
+  {% set sessions_active = request.endpoint == 'main.my_sessions' %}
   {% set users_active = request.endpoint in ('main.users', 'main.new_user', 'main.edit_user', 'main.reset_user_password', 'main.toggle_user_enabled', 'main.toggle_user_admin') %}
   {% set audit_active = request.endpoint == 'main.audit_log' %}
-  {% set dashboard_active = not profile_active and not users_active and not audit_active %}
+  {% set dashboard_active = not profile_active and not sessions_active and not users_active and not audit_active %}
   <header class="app-header">
     <div class="app-header-inner">
       <a class="brand" href="{{ url_for('main.dashboard') }}" aria-label="Grayhaven Systems LLC Time Tracker home">
@@ -28,6 +29,7 @@
       </a>
       <nav class="app-nav desktop-nav" aria-label="Application navigation">
         <a href="{{ url_for('main.dashboard') }}" {% if dashboard_active %}aria-current="{{ 'page' if request.endpoint == 'main.dashboard' else 'location' }}"{% endif %}><i class="fa-solid fa-gauge-high" aria-hidden="true"></i> Dashboard</a>
+        <a href="{{ url_for('main.my_sessions') }}" {% if sessions_active %}aria-current="page"{% endif %}><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> My Sessions</a>
         <a href="{{ url_for('main.profile') }}" {% if profile_active %}aria-current="{{ 'page' if request.endpoint == 'main.profile' else 'location' }}"{% endif %}><i class="fa-solid fa-user" aria-hidden="true"></i> Profile</a>
         {% if can('user:view') %}<a href="{{ url_for('main.users') }}" {% if users_active %}aria-current="{{ 'page' if request.endpoint == 'main.users' else 'location' }}"{% endif %}><i class="fa-solid fa-users" aria-hidden="true"></i> Users</a>{% endif %}
         {% if can('audit:view') %}<a href="{{ url_for('main.audit_log') }}" {% if audit_active %}aria-current="page"{% endif %}><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Audit</a>{% endif %}
@@ -40,6 +42,7 @@
         <summary class="mobile-nav-toggle" aria-label="Application menu"><i class="fa-solid fa-bars" aria-hidden="true"></i><span class="mobile-nav-label">Menu</span></summary>
         <nav class="mobile-nav-links" aria-label="Application navigation">
           <a href="{{ url_for('main.dashboard') }}" {% if dashboard_active %}aria-current="{{ 'page' if request.endpoint == 'main.dashboard' else 'location' }}"{% endif %}><i class="fa-solid fa-gauge-high" aria-hidden="true"></i> Dashboard</a>
+          <a href="{{ url_for('main.my_sessions') }}" {% if sessions_active %}aria-current="page"{% endif %}><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> My Sessions</a>
           <a href="{{ url_for('main.profile') }}" {% if profile_active %}aria-current="{{ 'page' if request.endpoint == 'main.profile' else 'location' }}"{% endif %}><i class="fa-solid fa-user" aria-hidden="true"></i> Profile</a>
           {% if can('user:view') %}<a href="{{ url_for('main.users') }}" {% if users_active %}aria-current="{{ 'page' if request.endpoint == 'main.users' else 'location' }}"{% endif %}><i class="fa-solid fa-users" aria-hidden="true"></i> Users</a>{% endif %}
           {% if can('audit:view') %}<a href="{{ url_for('main.audit_log') }}" {% if audit_active %}aria-current="page"{% endif %}><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Audit</a>{% endif %}
@@ -55,7 +58,7 @@
   {% endif %}
   <main class="app-viewport">
     {% set live_page = request.endpoint in (
-      'main.dashboard', 'main.client', 'main.contract', 'main.contract_sessions',
+      'main.dashboard', 'main.my_sessions', 'main.client', 'main.contract', 'main.contract_sessions',
       'main.users', 'main.audit_log', 'main.edit_client', 'main.delete_client',
       'main.reset_client_report_password', 'main.client_report_password_confirmation',
       'main.new_contract', 'main.edit_contract', 'main.delete_contract',

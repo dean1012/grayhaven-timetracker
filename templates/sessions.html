@@ -9,6 +9,7 @@
 </ol></nav>
 {% endblock %}
 {% block content %}
+{% set show_actions = can('time_entry:edit_any') or can('time_entry:delete_any') %}
 <section class="page-heading">
   <div>
     <p class="eyebrow">TIME SESSIONS</p>
@@ -20,7 +21,7 @@
   <div class="table-summary"><span>{{ total }} session{{ '' if total == 1 else 's' }}</span><span>Page {{ page }} of {{ page_count }}</span></div>
   <div class="table-scroll">
     <table class="data-table session-table">
-      <thead><tr>{% if show_users %}<th>User</th>{% endif %}<th>Task / Subtask</th><th>Start</th><th>End</th><th>Duration</th><th>Actions</th></tr></thead>
+      <thead><tr>{% if show_users %}<th>User</th>{% endif %}<th>Task / Subtask</th><th>Start</th><th>End</th><th>Duration</th>{% if show_actions %}<th>Actions</th>{% endif %}</tr></thead>
       <tbody>
       {% for row in session_rows %}
         {% set entry = row.entry %}
@@ -30,10 +31,10 @@
           <td>{{ format_datetime(entry.started_at, timezone_info) }}</td>
           <td>{{ format_datetime(row.ended_at, timezone_info) }}{% if not entry.stopped_at %} <span class="live-label">active</span>{% endif %}</td>
           <td>{{ format_duration(row.seconds) }}</td>
-          <td><div class="row-actions">{% if row.can_edit %}<a class="icon-button" href="{{ url_for('main.edit_time_entry', entry_id=entry.id) }}" title="Update Session" aria-label="Update Session"><i class="fa-solid fa-pen" aria-hidden="true"></i></a>{% endif %}{% if row.can_delete %}<a class="icon-button danger" href="{{ url_for('main.delete_time_entry', entry_id=entry.id) }}" title="Delete Session" aria-label="Delete Session"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>{% endif %}{% if not row.can_edit and not row.can_delete %}<span class="muted">{{ 'Running' if not entry.stopped_at else 'Administrator only' }}</span>{% endif %}</div></td>
+          {% if show_actions %}<td><div class="row-actions">{% if row.can_edit %}<a class="icon-button" href="{{ url_for('main.edit_time_entry', entry_id=entry.id) }}" title="Update Session" aria-label="Update Session"><i class="fa-solid fa-pen" aria-hidden="true"></i></a>{% endif %}{% if row.can_delete %}<a class="icon-button danger" href="{{ url_for('main.delete_time_entry', entry_id=entry.id) }}" title="Delete Session" aria-label="Delete Session"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>{% endif %}{% if not row.can_edit and not row.can_delete %}<span class="muted">{{ 'Running' if not entry.stopped_at else 'Administrator only' }}</span>{% endif %}</div></td>{% endif %}
         </tr>
       {% else %}
-        <tr><td colspan="{{ 6 if show_users else 5 }}">No time sessions have been recorded.</td></tr>
+        <tr><td colspan="{{ (6 if show_users else 5) if show_actions else (5 if show_users else 4) }}">No time sessions have been recorded.</td></tr>
       {% endfor %}
       </tbody>
     </table>

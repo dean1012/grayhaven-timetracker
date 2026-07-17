@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}My Sessions · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li aria-current="page"><span class="breadcrumb-label" title="My Sessions">My Sessions</span></li></ol></nav>{% endblock %}
+{% block content %}
+{% set show_actions = can('time_entry:edit_any') or can('time_entry:delete_any') %}
+<section class="page-heading">
+  <div><p class="eyebrow">MY TIME</p><h1>My Sessions</h1></div>
+</section>
+<section class="panel session-directory" data-live-region="my-sessions">
+  <div class="table-summary"><span>{{ total }} session{{ '' if total == 1 else 's' }}</span><span>Page {{ page }} of {{ page_count }}</span></div>
+  <div class="table-scroll">
+    <table class="data-table my-session-table">
+      <thead><tr><th>Client</th><th>Contract</th><th>Task / Subtask</th><th>Start</th><th>End</th><th>Duration</th>{% if show_actions %}<th>Actions</th>{% endif %}</tr></thead>
+      <tbody>
+      {% for row in session_rows %}
+        {% set entry = row.entry %}
+        <tr>
+          <td><a class="external-link truncate-text" href="{{ url_for('main.client', client_id=entry.task.contract.client.id) }}" title="{{ entry.task.contract.client.name }}">{{ entry.task.contract.client.name }}</a></td>
+          <td><a class="external-link truncate-text" href="{{ url_for('main.contract', contract_id=entry.task.contract.id) }}" title="{{ entry.task.contract.name }}">{{ entry.task.contract.name }}</a></td>
+          <td>{{ entry.task.name }}{% if entry.subtask %} → {{ entry.subtask.name }}{% endif %}</td>
+          <td>{{ format_datetime(entry.started_at, timezone_info) }}</td>
+          <td>{{ format_datetime(row.ended_at, timezone_info) }}{% if not entry.stopped_at %} <span class="live-label">active</span>{% endif %}</td>
+          <td>{{ format_duration(row.seconds) }}</td>
+          {% if show_actions %}<td><div class="row-actions">{% if row.can_edit %}<a class="icon-button" href="{{ url_for('main.edit_time_entry', entry_id=entry.id) }}" title="Update Session" aria-label="Update Session"><i class="fa-solid fa-pen" aria-hidden="true"></i></a>{% endif %}{% if row.can_delete %}<a class="icon-button danger" href="{{ url_for('main.delete_time_entry', entry_id=entry.id) }}" title="Delete Session" aria-label="Delete Session"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>{% endif %}{% if not row.can_edit and not row.can_delete %}<span class="muted">{{ 'Running' if not entry.stopped_at else 'Administrator only' }}</span>{% endif %}</div></td>{% endif %}
+        </tr>
+      {% else %}
+        <tr><td colspan="{{ 7 if show_actions else 6 }}">No time sessions have been recorded.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if previous_url or next_url %}<nav class="pagination" aria-label="My session pages">{% if previous_url %}<a class="button button-secondary" href="{{ previous_url }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ page }} of {{ page_count }}</span>{% if next_url %}<a class="button button-secondary" href="{{ next_url }}">Next <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></a>{% else %}<span></span>{% endif %}</nav>{% endif %}
+</section>
+{% endblock %}
