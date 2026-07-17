@@ -22,7 +22,7 @@
   </section>
   <section class="report-summary panel">
     <div class="summary-card"><span>Total duration</span><strong data-report-total-duration>{{ format_duration(report.total_seconds) }}</strong></div>
-    <div class="summary-card"><span>Estimated Cost</span><strong data-report-total-cost>{{ format_money(report.total_cost) }}</strong></div>
+    <div class="summary-card"><span>Cost</span><strong data-report-total-cost>{{ format_money(report.total_cost) }}</strong></div>
     <div class="summary-card"><span>Contracts</span><strong>{{ report.contracts|length }}</strong></div>
   </section>
   {% for contract_report in report.contracts %}
@@ -33,14 +33,14 @@
     </header>
     <section class="report-contract-summary panel">
       <div class="summary-card"><span>Contract duration</span><strong data-report-contract-total-duration>{{ format_duration(contract_report.total_seconds) }}</strong></div>
-      <div class="summary-card"><span>Estimated Cost</span><strong data-report-contract-total-cost>{{ format_money(contract_report.total_cost) }}</strong></div>
+      <div class="summary-card"><span>Cost</span><strong data-report-contract-total-cost>{{ format_money(contract_report.total_cost) }}</strong></div>
     </section>
     <section class="report-overview-grid">
       <div class="panel report-panel">
         <div class="panel-heading"><div><p class="eyebrow">SUMMARY</p><h3>Time by Task and Subtask</h3></div></div>
         <div data-report-pagination="summary">
           <table class="data-table report-task-summary-table">
-            <thead><tr><th>Task / subtask</th><th>Duration</th><th>Estimated Cost</th></tr></thead>
+            <thead><tr><th>Task / Subtask</th><th>Duration</th><th>Cost</th></tr></thead>
             <tbody>
               {% for group in contract_report.groups %}
               <tr data-report-group="{{ group.label }}">
@@ -79,7 +79,7 @@
       <div class="panel-heading"><div><p class="eyebrow">DETAIL</p><h3>Session Log</h3></div></div>
       <div data-report-pagination="sessions">
         <div class="table-scroll"><table class="data-table">
-          <thead><tr><th>User</th><th>Task / subtask</th><th>Start</th><th>End</th><th>Duration</th><th>Cost</th></tr></thead>
+          <thead><tr><th>User</th><th>Task / Subtask</th><th>Start</th><th>End</th><th>Duration</th><th>Cost</th></tr></thead>
           <tbody>
             {% for entry in contract_report.sessions %}
             <tr data-report-session data-report-group="{{ entry.label }}" data-base-seconds="{{ entry.seconds }}" data-active="{{ 'true' if entry.active else 'false' }}">
@@ -103,11 +103,11 @@
   {% endfor %}
   </div>
   </div>
-  <footer class="report-footer">
+  {% if shared_report %}<footer class="report-footer">
     <strong>CONFIDENTIAL</strong>
     <div class="report-contact">
       <p>Questions or concerns? <a class="external-link" href="{{ contact_url }}" target="_blank" rel="noopener noreferrer">Schedule a meeting with us <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i></a> or email your point of contact and we will be happy to help.</p>
     </div>
     <span class="report-footer-client">{{ report.client.name }}</span>
-  </footer>
+  </footer>{% endif %}
 </article>

@@ -15,7 +15,7 @@ from sqlcipher3 import dbapi2 as sqlcipher
 from .models import Base
 
 SQLITE_HEADER = b"SQLite format 3\x00"
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "7"
 
 
 class DatabaseError(RuntimeError):
@@ -221,6 +221,37 @@ def migrate_schema(connection: Connection) -> str | None:
         connection.exec_driver_sql(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_contract_client_name "
             "ON contract (client_id, name COLLATE NOCASE)"
+        )
+        connection.execute(
+            text(
+                "UPDATE application_metadata SET value = :version "
+                "WHERE key = 'schema_version'"
+            ),
+            {"version": "6"},
+        )
+        version = "6"
+    if version == "6":
+        contract_columns = {
+            row[1]
+            for row in connection.exec_driver_sql(
+                "PRAGMA table_info(contract)"
+            ).fetchall()
+        }
+        if "created_at" not in contract_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE contract ADD COLUMN created_at DATETIME"
+            )
+            connection.exec_driver_sql(
+                "UPDATE contract SET created_at = CURRENT_TIMESTAMP "
+                "WHERE created_at IS NULL"
+            )
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_task_contract_name "
+            "ON task (contract_id, name COLLATE NOCASE)"
+        )
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_subtask_task_name "
+            "ON subtask (task_id, name COLLATE NOCASE)"
         )
         connection.execute(
             text(

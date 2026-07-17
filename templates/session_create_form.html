@@ -1,36 +1,26 @@
 {% extends "base.html" %}
-{% block title %}Add session · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block title %}New Session · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block breadcrumbs %}
 <nav class="breadcrumbs" aria-label="Breadcrumb"><ol>
   <li><a class="breadcrumb-label" href="{{ url_for('main.client', client_id=contract.client.id) }}" title="{{ contract.client.name }}">{{ contract.client.name }}</a></li>
   <li><a class="breadcrumb-label" href="{{ url_for('main.contract', contract_id=contract.id) }}" title="{{ contract.name }}">{{ contract.name }}</a></li>
   <li><a class="breadcrumb-label" href="{{ url_for('main.contract_sessions', contract_id=contract.id) }}" title="Sessions">Sessions</a></li>
-  <li aria-current="page"><span class="breadcrumb-label" title="Add Completed Session">Add Completed Session</span></li>
+  <li aria-current="page"><span class="breadcrumb-label" title="New Session">New Session</span></li>
 </ol></nav>
 {% endblock %}
 {% block content %}
 {% set selected_assignment = request.form.get('assignment', '') %}
 {% set selected_user_id = request.form.get('user_id', logged_user.id)|int %}
-<section class="narrow-content">
-  <div class="panel form-panel">
-    <p class="eyebrow">TIME SESSION</p>
-    <h1>Add Completed Session</h1>
-    <p class="muted">{{ contract.client.name }} · {{ contract.name }}<br>Times are entered in {{ timezone_name }} and stored internally as UTC. Future or overlapping time is not accepted.</p>
-    <form method="post" class="form-stack" autocomplete="off" data-protonpass-ignore="true">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      {% if users %}<label>User<select name="user_id" required autocomplete="off" data-protonpass-ignore="true">{% for user in users %}<option value="{{ user.id }}" {% if selected_user_id == user.id %}selected{% endif %}>{{ user.full_name }} · {{ user.email }}{% if not user.is_enabled %} (disabled){% endif %}</option>{% endfor %}</select></label>{% else %}<p class="muted">Session owner: {{ logged_user.full_name }}</p>{% endif %}
-      <label>Task or Subtask
-        <select name="assignment" required autocomplete="off" data-protonpass-ignore="true">
-          {% for task in tasks %}
-          <option value="{{ task.id }}" {% if selected_assignment == task.id|string %}selected{% endif %}>{{ task.name }} (task)</option>
-          {% for subtask in task.subtasks %}<option value="{{ task.id }}:{{ subtask.id }}" {% if selected_assignment == (task.id ~ ':' ~ subtask.id) %}selected{% endif %}>{{ task.name }} / {{ subtask.name }}</option>{% endfor %}
-          {% endfor %}
-        </select>
-      </label>
-      <label>Start Time<input type="datetime-local" name="started_at" value="{{ request.form.get('started_at', start_value) }}" step="1" required autocomplete="off" data-protonpass-ignore="true"></label>
-      <label>End Time<input type="datetime-local" name="stopped_at" value="{{ request.form.get('stopped_at', end_value) }}" step="1" required autocomplete="off" data-protonpass-ignore="true"></label>
-      <div class="form-actions"><a class="button button-secondary" href="{{ url_for('main.contract_sessions', contract_id=contract.id) }}">Cancel</a><button class="button button-primary" type="submit"><i class="fa-solid fa-check" aria-hidden="true"></i> Add Session</button></div>
-    </form>
-  </div>
-</section>
+<section class="narrow-content"><div class="panel form-panel">
+  <p class="eyebrow">TIME SESSION</p><h1>New Session</h1>
+  <p class="muted">Times should be entered in {{ timezone_name }} time. Future or overlapping time is not accepted.</p>
+  <form method="post" class="form-stack" autocomplete="off" data-protonpass-ignore="true">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if users %}<label>User<span class="select-control"><select name="user_id" required autocomplete="off" data-protonpass-ignore="true">{% for user in users %}<option value="{{ user.id }}" {% if selected_user_id == user.id %}selected{% endif %}>{{ user.full_name }} · {{ user.email }}{% if not user.is_enabled %} (disabled){% endif %}</option>{% endfor %}</select><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span></label>{% else %}<p class="muted">Session owner: {{ logged_user.full_name }}</p>{% endif %}
+    <label>Task or Subtask<span class="select-control"><select name="assignment" required autocomplete="off" data-protonpass-ignore="true">{% for task in tasks %}<option value="{{ task.id }}" {% if selected_assignment == task.id|string %}selected{% endif %}>{{ task.name }}</option>{% for subtask in task.subtasks %}<option value="{{ task.id }}:{{ subtask.id }}" {% if selected_assignment == (task.id ~ ':' ~ subtask.id) %}selected{% endif %}>{{ task.name }} → {{ subtask.name }}</option>{% endfor %}{% endfor %}</select><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span></label>
+    <label>Start Time<input type="datetime-local" name="started_at" value="{{ request.form.get('started_at', start_value) }}" step="1" required autocomplete="off" data-protonpass-ignore="true"></label>
+    <label>End Time<span class="datetime-control"><input type="datetime-local" name="stopped_at" value="{{ request.form.get('stopped_at', end_value) }}" step="1" required autocomplete="off" data-protonpass-ignore="true" data-timezone="{{ timezone_name }}"><button class="icon-button" type="button" data-set-now-for="[name=stopped_at]" title="Set End Time to Now" aria-label="Set End Time to Now"><i class="fa-solid fa-clock" aria-hidden="true"></i></button></span></label>
+    <div class="form-actions"><a class="button button-secondary" href="{{ url_for('main.contract_sessions', contract_id=contract.id) }}"><i class="fa-solid fa-xmark" aria-hidden="true"></i> Cancel</a><button class="button button-primary" type="submit"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Create Session</button></div>
+  </form>
+</div></section>
 {% endblock %}

@@ -52,8 +52,8 @@ BRAND_MUTED_EMERALD = "#3FB68B"
 
 # The current PDF palette is centralized here without changing the approved
 # layout. Its printer-focused visual design will be finalized after UAT.
-PDF_BODY_TEXT = "#353B44"
-PDF_ALTERNATE_ROW = "#F2F5F7"
+PDF_BODY_TEXT = "#000000"
+PDF_ALTERNATE_ROW = BRAND_SOFT_WHITE
 PDF_FONT_REGULAR = "GrayhavenInter"
 PDF_FONT_BOLD = "GrayhavenInter-Bold"
 PDF_FALLBACK_FONT_REGULAR = "Helvetica"
@@ -196,11 +196,7 @@ def format_money(value: Decimal) -> str:
 
 def report_state_etag(report: ContractReport | ClientReport) -> str:
     """Fingerprint report structure while excluding a running timer's age."""
-    sections = (
-        (report,)
-        if isinstance(report, ContractReport)
-        else report.contracts
-    )
+    sections = (report,) if isinstance(report, ContractReport) else report.contracts
     state = {
         "client": [
             report.contract.client.id,
@@ -323,7 +319,7 @@ def build_contract_report(
         ended_at = entry.stopped_at or max(generated_at, entry.started_at)
         seconds = duration_seconds(entry.started_at, ended_at)
         label = (
-            f"{entry.task.name} / {entry.subtask.name}"
+            f"{entry.task.name} → {entry.subtask.name}"
             if entry.subtask
             else entry.task.name
         )
@@ -391,15 +387,15 @@ def build_client_report(
     *,
     snapshot_at: datetime | None = None,
 ) -> ClientReport:
-    """Snapshot every client contract, newest first, at one shared instant."""
+    """Snapshot client contracts by active work, activity, then creation date."""
     generated_at = snapshot_at or utc_now()
     contracts = database.scalars(
         select(Contract)
         .where(Contract.client_id == client.id)
         .options(joinedload(Contract.client))
-        .order_by(Contract.id.desc())
+        .order_by(Contract.created_at.desc(), Contract.id.desc())
     ).all()
-    sections = tuple(
+    unsorted_sections = tuple(
         build_contract_report(
             database,
             contract,
@@ -407,6 +403,29 @@ def build_client_report(
             snapshot_at=generated_at,
         )
         for contract in contracts
+    )
+    sections = tuple(
+        sorted(
+            unsorted_sections,
+            key=lambda section: (
+                not any(session.active for session in section.sessions),
+                -max(
+                    (
+                        (
+                            session.ended_at if not session.active else generated_at
+                        ).timestamp()
+                        for session in section.sessions
+                    ),
+                    default=float("-inf"),
+                ),
+                -(
+                    section.contract.created_at.timestamp()
+                    if section.contract.created_at is not None
+                    else float("-inf")
+                ),
+                -section.contract.id,
+            ),
+        )
     )
     return ClientReport(
         client=client,
@@ -418,15 +437,13 @@ def build_client_report(
     )
 
 
-def build_pdf(
+def build_pdf_legacy(
     report: ContractReport | ClientReport, branding_path: Path, contact_url: str
 ) -> io.BytesIO:
     """Render a client-wide or legacy contract report as a branded PDF."""
     sections = (report,) if isinstance(report, ContractReport) else report.contracts
     client = (
-        report.contract.client
-        if isinstance(report, ContractReport)
-        else report.client
+        report.contract.client if isinstance(report, ContractReport) else report.client
     )
     total_seconds = report.total_seconds
     total_cost = report.total_cost
@@ -450,10 +467,7 @@ def build_pdf(
         rightMargin=0.55 * inch,
         topMargin=0.45 * inch,
         bottomMargin=0.5 * inch,
-        title=(
-            "Grayhaven Systems LLC - Client Time Report | "
-            f"{client.name}"
-        ),
+        title=(f"Grayhaven Systems LLC - Client Time Report | {client.name}"),
         author="Grayhaven Systems LLC",
     )
     styles = getSampleStyleSheet()
@@ -538,9 +552,9 @@ def build_pdf(
     )
 
     summary_header: list[object] = [
-        "Task / subtask",
+        "Task / Subtask",
         "Duration",
-        "Estimated Cost",
+        "Cost",
     ]
     summary_group_rows: list[list[object]] = [
         [
@@ -644,7 +658,7 @@ def build_pdf(
         ]
     )
     detail_rows: list[list[object]] = [
-        ["User", "Task / subtask", "Start", "End", "Duration", "Cost"]
+        ["User", "Task / Subtask", "Start", "End", "Duration", "Cost"]
     ]
     for section in sections:
         for item in section.sessions:
@@ -752,3 +766,311 @@ def _pdf_font_names(branding_path: Path) -> tuple[str, str]:
     if PDF_FONT_BOLD not in registered:
         pdfmetrics.registerFont(TTFont(PDF_FONT_BOLD, str(bold_path)))
     return PDF_FONT_REGULAR, PDF_FONT_BOLD
+
+
+def _pdf_section_table(
+    rows: list[list[object]],
+    widths: list[float],
+    font_regular: str,
+    font_bold: str,
+    *,
+    numeric_columns: tuple[int, ...] = (),
+    font_size: int = 8,
+    highlight_total: bool = False,
+) -> Table:
+    """Build a light, printer-friendly report table with branded headers."""
+    table = Table(rows, colWidths=widths, repeatRows=1)
+    commands: list[tuple[object, ...]] = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(BRAND_GUNMETAL)),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor(BRAND_SOFT_WHITE)),
+        ("TEXTCOLOR", (0, 1), (-1, -1), colors.HexColor(PDF_BODY_TEXT)),
+        ("FONTNAME", (0, 0), (-1, 0), font_bold),
+        ("FONTNAME", (0, 1), (-1, -1), font_regular),
+        ("FONTSIZE", (0, 0), (-1, -1), font_size),
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor(BRAND_PALE_STEEL)),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        (
+            "ROWBACKGROUNDS",
+            (0, 1),
+            (-1, -1),
+            [colors.white, colors.HexColor(PDF_ALTERNATE_ROW)],
+        ),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]
+    commands.extend(
+        ("ALIGN", (column, 0), (column, -1), "RIGHT") for column in numeric_columns
+    )
+    if highlight_total:
+        commands.extend(
+            [
+                ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor(BRAND_SOFT_WHITE)),
+                ("FONTNAME", (0, -1), (-1, -1), font_bold),
+            ]
+        )
+    table.setStyle(TableStyle(commands))
+    return table
+
+
+def _pdf_chart_and_legend(
+    section: ContractReport,
+    font_regular: str,
+    font_bold: str,
+) -> Table:
+    """Render a contract pie chart and a wrapping legend matching the web report."""
+    chart = Drawing(250, 230)
+    chart.add(
+        String(
+            125,
+            214,
+            "Time Distribution",
+            fontName=font_bold,
+            fontSize=11,
+            fillColor=colors.HexColor(BRAND_DARK_LOGO_CHARCOAL),
+            textAnchor="middle",
+        )
+    )
+    pie = Pie()
+    pie.x = 46
+    pie.y = 18
+    pie.width = 155
+    pie.height = 155
+    populated_groups = [group for group in section.groups if group.seconds]
+    pie.data = [group.seconds for group in populated_groups] or [1]
+    pie.labels = None
+    pie.slices.strokeWidth = 0.4
+    for index, group in enumerate(populated_groups):
+        pie.slices[index].fillColor = colors.HexColor(group.color)
+    if not populated_groups:
+        pie.slices[0].fillColor = colors.HexColor(BRAND_COOL_GREY)
+    chart.add(pie)
+    legend_style = ParagraphStyle(
+        "Legend",
+        fontName=font_regular,
+        fontSize=7,
+        leading=9,
+        textColor=colors.HexColor(PDF_BODY_TEXT),
+    )
+    legend_limit = 12
+    legend_groups = section.groups[:legend_limit]
+    legend_rows: list[list[object]] = [
+        [
+            "",
+            Paragraph(escape(group.label), legend_style),
+            f"{format_duration(group.seconds)}  {format_money(group.cost)}",
+        ]
+        for group in legend_groups
+    ]
+    if len(section.groups) > legend_limit:
+        legend_rows.append(
+            ["", f"{len(section.groups) - legend_limit} additional items", ""]
+        )
+    if not legend_rows:
+        legend_rows.append(["", "No time recorded", "0:00:00  $0.00"])
+    legend = Table(legend_rows, colWidths=[0.13 * inch, 1.7 * inch, 1.15 * inch])
+    legend_commands: list[tuple[object, ...]] = [
+        ("FONTNAME", (0, 0), (-1, -1), font_regular),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor(PDF_BODY_TEXT)),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("ALIGN", (-1, 0), (-1, -1), "RIGHT"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]
+    for index, group in enumerate(legend_groups):
+        legend_commands.append(
+            ("BACKGROUND", (0, index), (0, index), colors.HexColor(group.color))
+        )
+    legend.setStyle(TableStyle(legend_commands))
+    overview = Table([[chart, legend]], colWidths=[3.5 * inch, 3.1 * inch])
+    overview.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    return overview
+
+
+def build_pdf(
+    report: ContractReport | ClientReport, branding_path: Path, contact_url: str
+) -> io.BytesIO:
+    """Render a client-wide, per-contract PDF snapshot for color and B/W output."""
+    sections = (report,) if isinstance(report, ContractReport) else report.contracts
+    client = (
+        report.contract.client if isinstance(report, ContractReport) else report.client
+    )
+    buffer = io.BytesIO()
+    font_regular, font_bold = _pdf_font_names(branding_path)
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(letter),
+        leftMargin=0.55 * inch,
+        rightMargin=0.55 * inch,
+        topMargin=0.9 * inch,
+        bottomMargin=0.65 * inch,
+        title=f"Grayhaven Systems LLC - Client Time Report | {client.name}",
+        author="Grayhaven Systems LLC",
+    )
+    styles = getSampleStyleSheet()
+    heading = ParagraphStyle(
+        "PdfHeading",
+        parent=styles["Heading1"],
+        fontName=font_bold,
+        fontSize=18,
+        leading=22,
+        textColor=colors.HexColor(BRAND_LIGHT_SURFACE_ACCENT),
+    )
+    section_heading = ParagraphStyle(
+        "PdfSectionHeading",
+        parent=heading,
+        fontSize=14,
+        leading=18,
+    )
+    body = ParagraphStyle(
+        "PdfBody",
+        parent=styles["BodyText"],
+        fontName=font_regular,
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor(PDF_BODY_TEXT),
+    )
+    story: list[object] = []
+    for index, section in enumerate(sections):
+        story.extend(
+            [
+                Paragraph("Client Time Report", heading),
+                Paragraph(
+                    (
+                        f"<b>Contract:</b> {escape(section.contract.name)}<br/>"
+                        f"<b>Generated:</b> "
+                        f"{format_datetime(report.generated_at, report.timezone)}"
+                    ),
+                    body,
+                ),
+                Spacer(1, 0.16 * inch),
+                Paragraph(section.contract.name, section_heading),
+                Spacer(1, 0.08 * inch),
+            ]
+        )
+        summary_rows: list[list[object]] = [["Task / Subtask", "Duration", "Cost"]]
+        summary_rows.extend(
+            [
+                [
+                    Paragraph(escape(group.label), body),
+                    format_duration(group.seconds),
+                    format_money(group.cost),
+                ]
+                for group in section.groups
+            ]
+        )
+        if not section.groups:
+            summary_rows.append(["No time recorded", "0:00:00", "$0.00"])
+        summary_rows.append(
+            [
+                "Total",
+                format_duration(section.total_seconds),
+                format_money(section.total_cost),
+            ]
+        )
+        story.append(
+            _pdf_section_table(
+                summary_rows,
+                [4.0 * inch, 1.25 * inch, 1.2 * inch],
+                font_regular,
+                font_bold,
+                numeric_columns=(2,),
+                highlight_total=True,
+            )
+        )
+        story.extend(
+            [
+                Spacer(1, 0.16 * inch),
+                _pdf_chart_and_legend(section, font_regular, font_bold),
+                PageBreak(),
+                Paragraph(section.contract.name, section_heading),
+                Paragraph("Detailed Session Log", heading),
+                Spacer(1, 0.1 * inch),
+            ]
+        )
+        detail_rows: list[list[object]] = [
+            ["User", "Task / Subtask", "Start", "End", "Duration", "Cost"]
+        ]
+        for item in section.sessions:
+            end_value = format_datetime(item.ended_at, report.timezone)
+            if item.active:
+                end_value += " (active snapshot)"
+            detail_rows.append(
+                [
+                    Paragraph(escape(item.user_name), body),
+                    Paragraph(escape(item.label), body),
+                    Paragraph(format_datetime(item.started_at, report.timezone), body),
+                    Paragraph(end_value, body),
+                    format_duration(item.seconds),
+                    format_money(item.cost),
+                ]
+            )
+        if not section.sessions:
+            detail_rows.append(["No sessions recorded", "", "", "", "", ""])
+        story.append(
+            _pdf_section_table(
+                detail_rows,
+                [
+                    1.25 * inch,
+                    2.25 * inch,
+                    1.75 * inch,
+                    1.75 * inch,
+                    0.85 * inch,
+                    0.85 * inch,
+                ],
+                font_regular,
+                font_bold,
+                numeric_columns=(5,),
+                font_size=7,
+            )
+        )
+        if index < len(sections) - 1:
+            story.append(PageBreak())
+
+    wordmark = branding_path / "grayhaven-logo-wordmark-light.png"
+
+    def header_and_footer(page_canvas: Canvas, _: object) -> None:
+        page_canvas.saveState()
+        if wordmark.is_file():
+            page_canvas.drawImage(
+                str(wordmark),
+                0.55 * inch,
+                7.08 * inch,
+                width=2.2 * inch,
+                height=0.52 * inch,
+                mask="auto",
+            )
+        page_canvas.setStrokeColor(colors.HexColor(BRAND_PRIMARY_ACCENT))
+        page_canvas.line(0.55 * inch, 6.96 * inch, 10.45 * inch, 6.96 * inch)
+        page_canvas.line(0.55 * inch, 0.42 * inch, 10.45 * inch, 0.42 * inch)
+        page_canvas.setFillColor(colors.HexColor(BRAND_LIGHT_SURFACE_ACCENT))
+        page_canvas.setFont(font_bold, 7)
+        page_canvas.drawString(0.55 * inch, 0.24 * inch, "CONFIDENTIAL")
+        page_canvas.setFillColor(colors.HexColor(PDF_BODY_TEXT))
+        page_canvas.setFont(font_regular, 6.5)
+        message = (
+            "Questions or concerns? Schedule a meeting with us or email your "
+            "point of contact and we will be happy to help."
+        )
+        page_canvas.drawCentredString(5.5 * inch, 0.24 * inch, message)
+        page_canvas.linkURL(
+            contact_url,
+            (3.58 * inch, 0.18 * inch, 4.72 * inch, 0.33 * inch),
+            relative=0,
+        )
+        page_canvas.setFillColor(colors.HexColor(BRAND_LIGHT_SURFACE_ACCENT))
+        page_canvas.setFont(font_bold, 7)
+        page_canvas.drawRightString(
+            10.45 * inch,
+            0.24 * inch,
+            f"{client.name} - Page {page_canvas.getPageNumber()}",
+        )
+        page_canvas.restoreState()
+
+    document.build(story, onFirstPage=header_and_footer, onLaterPages=header_and_footer)
+    buffer.seek(0)
+    return buffer

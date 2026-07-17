@@ -3,9 +3,8 @@
 {% block content %}
 <section class="page-heading">
   <div><p class="eyebrow">OPERATIONS OVERVIEW</p><h1>Clients &amp; Contracts</h1></div>
-  {% if can('client:add') %}<a class="button button-primary" href="{{ url_for('main.new_client') }}"><i class="fa-solid fa-plus" aria-hidden="true"></i> New Client</a>{% endif %}
+  {% if can('client:add') %}<a class="icon-button accent" href="{{ url_for('main.new_client') }}" title="New Client" aria-label="New Client"><i class="fa-solid fa-plus" aria-hidden="true"></i></a>{% endif %}
 </section>
-{% if active_entry %}{% include "active_timer.html" %}{% endif %}
 {% if not clients %}<div class="empty-state panel"><i class="fa-solid fa-folder-open" aria-hidden="true"></i><h2>No Clients Yet</h2><p>Create the first client to begin tracking contract time.</p></div>{% endif %}
 <div class="client-grid">
 {% for client in clients %}

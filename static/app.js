@@ -460,6 +460,86 @@ document.addEventListener("click", (event) => {
   });
 });
 
+document.querySelectorAll(".flash-success").forEach((flash) => {
+  window.setTimeout(() => {
+    flash.classList.add("is-dismissing");
+    window.setTimeout(() => flash.remove(), 300);
+  }, 4500);
+});
+
+function datetimeLocalNow(timeZone) {
+  const values = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date()).reduce((result, part) => {
+    result[part.type] = part.value;
+    return result;
+  }, {});
+  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second}`;
+}
+
+document.querySelectorAll("[data-set-now-for]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const input = document.querySelector(button.dataset.setNowFor || "");
+    if (input instanceof HTMLInputElement) {
+      input.value = datetimeLocalNow(input.dataset.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone);
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  });
+});
+
+document.querySelectorAll("[data-session-editor]").forEach((form) => {
+  const clientSelect = form.querySelector("select[name=client_id]");
+  const contractSelect = form.querySelector("select[name=contract_id]");
+  const assignmentSelect = form.querySelector("select[name=assignment]");
+  if (!(clientSelect instanceof HTMLSelectElement) || !(contractSelect instanceof HTMLSelectElement) || !(assignmentSelect instanceof HTMLSelectElement)) {
+    return;
+  }
+  const endpoint = (template, identifier) => (template || "").replace("/0/", `/${identifier}/`);
+  const setOptions = (select, options, selected) => {
+    select.replaceChildren(...options.map(({ value, label }) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      option.selected = String(value) === String(selected);
+      return option;
+    }));
+  };
+  const loadAssignments = async (contractId, selected = "") => {
+    const response = await window.fetch(endpoint(form.dataset.assignmentsUrlTemplate, contractId), { credentials: "same-origin" });
+    if (!response.ok) throw new Error("Unable to load assignments");
+    const tasks = await response.json();
+    const options = tasks.flatMap((task) => [
+      { value: String(task.id), label: task.name },
+      ...task.subtasks.map((subtask) => ({ value: `${task.id}:${subtask.id}`, label: `${task.name} → ${subtask.name}` })),
+    ]);
+    setOptions(assignmentSelect, options, selected || options[0]?.value);
+  };
+  const loadContracts = async (clientId, selected = "") => {
+    const response = await window.fetch(endpoint(form.dataset.contractsUrlTemplate, clientId), { credentials: "same-origin" });
+    if (!response.ok) throw new Error("Unable to load contracts");
+    const contracts = await response.json();
+    const options = contracts.map((contract) => ({ value: String(contract.id), label: contract.name }));
+    setOptions(contractSelect, options, selected || options[0]?.value);
+    if (contractSelect.value) await loadAssignments(contractSelect.value);
+  };
+  clientSelect.addEventListener("change", () => {
+    loadContracts(clientSelect.value).catch(() => {});
+  });
+  contractSelect.addEventListener("change", () => {
+    loadAssignments(contractSelect.value).catch(() => {});
+  });
+  loadContracts(clientSelect.value, contractSelect.value).then(() => {
+    loadAssignments(contractSelect.value, assignmentSelect.value).catch(() => {});
+  }).catch(() => {});
+});
+
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") {
     return;

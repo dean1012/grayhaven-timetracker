@@ -3,14 +3,14 @@
 {% block breadcrumbs %}
 <nav class="breadcrumbs" aria-label="Breadcrumb"><ol>
   <li><a class="breadcrumb-label" href="{{ url_for('main.users') }}" title="Users">Users</a></li>
-  <li aria-current="page"><span class="breadcrumb-label" title="Add User">Add User</span></li>
+  <li aria-current="page"><span class="breadcrumb-label" title="New User">New User</span></li>
 </ol></nav>
 {% endblock %}
 {% block content %}
 <section class="narrow-content">
   <div class="panel form-panel">
     <p class="eyebrow">ACCESS MANAGEMENT</p>
-    <h1>Add User</h1>
+    <h1>New User</h1>
     <p class="muted">The account is created as a standard user. A temporary password and authenticator setup will be shown once after creation.</p>
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

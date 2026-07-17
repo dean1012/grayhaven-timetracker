@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -118,6 +118,9 @@ class Contract(Base):
     contact_name: Mapped[str] = mapped_column(String(200))
     contact_email: Mapped[str] = mapped_column(String(255))
     hourly_rate_cents: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None)
+    )
     client: Mapped[Client] = relationship(back_populates="contracts")
     tasks: Mapped[list[Task]] = relationship(
         back_populates="contract", order_by="Task.id"
@@ -130,13 +133,16 @@ class Contract(Base):
 
 class Task(Base):
     __tablename__ = "task"
-    __table_args__ = (CheckConstraint("length(trim(name)) > 0", name="ck_task_name"),)
+    __table_args__ = (
+        CheckConstraint("length(trim(name)) > 0", name="ck_task_name"),
+        Index("uq_task_contract_name", "contract_id", "name", unique=True),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     contract_id: Mapped[int] = mapped_column(
         ForeignKey("contract.id", ondelete="RESTRICT"), index=True
     )
-    name: Mapped[str] = mapped_column(String(200))
+    name: Mapped[str] = mapped_column(String(200, collation="NOCASE"))
 
     contract: Mapped[Contract] = relationship(back_populates="tasks")
     subtasks: Mapped[list[Subtask]] = relationship(
@@ -149,13 +155,14 @@ class Subtask(Base):
     __tablename__ = "subtask"
     __table_args__ = (
         CheckConstraint("length(trim(name)) > 0", name="ck_subtask_name"),
+        Index("uq_subtask_task_name", "task_id", "name", unique=True),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     task_id: Mapped[int] = mapped_column(
         ForeignKey("task.id", ondelete="CASCADE"), index=True
     )
-    name: Mapped[str] = mapped_column(String(200))
+    name: Mapped[str] = mapped_column(String(200, collation="NOCASE"))
 
     task: Mapped[Task] = relationship(back_populates="subtasks")
     time_entries: Mapped[list[TimeEntry]] = relationship(back_populates="subtask")

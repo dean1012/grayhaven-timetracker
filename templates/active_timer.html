@@ -10,7 +10,7 @@
       </span>
       <strong>
         {{ active_entry.task.name }}{% if active_entry.subtask %}
-        <span>/</span> {{ active_entry.subtask.name }}{% endif %}
+        <span>→</span> {{ active_entry.subtask.name }}{% endif %}
       </strong>
     </div>
   </div>
@@ -21,17 +21,13 @@
       aria-label="Elapsed time">
       {{ format_duration(active_elapsed_seconds) }}
     </span>
-    {% if current_contract_id != active_entry.task.contract_id %}
-    <a class="button button-secondary" href="{{ url_for('main.contract', contract_id=active_entry.task.contract_id) }}">
-      Open Contract
-    </a>
-    {% endif %}
+    <a class="icon-button" href="{{ url_for('main.client', client_id=active_entry.task.contract.client_id) }}" title="View Client" aria-label="View Client"><i class="fa-solid fa-building" aria-hidden="true"></i></a>
+    <a class="icon-button" href="{{ url_for('main.contract', contract_id=active_entry.task.contract_id) }}" title="View Contract" aria-label="View Contract"><i class="fa-solid fa-file-signature" aria-hidden="true"></i></a>
+    {% if can('report:view') %}<a class="icon-button" href="{{ url_for('main.report_view', client_id=active_entry.task.contract.client_id) }}" title="View Report" aria-label="View Report"><i class="fa-solid fa-chart-column" aria-hidden="true"></i></a>{% endif %}
     <form method="post" action="{{ url_for('main.stop_timer', entry_id=active_entry.id) }}" autocomplete="off" data-protonpass-ignore="true">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="next" value="{{ request.path }}">
-      <button class="button button-stop" type="submit">
-        <i class="fa-solid fa-stop" aria-hidden="true"></i> Stop Timer
-      </button>
+      <button class="icon-button stop" type="submit" title="Stop Timer" aria-label="Stop Timer"><i class="fa-solid fa-stop" aria-hidden="true"></i></button>
     </form>
   </div>
 </aside>

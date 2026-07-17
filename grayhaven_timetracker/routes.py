@@ -24,6 +24,7 @@ from flask import (
     after_this_request,
     current_app,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -87,9 +88,7 @@ from .permissions import (
     TIME_ENTRY_ADD_ANY,
     TIME_ENTRY_ADD_OWN,
     TIME_ENTRY_DELETE_ANY,
-    TIME_ENTRY_DELETE_OWN,
     TIME_ENTRY_EDIT_ANY,
-    TIME_ENTRY_EDIT_OWN,
     TIME_ENTRY_VIEW_ANY,
     TIME_ENTRY_VIEW_OWN,
     TIMER_START,
@@ -493,6 +492,23 @@ def time_entry_overlaps(
     return bool(get_session().scalar(statement))
 
 
+def active_time_entry_for_current_user() -> TimeEntry | None:
+    """Return the signed-in user's active timer with navigation relationships."""
+    user = current_user()
+    if user is None:
+        return None
+    return get_session().scalar(
+        select(TimeEntry)
+        .where(TimeEntry.user_id == user.id, TimeEntry.stopped_at.is_(None))
+        .options(
+            selectinload(TimeEntry.task)
+            .selectinload(Task.contract)
+            .selectinload(Contract.client),
+            selectinload(TimeEntry.subtask),
+        )
+    )
+
+
 def parse_assignment(value: str, contract_id: int) -> tuple[Task, Subtask | None]:
     """Resolve one task or subtask assignment constrained to a contract."""
     parts = value.split(":")
@@ -581,6 +597,7 @@ def register_routes(app: Flask) -> None:
 
     @app.context_processor
     def inject_globals() -> dict[str, Any]:
+        active_entry = active_time_entry_for_current_user()
         return {
             "app_version": app.config["APP_VERSION"],
             "can": can,
@@ -589,6 +606,12 @@ def register_routes(app: Flask) -> None:
             "format_duration": format_duration,
             "format_money": format_money,
             "logged_user": current_user(),
+            "active_entry": active_entry,
+            "active_elapsed_seconds": (
+                duration_seconds(active_entry.started_at, now_utc())
+                if active_entry
+                else 0
+            ),
         }
 
 
@@ -772,28 +795,7 @@ def dashboard() -> str:
         )
         .all()
     )
-    active_entry = get_session().scalar(
-        select(TimeEntry)
-        .where(
-            TimeEntry.user_id == cast(User, current_user()).id,
-            TimeEntry.stopped_at.is_(None),
-        )
-        .options(
-            selectinload(TimeEntry.task)
-            .selectinload(Task.contract)
-            .selectinload(Contract.client),
-            selectinload(TimeEntry.subtask),
-        )
-    )
-    return render_template(
-        "dashboard.html",
-        clients=clients,
-        active_entry=active_entry,
-        active_elapsed_seconds=(
-            duration_seconds(active_entry.started_at, now_utc()) if active_entry else 0
-        ),
-        current_contract_id=None,
-    )
+    return render_template("dashboard.html", clients=clients)
 
 
 @main.get("/clients/<int:client_id>")
@@ -1012,6 +1014,7 @@ def new_contract(client_id: int) -> Any:
             contact_name=form_text("contact_name", "Contact Name", 200),
             contact_email=normalize_email(request.form.get("contact_email", "")),
             hourly_rate_cents=int(rate * 100),
+            created_at=now_utc(),
         )
     except (InvalidOperation, ValueError) as exc:
         message = str(exc) or "Enter a valid hourly rate."
@@ -1094,28 +1097,7 @@ def contract(contract_id: int) -> str:
     )
     if item is None:
         abort(404)
-    active_entry = get_session().scalar(
-        select(TimeEntry)
-        .where(
-            TimeEntry.user_id == cast(User, current_user()).id,
-            TimeEntry.stopped_at.is_(None),
-        )
-        .options(
-            selectinload(TimeEntry.task)
-            .selectinload(Task.contract)
-            .selectinload(Contract.client),
-            selectinload(TimeEntry.subtask),
-        )
-    )
-    return render_template(
-        "contract.html",
-        contract=item,
-        active_entry=active_entry,
-        active_elapsed_seconds=(
-            duration_seconds(active_entry.started_at, now_utc()) if active_entry else 0
-        ),
-        current_contract_id=item.id,
-    )
+    return render_template("contract.html", contract=item)
 
 
 @main.post("/tasks/<int:contract_id>/new")
@@ -1127,9 +1109,22 @@ def new_task(contract_id: int) -> Any:
     except ValueError as exc:
         flash(str(exc), "error")
     else:
+        if get_session().scalar(
+            select(Task.id).where(
+                Task.contract_id == contract_item.id,
+                func.lower(Task.name) == name.lower(),
+            )
+        ):
+            flash("A task with that name already exists for this contract.", "error")
+            return redirect(url_for("main.contract", contract_id=contract_id))
         task = Task(contract=contract_item, name=name)
         get_session().add(task)
-        get_session().commit()
+        try:
+            get_session().commit()
+        except IntegrityError:
+            get_session().rollback()
+            flash("A task with that name already exists for this contract.", "error")
+            return redirect(url_for("main.contract", contract_id=contract_id))
         audit(
             "task_created",
             actor_id=cast(User, current_user()).id,
@@ -1149,9 +1144,22 @@ def new_subtask(task_id: int) -> Any:
     except ValueError as exc:
         flash(str(exc), "error")
     else:
+        if get_session().scalar(
+            select(Subtask.id).where(
+                Subtask.task_id == task.id,
+                func.lower(Subtask.name) == name.lower(),
+            )
+        ):
+            flash("A subtask with that name already exists for this task.", "error")
+            return redirect(url_for("main.contract", contract_id=task.contract_id))
         subtask = Subtask(task=task, name=name)
         get_session().add(subtask)
-        get_session().commit()
+        try:
+            get_session().commit()
+        except IntegrityError:
+            get_session().rollback()
+            flash("A subtask with that name already exists for this task.", "error")
+            return redirect(url_for("main.contract", contract_id=task.contract_id))
         audit(
             "subtask_created",
             actor_id=cast(User, current_user()).id,
@@ -1168,9 +1176,20 @@ def new_subtask(task_id: int) -> Any:
 def rename_task(task_id: int) -> Any:
     task = cast(Task, get_or_404(Task, task_id))
     try:
-        task.name = form_text("name", "Task Name", 200)
+        name = form_text("name", "Task Name", 200)
+        duplicate = get_session().scalar(
+            select(Task.id).where(
+                Task.id != task.id,
+                Task.contract_id == task.contract_id,
+                func.lower(Task.name) == name.lower(),
+            )
+        )
+        if duplicate:
+            raise ValueError("A task with that name already exists for this contract.")
+        task.name = name
         get_session().commit()
-    except ValueError as exc:
+    except (IntegrityError, ValueError) as exc:
+        get_session().rollback()
         flash(str(exc), "error")
     else:
         audit(
@@ -1188,9 +1207,20 @@ def rename_task(task_id: int) -> Any:
 def rename_subtask(subtask_id: int) -> Any:
     subtask = cast(Subtask, get_or_404(Subtask, subtask_id))
     try:
-        subtask.name = form_text("name", "Subtask Name", 200)
+        name = form_text("name", "Subtask Name", 200)
+        duplicate = get_session().scalar(
+            select(Subtask.id).where(
+                Subtask.id != subtask.id,
+                Subtask.task_id == subtask.task_id,
+                func.lower(Subtask.name) == name.lower(),
+            )
+        )
+        if duplicate:
+            raise ValueError("A subtask with that name already exists for this task.")
+        subtask.name = name
         get_session().commit()
-    except ValueError as exc:
+    except (IntegrityError, ValueError) as exc:
+        get_session().rollback()
         flash(str(exc), "error")
     else:
         audit(
@@ -1204,16 +1234,43 @@ def rename_subtask(subtask_id: int) -> Any:
     return redirect(url_for("main.contract", contract_id=subtask.task.contract_id))
 
 
-@main.post("/tasks/<int:task_id>/delete")
+@main.route("/tasks/<int:task_id>/delete", methods=["GET", "POST"])
 @permission_required(TASK_DELETE)
 def delete_task(task_id: int) -> Any:
     database = get_session()
     task = cast(Task, get_or_404(Task, task_id))
+    actor = cast(User, current_user())
+    if not actor.is_admin:
+        abort(403)
     has_time = database.scalar(
         select(func.count(TimeEntry.id)).where(TimeEntry.task_id == task.id)
     )
     if has_time:
         abort(409, "Tasks with recorded time cannot be deleted.")
+    confirmation = {
+        "eyebrow": "DELETE TASK",
+        "title": task.name,
+        "description": (
+            "Delete this task and all of its subtasks. This cannot be undone."
+        ),
+        "submit_label": "Delete Task",
+        "cancel_url": url_for("main.contract", contract_id=task.contract_id),
+        "breadcrumb_parent_label": task.contract.name,
+        "breadcrumb_parent_url": url_for("main.contract", contract_id=task.contract_id),
+        "breadcrumb_label": "Delete Task",
+        "totp_required": bool(actor.totp_secret),
+    }
+    if request.method != "POST":
+        return render_template("sensitive_action_form.html", **confirmation)
+    rate_key = sensitive_action_rate_key(actor)
+    if sensitive_action_limiter.blocked(rate_key):
+        abort(429)
+    if not sensitive_action_credentials_valid(actor):
+        sensitive_action_limiter.record_failure(rate_key)
+        audit("task_delete_rejected", actor_id=actor.id, task_id=task.id)
+        flash("The administrator credentials were not accepted.", "error")
+        return render_template("sensitive_action_form.html", **confirmation), 400
+    sensitive_action_limiter.clear(rate_key)
     contract_id = task.contract_id
     database.delete(task)
     try:
@@ -1223,7 +1280,7 @@ def delete_task(task_id: int) -> Any:
         abort(409, "Tasks with recorded time cannot be deleted.")
     audit(
         "task_deleted",
-        actor_id=cast(User, current_user()).id,
+        actor_id=actor.id,
         contract_id=contract_id,
         task_id=task_id,
     )
@@ -1231,17 +1288,42 @@ def delete_task(task_id: int) -> Any:
     return redirect(url_for("main.contract", contract_id=contract_id))
 
 
-@main.post("/subtasks/<int:subtask_id>/delete")
+@main.route("/subtasks/<int:subtask_id>/delete", methods=["GET", "POST"])
 @permission_required(TASK_DELETE)
 def delete_subtask(subtask_id: int) -> Any:
     database = get_session()
     subtask = cast(Subtask, get_or_404(Subtask, subtask_id))
+    actor = cast(User, current_user())
+    if not actor.is_admin:
+        abort(403)
     has_time = database.scalar(
         select(func.count(TimeEntry.id)).where(TimeEntry.subtask_id == subtask.id)
     )
     if has_time:
         abort(409, "Subtasks with recorded time cannot be deleted.")
     contract_id = subtask.task.contract_id
+    confirmation = {
+        "eyebrow": "DELETE SUBTASK",
+        "title": subtask.name,
+        "description": "Delete this subtask. This cannot be undone.",
+        "submit_label": "Delete Subtask",
+        "cancel_url": url_for("main.contract", contract_id=contract_id),
+        "breadcrumb_parent_label": subtask.task.contract.name,
+        "breadcrumb_parent_url": url_for("main.contract", contract_id=contract_id),
+        "breadcrumb_label": "Delete Subtask",
+        "totp_required": bool(actor.totp_secret),
+    }
+    if request.method != "POST":
+        return render_template("sensitive_action_form.html", **confirmation)
+    rate_key = sensitive_action_rate_key(actor)
+    if sensitive_action_limiter.blocked(rate_key):
+        abort(429)
+    if not sensitive_action_credentials_valid(actor):
+        sensitive_action_limiter.record_failure(rate_key)
+        audit("subtask_delete_rejected", actor_id=actor.id, subtask_id=subtask.id)
+        flash("The administrator credentials were not accepted.", "error")
+        return render_template("sensitive_action_form.html", **confirmation), 400
+    sensitive_action_limiter.clear(rate_key)
     database.delete(subtask)
     try:
         database.commit()
@@ -1250,7 +1332,7 @@ def delete_subtask(subtask_id: int) -> Any:
         abort(409, "Subtasks with recorded time cannot be deleted.")
     audit(
         "subtask_deleted",
-        actor_id=cast(User, current_user()).id,
+        actor_id=actor.id,
         contract_id=contract_id,
         task_id=subtask.task_id,
         subtask_id=subtask_id,
@@ -1466,10 +1548,8 @@ def contract_sessions(contract_id: int) -> str:
                 entry.started_at,
                 entry.stopped_at or max(snapshot_at, entry.started_at),
             ),
-            "can_edit": entry.stopped_at is not None
-            and time_entry_allowed(entry, TIME_ENTRY_EDIT_OWN, TIME_ENTRY_EDIT_ANY),
-            "can_delete": entry.stopped_at is not None
-            and time_entry_allowed(entry, TIME_ENTRY_DELETE_OWN, TIME_ENTRY_DELETE_ANY),
+            "can_edit": entry.stopped_at is not None and can(TIME_ENTRY_EDIT_ANY),
+            "can_delete": entry.stopped_at is not None and can(TIME_ENTRY_DELETE_ANY),
         }
         for entry in entries
     ]
@@ -1482,8 +1562,55 @@ def contract_sessions(contract_id: int) -> str:
     )
 
 
+@main.get("/api/clients/<int:client_id>/contracts")
+@permission_required(TIME_ENTRY_EDIT_ANY)
+def session_client_contracts(client_id: int) -> Response:
+    """Return contracts for the selected session client without inline script data."""
+    contracts = (
+        get_session()
+        .scalars(
+            select(Contract)
+            .where(Contract.client_id == client_id)
+            .order_by(Contract.name)
+        )
+        .all()
+    )
+    return jsonify(
+        [{"id": contract.id, "name": contract.name} for contract in contracts]
+    )
+
+
+@main.get("/api/contracts/<int:contract_id>/assignments")
+@permission_required(TIME_ENTRY_EDIT_ANY)
+def session_contract_assignments(contract_id: int) -> Response:
+    """Return task and subtask options for the selected session contract."""
+    tasks = (
+        get_session()
+        .scalars(
+            select(Task)
+            .where(Task.contract_id == contract_id)
+            .options(selectinload(Task.subtasks))
+            .order_by(Task.name)
+        )
+        .all()
+    )
+    return jsonify(
+        [
+            {
+                "id": task.id,
+                "name": task.name,
+                "subtasks": [
+                    {"id": subtask.id, "name": subtask.name}
+                    for subtask in task.subtasks
+                ],
+            }
+            for task in tasks
+        ]
+    )
+
+
 @main.route("/sessions/<int:entry_id>/edit", methods=["GET", "POST"])
-@login_required
+@permission_required(TIME_ENTRY_EDIT_ANY)
 def edit_time_entry(entry_id: int) -> Any:
     database = get_session()
     entry = database.scalar(
@@ -1497,30 +1624,55 @@ def edit_time_entry(entry_id: int) -> Any:
     )
     if entry is None:
         abort(404)
-    if not time_entry_allowed(entry, TIME_ENTRY_EDIT_OWN, TIME_ENTRY_EDIT_ANY):
-        abort(403)
     if entry.stopped_at is None:
         abort(409, "Stop an active timer before editing it.")
-    contract_id = entry.task.contract_id
+    contract_item = entry.task.contract
+    client_item = contract_item.client
     tasks = database.scalars(
         select(Task)
-        .where(Task.contract_id == contract_id)
+        .where(Task.contract_id == contract_item.id)
         .options(selectinload(Task.subtasks))
-        .order_by(Task.id)
+        .order_by(Task.name)
+    ).all()
+    clients = database.scalars(select(Client).order_by(Client.name)).all()
+    users = database.scalars(
+        select(User).order_by(User.last_name, User.first_name, User.email)
     ).all()
     timezone_name = cast(str, current_app.config["DISPLAY_TIMEZONE"])
     if request.method != "POST":
         return render_template(
             "session_form.html",
             entry=entry,
+            client=client_item,
+            contract=contract_item,
+            clients=clients,
+            users=users,
             tasks=tasks,
             timezone_name=timezone_name,
             start_value=datetime_local_value(entry.started_at, timezone_name),
             end_value=datetime_local_value(entry.stopped_at, timezone_name),
         )
     try:
+        raw_user_id = request.form.get("user_id", "")
+        raw_client_id = request.form.get("client_id", "")
+        raw_contract_id = request.form.get("contract_id", "")
+        if not all(
+            value.isdigit() for value in (raw_user_id, raw_client_id, raw_contract_id)
+        ):
+            raise ValueError("Select a valid user, client, and contract.")
+        entry_user = database.get(User, int(raw_user_id))
+        selected_client = database.get(Client, int(raw_client_id))
+        selected_contract = database.get(Contract, int(raw_contract_id))
+        if (
+            entry_user is None
+            or not entry_user.is_enabled
+            or selected_client is None
+            or selected_contract is None
+            or selected_contract.client_id != selected_client.id
+        ):
+            raise ValueError("Select a valid user, client, and contract.")
         task, subtask = parse_assignment(
-            request.form.get("assignment", ""), contract_id
+            request.form.get("assignment", ""), selected_contract.id
         )
         started_at = local_datetime_to_utc(
             request.form.get("started_at", ""),
@@ -1539,7 +1691,7 @@ def edit_time_entry(entry_id: int) -> Any:
         if stopped_at > now_utc():
             raise ValueError("End time cannot be in the future.")
         if time_entry_overlaps(
-            entry.user_id,
+            entry_user.id,
             started_at,
             stopped_at,
             exclude_entry_id=entry.id,
@@ -1547,7 +1699,24 @@ def edit_time_entry(entry_id: int) -> Any:
             raise ValueError("This time overlaps another session for the user.")
     except (OverflowError, ValueError) as exc:
         flash(str(exc), "error")
-        return redirect(url_for("main.edit_time_entry", entry_id=entry.id), code=303)
+        return render_template(
+            "session_form.html",
+            entry=entry,
+            client=client_item,
+            contract=contract_item,
+            clients=clients,
+            users=users,
+            tasks=tasks,
+            timezone_name=timezone_name,
+            start_value=request.form.get(
+                "started_at", datetime_local_value(entry.started_at, timezone_name)
+            ),
+            end_value=request.form.get(
+                "stopped_at", datetime_local_value(entry.stopped_at, timezone_name)
+            ),
+        ), 400
+    original_contract_id = entry.task.contract_id
+    entry.user = entry_user
     entry.task = task
     entry.subtask = subtask
     entry.started_at = started_at
@@ -1561,15 +1730,17 @@ def edit_time_entry(entry_id: int) -> Any:
         "time_entry_updated",
         actor_id=cast(User, current_user()).id,
         user_id=entry.user_id,
-        contract_id=contract_id,
+        client_id=selected_client.id,
+        contract_id=selected_contract.id,
+        previous_contract_id=original_contract_id,
         time_entry_id=entry.id,
     )
     flash("Time session updated.", "success")
-    return redirect(url_for("main.contract_sessions", contract_id=contract_id))
+    return redirect(url_for("main.contract_sessions", contract_id=selected_contract.id))
 
 
-@main.post("/sessions/<int:entry_id>/delete")
-@login_required
+@main.route("/sessions/<int:entry_id>/delete", methods=["GET", "POST"])
+@permission_required(TIME_ENTRY_DELETE_ANY)
 def delete_time_entry(entry_id: int) -> Any:
     database = get_session()
     entry = database.scalar(
@@ -1579,17 +1750,42 @@ def delete_time_entry(entry_id: int) -> Any:
     )
     if entry is None:
         abort(404)
-    if not time_entry_allowed(entry, TIME_ENTRY_DELETE_OWN, TIME_ENTRY_DELETE_ANY):
-        abort(403)
     if entry.stopped_at is None:
         abort(409, "Stop an active timer before deleting it.")
     contract_id = entry.task.contract_id
     user_id = entry.user_id
+    actor = cast(User, current_user())
+    confirmation = {
+        "eyebrow": "DELETE SESSION",
+        "title": "Delete Time Session",
+        "description": (
+            "Delete this completed time session. Reports will no longer include it."
+        ),
+        "submit_label": "Delete Session",
+        "cancel_url": url_for("main.contract_sessions", contract_id=contract_id),
+        "breadcrumb_parent_label": entry.task.contract.name,
+        "breadcrumb_parent_url": url_for(
+            "main.contract_sessions", contract_id=contract_id
+        ),
+        "breadcrumb_label": "Delete Session",
+        "totp_required": bool(actor.totp_secret),
+    }
+    if request.method != "POST":
+        return render_template("sensitive_action_form.html", **confirmation)
+    rate_key = sensitive_action_rate_key(actor)
+    if sensitive_action_limiter.blocked(rate_key):
+        abort(429)
+    if not sensitive_action_credentials_valid(actor):
+        sensitive_action_limiter.record_failure(rate_key)
+        audit("time_entry_delete_rejected", actor_id=actor.id, time_entry_id=entry.id)
+        flash("The administrator credentials were not accepted.", "error")
+        return render_template("sensitive_action_form.html", **confirmation), 400
+    sensitive_action_limiter.clear(rate_key)
     database.delete(entry)
     database.commit()
     audit(
         "time_entry_deleted",
-        actor_id=cast(User, current_user()).id,
+        actor_id=actor.id,
         user_id=user_id,
         contract_id=contract_id,
         time_entry_id=entry_id,
@@ -2134,71 +2330,53 @@ def shared_report_live(token: str) -> Any:
     )
 
 
-@main.get("/reports/<int:contract_id>")
+@main.get("/reports/<int:client_id>")
 @permission_required(REPORT_VIEW)
-def report_view(contract_id: int) -> str:
-    contract_item = get_session().scalar(
-        select(Contract)
-        .where(Contract.id == contract_id)
-        .options(selectinload(Contract.client))
-    )
-    if contract_item is None:
-        abort(404)
+def report_view(client_id: int) -> str:
+    client_item = cast(Client, get_or_404(Client, client_id))
     report = build_client_report(
         get_session(),
-        contract_item.client,
+        client_item,
         cast(str, current_app.config["DISPLAY_TIMEZONE"]),
     )
     audit(
         "report_viewed",
         user_id=cast(User, current_user()).id,
-        client_id=contract_item.client_id,
+        client_id=client_item.id,
     )
     etag = report_state_etag(report)
     return render_template(
-        "report.html",
+        "authenticated_report.html",
         report=report,
         shared_report=False,
         report_etag=etag,
-        live_report_url=url_for("main.report_live", contract_id=contract_id),
+        live_report_url=url_for("main.report_live", client_id=client_item.id),
     )
 
 
-@main.get("/reports/<int:contract_id>/live")
+@main.get("/reports/<int:client_id>/live")
 @permission_required(REPORT_VIEW)
-def report_live(contract_id: int) -> Any:
-    contract_item = get_session().scalar(
-        select(Contract)
-        .where(Contract.id == contract_id)
-        .options(selectinload(Contract.client))
-    )
-    if contract_item is None:
-        abort(404)
+def report_live(client_id: int) -> Any:
+    client_item = cast(Client, get_or_404(Client, client_id))
     report = build_client_report(
         get_session(),
-        contract_item.client,
+        client_item,
         cast(str, current_app.config["DISPLAY_TIMEZONE"]),
     )
     return live_report_response(
         report,
         shared_report=False,
-        live_report_url=url_for("main.report_live", contract_id=contract_id),
+        live_report_url=url_for("main.report_live", client_id=client_item.id),
     )
 
 
-@main.get("/reports/<int:contract_id>.pdf")
+@main.get("/reports/<int:client_id>.pdf")
 @permission_required(REPORT_GENERATE)
-def report_pdf(contract_id: int) -> Any:
-    contract_item = get_session().scalar(
-        select(Contract)
-        .where(Contract.id == contract_id)
-        .options(selectinload(Contract.client))
-    )
-    if contract_item is None:
-        abort(404)
+def report_pdf(client_id: int) -> Any:
+    client_item = cast(Client, get_or_404(Client, client_id))
     report = build_client_report(
         get_session(),
-        contract_item.client,
+        client_item,
         cast(str, current_app.config["DISPLAY_TIMEZONE"]),
     )
     pdf = build_pdf(
@@ -2206,11 +2384,11 @@ def report_pdf(contract_id: int) -> Any:
         Path(cast(str, current_app.config["BRANDING_PATH"])),
         cast(str, current_app.config["CONTACT_URL"]),
     )
-    filename = f"client-time-report-{contract_item.client_id}.pdf"
+    filename = f"client-time-report-{client_item.id}.pdf"
     audit(
         "report_generated",
         user_id=cast(User, current_user()).id,
-        client_id=contract_item.client_id,
+        client_id=client_item.id,
     )
     return send_file(
         pdf,
