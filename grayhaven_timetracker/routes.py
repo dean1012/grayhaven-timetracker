@@ -582,6 +582,29 @@ def deleted_resource_parent_id(
     return None
 
 
+def created_resource_parent_id(
+    child_key: str, child_id: int, parent_key: str
+) -> int | None:
+    """Recover a session's original parent from its creation audit event."""
+    statement = (
+        select(AuditEvent)
+        .where(AuditEvent.event == "time_entry_created")
+        .order_by(AuditEvent.id)
+    )
+    for event in get_session().scalars(statement):
+        details = event.details
+        child_label = details.get(child_key)
+        parent_label = details.get(parent_key)
+        if not isinstance(child_label, str) or not isinstance(parent_label, str):
+            continue
+        if f"(ID: {child_id})" not in child_label:
+            continue
+        match = re.search(r"\(ID:\s*(\d+)\)", parent_label)
+        if match:
+            return int(match.group(1))
+    return None
+
+
 def time_entry_allowed(
     entry: TimeEntry, own_permission: str, any_permission: str
 ) -> bool:
@@ -739,13 +762,22 @@ def register_routes(app: Flask) -> None:
         session_match = re.fullmatch(r"/sessions/(\d+)(?:/.*)?", path)
         if session_match:
             entry_id = int(session_match.group(1))
-            contract_id = deleted_resource_parent_id(
+            contract_id = created_resource_parent_id(
+                "time entry", entry_id, "contract"
+            ) or deleted_resource_parent_id(
                 ("time_entry_deleted",), "time_entry", entry_id, "contract"
             )
             if contract_id is not None and get_session().get(Contract, contract_id):
                 return redirect(
                     url_for("main.contract_sessions", contract_id=contract_id)
                 )
+            client_id = created_resource_parent_id("time entry", entry_id, "client")
+            if client_id is None:
+                client_id = deleted_resource_parent_id(
+                    ("time_entry_deleted",), "time_entry", entry_id, "client"
+                )
+            if client_id is not None and get_session().get(Client, client_id):
+                return redirect(url_for("main.client", client_id=client_id))
             return redirect(url_for("main.dashboard"))
 
         return error
