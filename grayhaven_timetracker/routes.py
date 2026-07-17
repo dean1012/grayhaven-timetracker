@@ -559,11 +559,12 @@ def user_setup_mailto(user: User, temporary_password: str) -> str:
         else url_for("main.login", _external=True)
     )
     role = "Administrator" if user.is_admin else "User"
+    article = "an" if user.is_admin else "a"
     body = "\n".join(
         [
             f"{escape(user.full_name)},",
             "",
-            f"Grayhaven Systems LLC has added you as a {role} in the Grayhaven "
+            f"Grayhaven Systems LLC has added you as {article} {role} in the Grayhaven "
             "Systems LLC Time Tracker application.",
             "",
             "<b>You can access the Time Tracker application at the URL below:</b>",
