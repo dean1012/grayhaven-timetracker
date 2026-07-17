@@ -343,7 +343,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .data-table th, .data-table td { padding: .85rem .7rem; text-align: left; vertical-align: top; border-bottom: 1px solid color-mix(in srgb, var(--charcoal-border) 65%, transparent); }
 .data-table th { color: var(--primary-accent); font-size: .73rem; letter-spacing: .1em; text-transform: uppercase; }
 .report-page .data-table td:nth-last-child(-n+3), .report-page .data-table th:nth-last-child(-n+3) { text-align: right; }
-.report-page .report-task-summary-table th { text-align: left; }
+.report-page .data-table.report-task-summary-table th { text-align: left; }
 .report-pagination { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-sm); margin-top: var(--space-sm); color: var(--cool-grey); font-size: .82rem; }
 .live-label { display: inline-block; margin-left: .4rem; padding: .12rem .35rem; color: var(--alert-success); border: 1px solid color-mix(in srgb, var(--alert-success) 45%, transparent); border-radius: var(--border-radius-sm); font-size: .68rem; }
 .report-page hr { margin: 2.5rem 0 1rem; border: 0; border-top: 1px solid var(--charcoal-border); }
