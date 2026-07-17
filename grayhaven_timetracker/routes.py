@@ -727,6 +727,7 @@ def register_routes(app: Flask) -> None:
             r"/(?:clients|reports)/(\d+)(?:/.*)?", path
         )
         if client_match:
+            flash("The client was deleted.", "warning")
             return redirect(url_for("main.dashboard"))
 
         contract_match = re.fullmatch(r"/contracts/(\d+)(?:/.*)?", path)
@@ -736,7 +737,9 @@ def register_routes(app: Flask) -> None:
                 ("contract_deleted",), "contract", contract_id, "client"
             )
             if client_id is not None and get_session().get(Client, client_id):
+                flash("The contract was deleted.", "warning")
                 return redirect(url_for("main.client", client_id=client_id))
+            flash("The contract was deleted.", "warning")
             return redirect(url_for("main.dashboard"))
 
         task_match = re.fullmatch(r"/tasks/(\d+)(?:/.*)?", path)
@@ -746,7 +749,9 @@ def register_routes(app: Flask) -> None:
                 ("task_deleted",), "task", task_id, "contract"
             )
             if contract_id is not None and get_session().get(Contract, contract_id):
+                flash("The task was deleted.", "warning")
                 return redirect(url_for("main.contract", contract_id=contract_id))
+            flash("The task was deleted.", "warning")
             return redirect(url_for("main.dashboard"))
 
         subtask_match = re.fullmatch(r"/subtasks/(\d+)(?:/.*)?", path)
@@ -756,7 +761,9 @@ def register_routes(app: Flask) -> None:
                 ("subtask_deleted",), "subtask", subtask_id, "contract"
             )
             if contract_id is not None and get_session().get(Contract, contract_id):
+                flash("The subtask was deleted.", "warning")
                 return redirect(url_for("main.contract", contract_id=contract_id))
+            flash("The subtask was deleted.", "warning")
             return redirect(url_for("main.dashboard"))
 
         session_match = re.fullmatch(r"/sessions/(\d+)(?:/.*)?", path)
@@ -766,9 +773,11 @@ def register_routes(app: Flask) -> None:
                 "time entry", entry_id, "contract"
             )
             if contract_id is not None and get_session().get(Contract, contract_id):
+                flash("This time entry was deleted.", "warning")
                 return redirect(
                     url_for("main.contract_sessions", contract_id=contract_id)
                 )
+            flash("This time entry was deleted.", "warning")
             return redirect(url_for("main.dashboard"))
 
         return (
@@ -2025,6 +2034,7 @@ def edit_time_entry(entry_id: int) -> Any:
     else:
         abort(404)
     if original_contract_id != contract_item.id:
+        flash("This time entry has been moved.", "warning")
         if database.get(Contract, original_contract_id) is not None:
             return redirect(
                 url_for(

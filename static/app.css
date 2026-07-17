@@ -254,6 +254,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .flash.is-dismissing { opacity: 0; transform: translateY(-.5rem); }
 .flash-error { background: color-mix(in srgb, var(--alert-error) 14%, transparent); border-color: color-mix(in srgb, var(--alert-error) 50%, transparent); }
 .flash-success { background: color-mix(in srgb, var(--alert-success) 14%, transparent); border-color: color-mix(in srgb, var(--alert-success) 50%, transparent); }
+.flash-warning { background: color-mix(in srgb, var(--alert-warning) 14%, transparent); border-color: color-mix(in srgb, var(--alert-warning) 50%, transparent); }
 .app-footer { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: var(--space-sm); width: min(1680px, calc(100% - var(--container-padding) - var(--container-padding))); margin: 0 auto; padding: 1.2rem 0 2.5rem; color: var(--slate-grey); border-top: 1px solid color-mix(in srgb, var(--charcoal-border) 60%, transparent); font-size: .78rem; white-space: nowrap; }
 .app-footer-confidential { color: var(--primary-accent); font-weight: var(--font-weight-bold); letter-spacing: .16em; }
 .active-timer { display: flex; align-items: center; justify-content: space-between; gap: 2rem; margin-bottom: 1.5rem; padding: 1.2rem 1.4rem; background: linear-gradient(180deg, color-mix(in srgb, var(--alert-success) 8%, transparent), color-mix(in srgb, var(--background-mid) 92%, transparent)); border-color: color-mix(in srgb, var(--alert-success) 55%, transparent); }
