@@ -1,9 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Sessions · {{ contract.name }} · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}
+<nav class="breadcrumbs" aria-label="Breadcrumb"><ol>
+  <li><a class="breadcrumb-label" href="{{ url_for('main.client', client_id=contract.client.id) }}" title="{{ contract.client.name }}">{{ contract.client.name }}</a></li>
+  <li><a class="breadcrumb-label" href="{{ url_for('main.contract', contract_id=contract.id) }}" title="{{ contract.name }}">{{ contract.name }}</a></li>
+  <li aria-current="page"><span class="breadcrumb-label" title="Sessions">Sessions</span></li>
+</ol></nav>
+{% endblock %}
 {% block content %}
 <section class="page-heading">
   <div>
-    <a class="back-link" href="{{ url_for('main.contract', contract_id=contract.id) }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to Contract</a>
     <p class="eyebrow">TIME SESSIONS</p>
     <h1>{{ contract.name }}</h1>
   </div>
