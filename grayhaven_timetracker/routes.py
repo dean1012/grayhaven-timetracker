@@ -669,6 +669,13 @@ def register_routes(app: Flask) -> None:
     app.before_request(load_current_user)
     app.register_blueprint(main)
 
+    def live_page_etag() -> str:
+        """Fingerprint application state without volatile rendered markup."""
+        revision = get_session().scalar(select(func.max(AuditEvent.id))) or 0
+        actor = current_user()
+        state = f"{actor.id if actor else 'public'}|{request.full_path}|{revision}"
+        return hashlib.sha256(state.encode()).hexdigest()
+
     @app.before_request
     def enforce_required_password_change() -> Any:
         user = current_user()
@@ -697,7 +704,7 @@ def register_routes(app: Flask) -> None:
             or response.mimetype != "text/html"
         ):
             return response
-        etag = hashlib.sha256(response.get_data()).hexdigest()
+        etag = live_page_etag()
         response.set_etag(etag)
         if request.if_none_match.contains(etag):
             response.status_code = 304
@@ -721,6 +728,7 @@ def register_routes(app: Flask) -> None:
                 if active_entry
                 else 0
             ),
+            "live_page_etag": live_page_etag(),
         }
 
 

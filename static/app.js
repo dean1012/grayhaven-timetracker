@@ -482,6 +482,7 @@ async function reconcileLivePage() {
 
 const livePage = document.querySelector("[data-live-page]");
 if (livePage) {
+  livePageEtag = livePage.dataset.liveEtag || "";
   window.setInterval(
     reconcileLivePage,
     Number(livePage.dataset.liveIntervalMs) || 3000,

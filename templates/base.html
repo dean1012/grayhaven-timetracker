@@ -55,7 +55,7 @@
   {% endif %}
   <main class="app-viewport">
     {% set live_page = request.endpoint in ('main.dashboard', 'main.client', 'main.contract', 'main.contract_sessions', 'main.users', 'main.audit_log') %}
-    <div class="page-shell"{% if live_page %} data-live-page data-live-interval-ms="3000"{% endif %}>
+    <div class="page-shell"{% if live_page %} data-live-page data-live-etag="{{ live_page_etag }}" data-live-interval-ms="3000"{% endif %}>
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
         <div class="flash-stack">
