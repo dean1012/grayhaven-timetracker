@@ -11,7 +11,7 @@
   <div class="panel form-panel">
     <p class="eyebrow">ACCESS MANAGEMENT</p>
     <h1>New User</h1>
-    <p class="muted">The account is created as a standard user. A temporary password and authenticator setup will be shown once after creation.</p>
+    <p class="muted">The account is created as a User. A temporary password and authenticator setup will be shown once after creation.</p>
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>First Name<input name="first_name" value="{{ request.form.get('first_name', '') }}" maxlength="100" required autofocus autocomplete="off" data-protonpass-ignore="true"></label>

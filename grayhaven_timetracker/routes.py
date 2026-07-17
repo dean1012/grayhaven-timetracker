@@ -2607,7 +2607,7 @@ def new_user() -> Any:
             "Email": user.email,
             "First Name": user.first_name,
             "Last Name": user.last_name,
-            "Role": user.role,
+            "Role": "Administrator" if user.is_admin else "User",
             "Enabled": user.is_enabled,
             "Two-Factor Authentication": "Not configured",
         },
@@ -2909,9 +2909,17 @@ def toggle_user_admin(user_id: int) -> Any:
         actor_id=actor.id,
         user_id=user.id,
         source_ip=request.remote_addr,
-        changes=audit_changes(role=(previous_role, user.role)),
+        changes=audit_changes(
+            role=(
+                "Administrator" if previous_role == "admin" else "User",
+                "Administrator" if user.role == "admin" else "User",
+            )
+        ),
     )
-    flash("User promoted to administrator." if user.is_admin else "User demoted to standard user.", "success")
+    flash(
+        "User role changed to Administrator." if user.is_admin else "User role changed to User.",
+        "success",
+    )
     return redirect(url_for("main.users"))
 
 

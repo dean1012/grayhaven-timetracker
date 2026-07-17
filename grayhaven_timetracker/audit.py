@@ -101,7 +101,7 @@ def record_audit_event(
         actor_user_id=actor.id if actor else None,
         actor_email=safe_audit_text(actor.email, maximum=255) if actor else None,
         actor_name=safe_audit_text(actor.full_name, maximum=201) if actor else None,
-        actor_role=safe_audit_text(actor.role, maximum=16) if actor else None,
+        actor_role=("Administrator" if actor.is_admin else "User") if actor else None,
         ip_address=safe_audit_text(ip_address, maximum=64) if ip_address else None,
         method=safe_audit_text(method, maximum=8) if method else None,
         path=safe_audit_path(path),

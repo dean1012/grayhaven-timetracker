@@ -73,7 +73,7 @@ def _audit_user_state(user: User) -> dict[str, str | bool]:
         "Email": user.email,
         "First Name": user.first_name,
         "Last Name": user.last_name,
-        "Role": user.role,
+        "Role": "Administrator" if user.is_admin else "User",
         "Enabled": user.is_enabled,
         "Two-Factor Authentication": "Enabled" if user.totp_secret else "Disabled",
     }
