@@ -76,11 +76,12 @@ class Client(Base):
             "report_password_version >= 1",
             name="ck_client_report_password_version",
         ),
+        Index("uq_client_name", "name", unique=True),
         Index("uq_client_report_token", "report_token", unique=True),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(200))
+    name: Mapped[str] = mapped_column(String(200, collation="NOCASE"))
     contact_name: Mapped[str] = mapped_column(String(200))
     contact_email: Mapped[str] = mapped_column(String(255))
     report_password_hash: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -108,11 +109,12 @@ class Contract(Base):
             "hourly_rate_cents BETWEEN 0 AND 100000000",
             name="ck_contract_rate",
         ),
+        Index("uq_contract_client_name", "client_id", "name", unique=True),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("client.id", ondelete="RESTRICT"))
-    name: Mapped[str] = mapped_column(String(200))
+    name: Mapped[str] = mapped_column(String(200, collation="NOCASE"))
     contact_name: Mapped[str] = mapped_column(String(200))
     contact_email: Mapped[str] = mapped_column(String(255))
     hourly_rate_cents: Mapped[int] = mapped_column(Integer)

@@ -759,8 +759,13 @@ def new_client() -> Any:
     if request.method != "POST":
         return render_template("client_form.html")
     try:
+        name = form_text("name", "Client Name", 200)
+        if get_session().scalar(
+            select(Client.id).where(func.lower(Client.name) == name.lower())
+        ):
+            raise ValueError("A client with that name already exists.")
         item = Client(
-            name=form_text("name", "Client Name", 200),
+            name=name,
             contact_name=form_text("contact_name", "Contact Name", 200),
             contact_email=normalize_email(request.form.get("contact_email", "")),
             report_token=secrets.token_urlsafe(32),
@@ -770,7 +775,12 @@ def new_client() -> Any:
         flash(str(exc), "error")
         return render_template("client_form.html"), 400
     get_session().add(item)
-    get_session().commit()
+    try:
+        get_session().commit()
+    except IntegrityError:
+        get_session().rollback()
+        flash("A client with that name already exists.", "error")
+        return render_template("client_form.html"), 409
     audit(
         "client_created",
         actor_id=cast(User, current_user()).id,
@@ -786,13 +796,26 @@ def edit_client(client_id: int) -> Any:
     if request.method != "POST":
         return render_template("client_form.html", client=item)
     try:
-        item.name = form_text("name", "Client Name", 200)
+        name = form_text("name", "Client Name", 200)
+        if get_session().scalar(
+            select(Client.id).where(
+                Client.id != item.id,
+                func.lower(Client.name) == name.lower(),
+            )
+        ):
+            raise ValueError("A client with that name already exists.")
+        item.name = name
         item.contact_name = form_text("contact_name", "Contact Name", 200)
         item.contact_email = normalize_email(request.form.get("contact_email", ""))
     except ValueError as exc:
         flash(str(exc), "error")
         return render_template("client_form.html", client=item), 400
-    get_session().commit()
+    try:
+        get_session().commit()
+    except IntegrityError:
+        get_session().rollback()
+        flash("A client with that name already exists.", "error")
+        return render_template("client_form.html", client=item), 409
     audit(
         "client_updated",
         actor_id=cast(User, current_user()).id,
@@ -907,9 +930,19 @@ def new_contract(client_id: int) -> Any:
         )
         if rate < 0 or rate > Decimal("1000000"):
             raise ValueError("Hourly rate must be between $0.00 and $1,000,000.00.")
+        name = form_text("name", "Contract", 200)
+        if get_session().scalar(
+            select(Contract.id).where(
+                Contract.client_id == client_item.id,
+                func.lower(Contract.name) == name.lower(),
+            )
+        ):
+            raise ValueError(
+                "A contract with that name already exists for this client."
+            )
         contract_item = Contract(
             client=client_item,
-            name=form_text("name", "Contract", 200),
+            name=name,
             contact_name=form_text("contact_name", "Contact Name", 200),
             contact_email=normalize_email(request.form.get("contact_email", "")),
             hourly_rate_cents=int(rate * 100),
@@ -919,7 +952,12 @@ def new_contract(client_id: int) -> Any:
         flash(message, "error")
         return render_template("contract_form.html", client=client_item), 400
     get_session().add(contract_item)
-    get_session().commit()
+    try:
+        get_session().commit()
+    except IntegrityError:
+        get_session().rollback()
+        flash("A contract with that name already exists for this client.", "error")
+        return render_template("contract_form.html", client=client_item), 409
     audit(
         "contract_created",
         actor_id=cast(User, current_user()).id,
@@ -936,7 +974,18 @@ def edit_contract(contract_id: int) -> Any:
     if request.method != "POST":
         return render_template("contract_form.html", client=item.client, contract=item)
     try:
-        item.name = form_text("name", "Contract", 200)
+        name = form_text("name", "Contract", 200)
+        if get_session().scalar(
+            select(Contract.id).where(
+                Contract.id != item.id,
+                Contract.client_id == item.client_id,
+                func.lower(Contract.name) == name.lower(),
+            )
+        ):
+            raise ValueError(
+                "A contract with that name already exists for this client."
+            )
+        item.name = name
         item.contact_name = form_text("contact_name", "Contact Name", 200)
         item.contact_email = normalize_email(request.form.get("contact_email", ""))
     except ValueError as exc:
@@ -944,7 +993,14 @@ def edit_contract(contract_id: int) -> Any:
         return render_template(
             "contract_form.html", client=item.client, contract=item
         ), 400
-    get_session().commit()
+    try:
+        get_session().commit()
+    except IntegrityError:
+        get_session().rollback()
+        flash("A contract with that name already exists for this client.", "error")
+        return render_template(
+            "contract_form.html", client=item.client, contract=item
+        ), 409
     audit(
         "contract_updated",
         actor_id=cast(User, current_user()).id,

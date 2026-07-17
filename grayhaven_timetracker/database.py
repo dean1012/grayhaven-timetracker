@@ -15,7 +15,7 @@ from sqlcipher3 import dbapi2 as sqlcipher
 from .models import Base
 
 SQLITE_HEADER = b"SQLite format 3\x00"
-SCHEMA_VERSION = "5"
+SCHEMA_VERSION = "6"
 
 
 class DatabaseError(RuntimeError):
@@ -204,6 +204,23 @@ def migrate_schema(connection: Connection) -> str | None:
         connection.exec_driver_sql(
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_client_report_token "
             "ON client (report_token) WHERE report_token IS NOT NULL"
+        )
+        connection.execute(
+            text(
+                "UPDATE application_metadata SET value = :version "
+                "WHERE key = 'schema_version'"
+            ),
+            {"version": "5"},
+        )
+        version = "5"
+    if version == "5":
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_client_name "
+            "ON client (name COLLATE NOCASE)"
+        )
+        connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_contract_client_name "
+            "ON contract (client_id, name COLLATE NOCASE)"
         )
         connection.execute(
             text(
