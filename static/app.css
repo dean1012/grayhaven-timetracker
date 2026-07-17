@@ -369,7 +369,7 @@ small { color: var(--cool-grey); font-weight: 400; }
   .contract-contact-identity i { grid-column: 1; grid-row: 1; align-self: center; }
   .contract-contact-identity strong { grid-column: 2; grid-row: 1; }
   .contract-contact-email { grid-column: 2; grid-row: 2; }
-  .contract-rate-details { justify-self: start; }
+  .contract-rate-details { width: 100%; justify-content: space-between; justify-self: stretch; }
 }
 
 @media (width <768px) {
