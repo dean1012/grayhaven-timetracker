@@ -121,6 +121,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .contract-row-detailed { display: grid; grid-template-columns: minmax(0, 36rem) minmax(0, 14rem) minmax(0, 1fr) auto; padding: 1rem .6rem; border-radius: var(--border-radius-sm); transition: background var(--transition-fast); }
 .contract-row-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: .7rem .6rem; border-radius: var(--border-radius-sm); transition: background var(--transition-fast); }
 .contract-row-detailed:hover, .contract-row-summary:hover { background: color-mix(in srgb, var(--standard-hover) 10%, transparent); }
+.contract-row-detailed .contract-name-link:hover, .contract-row-summary .contract-name-link:hover { color: var(--soft-white); }
 .contract-contact-details { display: contents; }
 .contract-contact-identity { display: flex; align-items: center; gap: .5rem; min-width: 0; }
 .contract-contact-identity i { color: var(--primary-accent); }
