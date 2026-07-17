@@ -558,7 +558,7 @@ def user_setup_mailto(user: User, temporary_password: str) -> str:
         if public_base_url
         else url_for("main.login", _external=True)
     )
-    role = "administrator" if user.is_admin else "standard user"
+    role = "Administrator" if user.is_admin else "User"
     body = "\n".join(
         [
             f"{escape(user.full_name)},",
