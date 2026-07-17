@@ -322,6 +322,9 @@ small { color: var(--cool-grey); font-weight: 400; }
 .live-report-status[data-state="ended"] .running-dot { background: var(--alert-error); box-shadow: 0 0 0 3px color-mix(in srgb, var(--alert-error) 12%, transparent); animation: none; }
 .report-title { padding: 2.5rem 0 1.7rem; }
 .report-title h1 { font-size: 2.8rem; }
+.report-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.report-title-meta { color: var(--cool-grey); font-size: .86rem; text-align: right; }
+.report-title-meta p { margin-bottom: .15rem; }
 .report-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin-bottom: 1.5rem; overflow: hidden; }
 .report-contract-section { margin-bottom: 2.5rem; }
 .report-contract-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: 1rem 0; border-top: 1px solid var(--charcoal-border); }

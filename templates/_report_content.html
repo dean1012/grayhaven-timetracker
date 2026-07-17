@@ -6,19 +6,23 @@
   data-live-etag="{{ report_etag }}"
   data-live-interval-ms="3000"
 >
-  <header class="report-header">
+  {% if shared_report %}<header class="report-header">
     <img src="{{ url_for('main.branding_asset', filename='grayhaven-logo-wordmark-dark.svg') }}" alt="Grayhaven Systems LLC">
     <div class="report-meta">
       <p class="eyebrow">CONFIDENTIAL</p>
       <p>{{ 'Live Client Report' if shared_report else 'Client Time Report' }}</p>
       <p class="live-report-status" data-live-status data-state="live" aria-live="polite"><span class="running-dot" aria-hidden="true"></span><span data-live-status-label>Live</span></p>
     </div>
-  </header>
+  </header>{% endif %}
   <div class="report-viewport">
   <div class="report-content">
   <section class="report-title">
-    <p class="eyebrow">CLIENT</p>
-    <h1>{{ report.client.name }}</h1>
+    <div><p class="eyebrow">CLIENT</p><h1>{{ report.client.name }}</h1></div>
+    {% if not shared_report %}<div class="report-title-meta">
+      <p class="eyebrow">CONFIDENTIAL</p>
+      <p>Client Time Report</p>
+      <p class="live-report-status" data-live-status data-state="live" aria-live="polite"><span class="running-dot" aria-hidden="true"></span><span data-live-status-label>Live</span></p>
+    </div>{% endif %}
   </section>
   <section class="report-summary panel">
     <div class="summary-card"><span>Total duration</span><strong data-report-total-duration>{{ format_duration(report.total_seconds) }}</strong></div>
