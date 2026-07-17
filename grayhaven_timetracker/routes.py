@@ -786,7 +786,8 @@ def new_client() -> Any:
         actor_id=cast(User, current_user()).id,
         client_id=item.id,
     )
-    return render_template("client_created.html", client=item)
+    flash("The client was created successfully.", "success")
+    return redirect(url_for("main.client", client_id=item.id))
 
 
 @main.route("/clients/<int:client_id>/edit", methods=["GET", "POST"])

@@ -28,10 +28,7 @@
   {% for contract_report in report.contracts %}
   <section class="report-contract-section" data-report-contract-section data-contract-id="{{ contract_report.contract.id }}" data-hourly-rate-cents="{{ contract_report.contract.hourly_rate_cents }}">
     <header class="report-contract-heading">
-      <div>
-        <p class="eyebrow">CONTRACT {{ loop.index }}</p>
-        <h2>{{ contract_report.contract.name }}</h2>
-      </div>
+      <h2 class="report-contract-name">{{ contract_report.contract.name }}</h2>
       <p class="muted">{{ format_money(contract_report.contract.hourly_rate) }} per hour</p>
     </header>
     <section class="report-contract-summary panel">
@@ -41,20 +38,22 @@
     <section class="report-overview-grid">
       <div class="panel report-panel">
         <div class="panel-heading"><div><p class="eyebrow">SUMMARY</p><h3>Time by Task and Subtask</h3></div></div>
-        <table class="data-table">
-          <thead><tr><th>Task / subtask</th><th>Duration</th><th>Estimated Cost</th></tr></thead>
-          <tbody>
-            {% for group in contract_report.groups %}
-            <tr data-report-group="{{ group.label }}">
-              <td>{{ group.label }}</td>
-              <td data-report-group-duration>{{ format_duration(group.seconds) }}</td>
-              <td data-report-group-cost>{{ format_money(group.cost) }}</td>
-            </tr>
-            {% else %}
-            <tr><td colspan="3">No time has been recorded.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+        <div data-report-pagination="summary">
+          <table class="data-table">
+            <thead><tr><th>Task / subtask</th><th>Duration</th><th>Estimated Cost</th></tr></thead>
+            <tbody>
+              {% for group in contract_report.groups %}
+              <tr data-report-group="{{ group.label }}">
+                <td>{{ group.label }}</td>
+                <td data-report-group-duration>{{ format_duration(group.seconds) }}</td>
+                <td data-report-group-cost>{{ format_money(group.cost) }}</td>
+              </tr>
+              {% else %}
+              <tr><td colspan="3">No time has been recorded.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
       <div class="panel report-panel chart-panel" data-report-chart>
         <p class="eyebrow">DISTRIBUTION</p>
@@ -78,8 +77,8 @@
     </section>
     <section class="panel report-detail report-panel">
       <div class="panel-heading"><div><p class="eyebrow">DETAIL</p><h3>Session Log</h3></div></div>
-      <div class="table-scroll">
-        <table class="data-table">
+      <div data-report-pagination="sessions">
+        <div class="table-scroll"><table class="data-table">
           <thead><tr><th>User</th><th>Task / subtask</th><th>Start</th><th>End</th><th>Duration</th><th>Cost</th></tr></thead>
           <tbody>
             {% for entry in contract_report.sessions %}
@@ -95,7 +94,7 @@
             <tr><td colspan="6">No sessions have been recorded.</td></tr>
             {% endfor %}
           </tbody>
-        </table>
+        </table></div>
       </div>
     </section>
   </section>
@@ -104,9 +103,9 @@
   {% endfor %}
   <aside class="report-contact">
     <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
-    <p>Questions or concerns? <a class="external-link" href="{{ contact_url }}" target="_blank" rel="noopener noreferrer">Schedule a meeting with us <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i></a>, and we will be happy to help.</p>
+    <p>Questions or concerns? <a class="external-link" href="{{ contact_url }}" target="_blank" rel="noopener noreferrer">Schedule a meeting with us <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i></a> or email your point of contact and we will be happy to help.</p>
   </aside>
   </div>
   </div>
-  <footer class="report-footer"><strong>CONFIDENTIAL</strong></footer>
+  <footer class="report-footer"><strong>CONFIDENTIAL</strong><span>{{ report.client.name }}</span></footer>
 </article>

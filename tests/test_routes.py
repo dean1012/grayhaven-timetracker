@@ -481,17 +481,13 @@ class ClientContractTaskRouteTests(AppTestCase):
             report_password="Temporary-Report-Password-For-Test-0001!",
             now=1_000,
         )
-        confirmation = store.consume(
-            token, actor_user_id=1, client_id=2, now=1_119
-        )
+        confirmation = store.consume(token, actor_user_id=1, client_id=2, now=1_119)
         assert confirmation is not None
         self.assertEqual(
             confirmation.report_password,
             "Temporary-Report-Password-For-Test-0001!",
         )
-        self.assertIsNone(
-            store.consume(token, actor_user_id=1, client_id=2, now=1_119)
-        )
+        self.assertIsNone(store.consume(token, actor_user_id=1, client_id=2, now=1_119))
 
         expired_token = store.issue(
             actor_user_id=1,
@@ -519,8 +515,8 @@ class ClientContractTaskRouteTests(AppTestCase):
                 "contact_email": "CLIENT@EXAMPLE.INVALID",
             },
         )
-        self.assertEqual(created.status_code, 200)
-        self.assertNotIn(b"Client-Report-Password", created.data)
+        self.assertEqual(created.status_code, 302)
+        self.assertIn(b"/clients/", created.headers["Location"].encode())
         with session_scope(self.app) as database:
             client = database.scalar(select(Client).where(Client.name == "Client One"))
             assert client is not None
@@ -661,9 +657,7 @@ class ClientContractTaskRouteTests(AppTestCase):
         self.assertIn(b"data-confirmation-countdown", confirmation.data)
         refreshed = self.client.get(confirmation_url)
         self.assertEqual(refreshed.status_code, 302)
-        self.assertEqual(
-            refreshed.headers["Location"], f"/clients/{client_id}"
-        )
+        self.assertEqual(refreshed.headers["Location"], f"/clients/{client_id}")
 
     def test_task_subtask_rename_delete_and_time_guards(self) -> None:
         seed = self.seed_contract()
@@ -1358,8 +1352,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         password_mailto_body = password_mailto["body"][0]
         self.assertIn(
-            "All previously open live report sessions will need to be "
-            "reauthenticated.",
+            "All previously open live report sessions will need to be reauthenticated.",
             password_mailto_body,
         )
         self.assertIn(
@@ -1580,9 +1573,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertEqual(
             anonymous.get(f"/shared/reports/{second_token}").status_code, 404
         )
-        revoked = self.client.post(
-            f"/clients/{self.seed.client_id}/report-link/revoke"
-        )
+        revoked = self.client.post(f"/clients/{self.seed.client_id}/report-link/revoke")
         self.assertEqual(revoked.status_code, 302)
         with session_scope(self.app) as database:
             client = database.get(Client, self.seed.client_id)

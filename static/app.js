@@ -134,6 +134,85 @@ const moneyFormatter = new Intl.NumberFormat("en-US", {
   currency: "USD",
 });
 const reportReceivedAt = new WeakMap();
+const reportPageSizes = Object.freeze({ summary: 10, sessions: 25 });
+
+function reportPaginationKey(container) {
+  const section = container.closest("[data-report-contract-section]");
+  return `${section?.dataset.contractId || "client"}:${container.dataset.reportPagination || "table"}`;
+}
+
+function createReportPaginationControls(container) {
+  const controls = document.createElement("nav");
+  controls.className = "report-pagination";
+  controls.setAttribute("aria-label", `${container.dataset.reportPagination} table pages`);
+
+  const previous = document.createElement("button");
+  previous.className = "button button-secondary table-button";
+  previous.type = "button";
+  previous.textContent = "Previous";
+  previous.dataset.reportPagePrevious = "";
+
+  const label = document.createElement("span");
+  label.dataset.reportPageLabel = "";
+
+  const next = document.createElement("button");
+  next.className = "button button-secondary table-button";
+  next.type = "button";
+  next.textContent = "Next";
+  next.dataset.reportPageNext = "";
+
+  previous.addEventListener("click", () => {
+    updateReportPagination(container, Number(container.dataset.reportPage) - 1);
+  });
+  next.addEventListener("click", () => {
+    updateReportPagination(container, Number(container.dataset.reportPage) + 1);
+  });
+  controls.append(previous, label, next);
+  container.append(controls);
+  return controls;
+}
+
+function updateReportPagination(container, requestedPage = 1) {
+  const rows = Array.from(container.querySelectorAll("tbody > tr"));
+  const pageSize = reportPageSizes[container.dataset.reportPagination];
+  if (!pageSize) {
+    return;
+  }
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const currentPage = Math.min(pageCount, Math.max(1, requestedPage || 1));
+  container.dataset.reportPage = String(currentPage);
+  rows.forEach((row, index) => {
+    row.hidden = index < (currentPage - 1) * pageSize || index >= currentPage * pageSize;
+  });
+
+  let controls = container.querySelector(":scope > .report-pagination");
+  if (pageCount === 1) {
+    controls?.remove();
+    return;
+  }
+  controls ||= createReportPaginationControls(container);
+  const previous = controls.querySelector("[data-report-page-previous]");
+  const next = controls.querySelector("[data-report-page-next]");
+  const label = controls.querySelector("[data-report-page-label]");
+  previous.disabled = currentPage === 1;
+  next.disabled = currentPage === pageCount;
+  label.textContent = `Page ${currentPage} of ${pageCount}`;
+}
+
+function reportPaginationState(root) {
+  return new Map(
+    Array.from(root.querySelectorAll("[data-report-pagination]")).map((container) => [
+      reportPaginationKey(container),
+      Number(container.dataset.reportPage) || 1,
+    ]),
+  );
+}
+
+function initializeReportPagination(root, pages = new Map()) {
+  root.querySelectorAll("[data-report-pagination]").forEach((container) => {
+    updateReportPagination(container, pages.get(reportPaginationKey(container)) || 1);
+  });
+}
 
 function roundedCostCents(seconds, hourlyRateCents) {
   const numerator = BigInt(seconds) * BigInt(hourlyRateCents);
@@ -340,11 +419,13 @@ async function reconcileLiveReport() {
     }
     const currentViewport = article.querySelector(".report-viewport");
     const scrollTop = currentViewport instanceof HTMLElement ? currentViewport.scrollTop : 0;
+    const paginationState = reportPaginationState(article);
     article.replaceWith(replacement);
     const replacementViewport = replacement.querySelector(".report-viewport");
     if (replacementViewport instanceof HTMLElement) {
       replacementViewport.scrollTop = scrollTop;
     }
+    initializeReportPagination(replacement, paginationState);
     updateLiveReportCounters();
     setLiveReportStatus("Live", "live");
   } catch {
@@ -356,6 +437,7 @@ async function reconcileLiveReport() {
 
 const liveReport = document.querySelector("[data-live-report]");
 if (liveReport) {
+  initializeReportPagination(liveReport);
   updateLiveReportCounters();
   window.setInterval(updateLiveReportCounters, 1000);
   window.setInterval(

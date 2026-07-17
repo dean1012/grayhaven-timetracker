@@ -295,6 +295,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .report-contract-section { margin-bottom: 2.5rem; }
 .report-contract-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: 1rem 0; border-top: 1px solid var(--charcoal-border); }
 .report-contract-heading h2 { margin-bottom: 0; }
+.report-contract-name { color: var(--primary-accent); }
 .report-contract-summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; margin-bottom: 1.5rem; overflow: hidden; }
 .summary-card { padding: 1.5rem; background: color-mix(in srgb, var(--deep-graphite) 48%, transparent); }
 .summary-card span { display: block; margin-bottom: .4rem; color: var(--cool-grey); font-size: .78rem; text-transform: uppercase; letter-spacing: .12em; }
@@ -321,13 +322,14 @@ small { color: var(--cool-grey); font-weight: 400; }
 .data-table th, .data-table td { padding: .85rem .7rem; text-align: left; vertical-align: top; border-bottom: 1px solid color-mix(in srgb, var(--charcoal-border) 65%, transparent); }
 .data-table th { color: var(--primary-accent); font-size: .73rem; letter-spacing: .1em; text-transform: uppercase; }
 .report-page .data-table td:nth-last-child(-n+3), .report-page .data-table th:nth-last-child(-n+3) { text-align: right; }
+.report-pagination { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-sm); margin-top: var(--space-sm); color: var(--cool-grey); font-size: .82rem; }
 .live-label { display: inline-block; margin-left: .4rem; padding: .12rem .35rem; color: var(--alert-success); border: 1px solid color-mix(in srgb, var(--alert-success) 45%, transparent); border-radius: var(--border-radius-sm); font-size: .68rem; }
 .report-page hr { margin: 2.5rem 0 1rem; border: 0; border-top: 1px solid var(--charcoal-border); }
 .confidential { color: var(--primary-accent); font-size: .76rem; font-weight: 700; letter-spacing: .18em; text-align: right; }
 .report-contact { display: flex; align-items: center; gap: .8rem; margin-top: 2rem; padding: 1rem 1.15rem; color: var(--cool-grey); background: color-mix(in srgb, var(--primary-accent) 6%, transparent); border: 1px solid color-mix(in srgb, var(--primary-accent) 22%, transparent); border-radius: var(--border-radius); }
 .report-contact > i { color: var(--primary-accent); font-size: 1.2rem; }
 .report-contact p { margin: 0; }
-.report-footer { display: flex; flex: 0 0 auto; justify-content: flex-start; margin-top: 1rem; padding-top: 1rem; color: var(--cool-grey); border-top: 1px solid var(--primary-accent); font-size: .76rem; }
+.report-footer { display: flex; flex: 0 0 auto; justify-content: space-between; margin-top: 1rem; padding-top: 1rem; color: var(--cool-grey); border-top: 1px solid var(--primary-accent); font-size: .76rem; }
 .report-footer strong { color: var(--primary-accent); letter-spacing: .16em; }
 
 @media (width >=640px) {
