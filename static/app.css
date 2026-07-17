@@ -294,8 +294,8 @@ small { color: var(--cool-grey); font-weight: 400; }
 .audit-summary { padding: .8rem 0; border-top: 1px solid var(--charcoal-border); }
 .pagination { margin-top: 1.25rem; }
 .audit-source { min-width: 4.5rem; text-align: center; }
-.audit-source-admin { background: color-mix(in srgb, var(--alert-success) 15%, transparent); }
-.audit-source-user { background: color-mix(in srgb, var(--alert-info) 15%, transparent); }
+.audit-source-admin { background: color-mix(in srgb, var(--alert-error) 15%, transparent); }
+.audit-source-user { background: color-mix(in srgb, var(--alert-success) 15%, transparent); }
 .audit-source-public { background: color-mix(in srgb, var(--alert-warning) 15%, transparent); }
 .audit-source-system { background: color-mix(in srgb, var(--slate-grey) 16%, transparent); }
 .audit-request-method { display: inline-block; min-width: 3.5rem; color: var(--primary-accent); font-size: .72rem; font-weight: 700; }
