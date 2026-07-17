@@ -1,9 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ client.name }} · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}
+<nav class="breadcrumbs" aria-label="Breadcrumb">
+  <ol><li aria-current="page">{{ client.name }}</li></ol>
+</nav>
+{% endblock %}
 {% block content %}
 <section class="page-heading">
   <div>
-    <a class="back-link" href="{{ url_for('main.dashboard') }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Dashboard</a>
     <p class="eyebrow">CLIENT</p>
     <h1>{{ client.name }}</h1>
     <p class="muted contact-line"><i class="fa-solid fa-address-card" aria-hidden="true"></i> {{ client.contact_name }} <span>·</span> <a href="mailto:{{ client.contact_email }}">{{ client.contact_email }}</a></p>
