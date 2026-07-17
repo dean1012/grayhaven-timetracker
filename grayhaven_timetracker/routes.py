@@ -548,6 +548,41 @@ def report_password_mailto(client: Client, report_password: str) -> str:
     )
 
 
+def user_setup_mailto(user: User, temporary_password: str) -> str:
+    """Build the configured-URL access email for a newly created user."""
+    subject = "Your access to the Grayhaven Systems LLC Time Tracker has been setup"
+    public_base_url = current_app.config.get("PUBLIC_BASE_URL")
+    login_path = url_for("main.login")
+    application_url = (
+        f"{public_base_url}{login_path}"
+        if public_base_url
+        else url_for("main.login", _external=True)
+    )
+    role = "administrator" if user.is_admin else "standard user"
+    body = "\n".join(
+        [
+            f"{escape(user.full_name)},",
+            "",
+            f"Grayhaven Systems LLC has added you as a {role} in the Grayhaven "
+            "Systems LLC Time Tracker application.",
+            "",
+            "<b>You can access the Time Tracker application at the URL below:</b>",
+            f'<a href="{escape(application_url, quote=True)}">{escape(application_url)}</a>',
+            "",
+            "Your username is your e-mail address. Your initial password is: "
+            f"<b>{escape(temporary_password)}</b>",
+            "",
+            "<b>Please login and change your password at your earliest convenience.</b>",
+            "",
+            "<b>Please keep your chosen password confidential.</b>",
+        ]
+    )
+    return (
+        f"mailto:{quote(user.email, safe='@')}?subject={quote(subject)}"
+        f"&body={quote(body)}"
+    )
+
+
 def form_text(name: str, label: str, maximum: int) -> str:
     return required_text(request.form.get(name, ""), label, maximum=maximum)
 
@@ -2581,6 +2616,7 @@ def new_user() -> Any:
         "user_created.html",
         user=user,
         temporary_password=temporary_password,
+        mailto=user_setup_mailto(user, temporary_password),
     )
 
 
