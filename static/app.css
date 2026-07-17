@@ -140,8 +140,8 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .button-primary:hover { color: var(--deep-graphite); background: var(--elevated-hover); border-color: var(--elevated-hover); }
 .button-secondary { color: var(--soft-white); background: color-mix(in srgb, var(--deep-graphite) 34%, transparent); }
 .button-secondary:hover { color: var(--soft-white); border-color: var(--primary-accent); background: var(--light-surface-accent); }
-.page-heading > .icon-button, .heading-actions .icon-button { color: var(--deep-graphite); background: var(--muted-emerald); border-color: var(--muted-emerald); }
-.page-heading > .icon-button:hover, .heading-actions .icon-button:hover { color: var(--deep-graphite); background: var(--alert-success); border-color: var(--alert-success); }
+.page-heading > .icon-button, .heading-actions .icon-button { color: var(--muted-emerald); }
+.page-heading > .icon-button:hover, .heading-actions .icon-button:hover { color: var(--muted-emerald); }
 .button-start { color: var(--soft-white); background: color-mix(in srgb, var(--alert-success) 12%, transparent); border-color: color-mix(in srgb, var(--alert-success) 55%, transparent); }
 .button-start:hover { color: var(--soft-white); background: color-mix(in srgb, var(--alert-success) 25%, transparent); border-color: var(--alert-success); }
 .button-stop { color: var(--soft-white); background: color-mix(in srgb, var(--alert-error) 14%, transparent); border-color: color-mix(in srgb, var(--alert-error) 60%, transparent); }
