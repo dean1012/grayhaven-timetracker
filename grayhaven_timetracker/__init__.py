@@ -106,9 +106,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             },
         )
     register_request_logging(app)
-    register_routes(app)
     register_security_headers(app)
     register_error_handlers(app)
+    register_routes(app)
     return app
 
 

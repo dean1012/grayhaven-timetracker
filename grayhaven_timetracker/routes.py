@@ -771,7 +771,12 @@ def register_routes(app: Flask) -> None:
                 )
             return redirect(url_for("main.dashboard"))
 
-        return error
+        return (
+            render_template(
+                "error.html", status=404, message="The requested page was not found."
+            ),
+            404,
+        )
 
     def live_page_etag() -> str:
         """Fingerprint application state without volatile rendered markup."""
