@@ -2009,6 +2009,29 @@ def edit_time_entry(entry_id: int) -> Any:
     if entry.stopped_at is None:
         abort(409, "Stop an active timer before editing it.")
     contract_item = entry.task.contract
+    original_contract_value = request.args.get("original_contract_id", "")
+    if not original_contract_value:
+        if request.method != "POST":
+            return redirect(
+                url_for(
+                    "main.edit_time_entry",
+                    entry_id=entry.id,
+                    original_contract_id=contract_item.id,
+                )
+            )
+        original_contract_id = contract_item.id
+    elif original_contract_value.isdigit():
+        original_contract_id = int(original_contract_value)
+    else:
+        abort(404)
+    if original_contract_id != contract_item.id:
+        if database.get(Contract, original_contract_id) is not None:
+            return redirect(
+                url_for(
+                    "main.contract_sessions", contract_id=original_contract_id
+                )
+            )
+        return redirect(url_for("main.dashboard"))
     client_item = contract_item.client
     previous_details = audit_time_entry_details(entry)
     previous_started_at = entry.started_at
