@@ -1881,7 +1881,7 @@ def edit_time_entry(entry_id: int) -> Any:
         time_entry_id=entry.id,
     )
     flash("Time session updated.", "success")
-    return redirect(url_for("main.contract_sessions", contract_id=selected_contract.id))
+    return redirect(url_for("main.contract_sessions", contract_id=original_contract_id))
 
 
 @main.route("/sessions/<int:entry_id>/delete", methods=["GET", "POST"])
