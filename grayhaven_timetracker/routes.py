@@ -764,20 +764,11 @@ def register_routes(app: Flask) -> None:
             entry_id = int(session_match.group(1))
             contract_id = created_resource_parent_id(
                 "time entry", entry_id, "contract"
-            ) or deleted_resource_parent_id(
-                ("time_entry_deleted",), "time_entry", entry_id, "contract"
             )
             if contract_id is not None and get_session().get(Contract, contract_id):
                 return redirect(
                     url_for("main.contract_sessions", contract_id=contract_id)
                 )
-            client_id = created_resource_parent_id("time entry", entry_id, "client")
-            if client_id is None:
-                client_id = deleted_resource_parent_id(
-                    ("time_entry_deleted",), "time_entry", entry_id, "client"
-                )
-            if client_id is not None and get_session().get(Client, client_id):
-                return redirect(url_for("main.client", client_id=client_id))
             return redirect(url_for("main.dashboard"))
 
         return error
