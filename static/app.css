@@ -143,6 +143,8 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .button:focus-visible, .icon-button:focus-visible, input:focus-visible, select:focus-visible, .text-link:focus-visible, .nav-button:focus-visible { outline: 2px solid var(--primary-accent); outline-offset: 3px; }
 .button-primary { color: var(--deep-graphite); background: var(--primary-accent); border-color: var(--primary-accent); }
 .button-primary:hover { color: var(--deep-graphite); background: var(--elevated-hover); border-color: var(--elevated-hover); }
+.button-success { color: var(--deep-graphite); background: var(--muted-emerald); border-color: var(--muted-emerald); }
+.button-success:hover { color: var(--deep-graphite); background: var(--alert-success); border-color: var(--alert-success); }
 .button-secondary { color: var(--soft-white); background: color-mix(in srgb, var(--deep-graphite) 34%, transparent); }
 .button-secondary:hover { color: var(--soft-white); border-color: var(--primary-accent); background: var(--light-surface-accent); }
 .page-heading > .icon-button, .heading-actions .icon-button { color: var(--muted-emerald); }
