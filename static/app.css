@@ -241,7 +241,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .flash { padding: .8rem 1rem; color: var(--soft-white); border: 1px solid; border-radius: var(--border-radius); }
 .flash-error { background: color-mix(in srgb, var(--alert-error) 14%, transparent); border-color: color-mix(in srgb, var(--alert-error) 50%, transparent); }
 .flash-success { background: color-mix(in srgb, var(--alert-success) 14%, transparent); border-color: color-mix(in srgb, var(--alert-success) 50%, transparent); }
-.app-footer { display: flex; flex: 0 0 auto; justify-content: space-between; width: min(1680px, calc(100% - var(--container-padding) - var(--container-padding))); margin: 0 auto; padding: 1.2rem 0 2.5rem; color: var(--slate-grey); border-top: 1px solid color-mix(in srgb, var(--charcoal-border) 60%, transparent); font-size: .78rem; }
+.app-footer { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: var(--space-sm); width: min(1680px, calc(100% - var(--container-padding) - var(--container-padding))); margin: 0 auto; padding: 1.2rem 0 2.5rem; color: var(--slate-grey); border-top: 1px solid color-mix(in srgb, var(--charcoal-border) 60%, transparent); font-size: .78rem; white-space: nowrap; }
 .app-footer-confidential { color: var(--primary-accent); font-weight: var(--font-weight-bold); letter-spacing: .16em; }
 .active-timer { display: flex; align-items: center; justify-content: space-between; gap: 2rem; margin-bottom: 1.5rem; padding: 1.2rem 1.4rem; background: linear-gradient(180deg, color-mix(in srgb, var(--alert-success) 8%, transparent), color-mix(in srgb, var(--background-mid) 92%, transparent)); border-color: color-mix(in srgb, var(--alert-success) 55%, transparent); }
 .active-timer-copy { display: flex; align-items: center; gap: 1rem; min-width: 0; }
@@ -406,7 +406,6 @@ small { color: var(--cool-grey); font-weight: 400; }
   .subtask-add input { width: auto; min-width: 0; flex: 1; }
   .rename-popover { position: fixed; top: 30%; right: 1rem; left: 1rem; width: auto; }
   .auth-panel { width: 100%; padding: 2rem; }
-  .app-footer { align-items: flex-start; flex-direction: column; gap: .25rem; }
   .report-shell { padding: 1rem 0; }
   .report-header img { width: 185px; }
   .report-title { padding: 2rem 0 1.3rem; }

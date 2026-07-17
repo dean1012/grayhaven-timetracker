@@ -1,8 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Edit session · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}
+<nav class="breadcrumbs" aria-label="Breadcrumb"><ol>
+  <li><a class="breadcrumb-label" href="{{ url_for('main.contract', contract_id=entry.task.contract.id) }}" title="{{ entry.task.contract.name }}">{{ entry.task.contract.name }}</a></li>
+  <li><a class="breadcrumb-label" href="{{ url_for('main.contract_sessions', contract_id=entry.task.contract.id) }}" title="Sessions">Sessions</a></li>
+  <li aria-current="page"><span class="breadcrumb-label" title="Edit Session">Edit Session</span></li>
+</ol></nav>
+{% endblock %}
 {% block content %}
 <section class="narrow-content">
-  <a class="back-link" href="{{ url_for('main.contract_sessions', contract_id=entry.task.contract_id) }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to Sessions</a>
   <div class="panel form-panel">
     <p class="eyebrow">TIME SESSION</p>
     <h1>Edit Session</h1>

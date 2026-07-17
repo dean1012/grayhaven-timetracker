@@ -1,12 +1,20 @@
 {% extends "base.html" %}
 {% set editing = contract is defined %}
-{% block title %}{{ 'Edit' if editing else 'Add' }} contract · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block title %}{{ 'Edit Contract' if editing else 'New Contract' }} · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}
+<nav class="breadcrumbs" aria-label="Breadcrumb">
+  <ol>
+    <li><a class="breadcrumb-label" href="{{ url_for('main.client', client_id=client.id) }}" title="{{ client.name }}">{{ client.name }}</a></li>
+    {% if editing %}<li><a class="breadcrumb-label" href="{{ url_for('main.contract', contract_id=contract.id) }}" title="{{ contract.name }}">{{ contract.name }}</a></li>{% endif %}
+    <li aria-current="page"><span class="breadcrumb-label" title="{{ 'Edit Contract' if editing else 'New Contract' }}">{{ 'Edit Contract' if editing else 'New Contract' }}</span></li>
+  </ol>
+</nav>
+{% endblock %}
 {% block content %}
 <section class="narrow-content">
-  <a class="back-link" href="{{ url_for('main.contract', contract_id=contract.id) if editing else url_for('main.client', client_id=client.id) }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> {{ 'Back to contract' if editing else 'Back to client' }}</a>
   <div class="panel form-panel">
     <p class="eyebrow">{{ client.name|upper }}</p>
-    <h1>{{ 'Edit Contract' if editing else 'Add Contract' }}</h1>
+    <h1>{{ 'Edit Contract' if editing else 'New Contract' }}</h1>
     <form method="post" class="form-stack" autocomplete="off" data-protonpass-ignore="true">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Contract<input name="name" value="{{ request.form.get('name', contract.name if editing else '') }}" maxlength="200" required autofocus autocomplete="off" data-protonpass-ignore="true"></label>
@@ -17,7 +25,7 @@
       {% endif %}
       <div class="form-actions">
         <a class="button button-secondary" href="{{ url_for('main.contract', contract_id=contract.id) if editing else url_for('main.client', client_id=client.id) }}">Cancel</a>
-        <button class="button button-primary" type="submit"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> {{ 'Update Contract' if editing else 'Save Contract' }}</button>
+        <button class="button button-primary" type="submit"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> {{ 'Update Contract' if editing else 'Create Contract' }}</button>
       </div>
     </form>
   </div>

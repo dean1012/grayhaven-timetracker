@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Confirm sensitive action · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ breadcrumb_parent_url }}" title="{{ breadcrumb_parent_label }}">{{ breadcrumb_parent_label }}</a></li><li aria-current="page"><span class="breadcrumb-label" title="{{ breadcrumb_label }}">{{ breadcrumb_label }}</span></li></ol></nav>{% endblock %}
 {% block content %}
 <section class="narrow-content">
-  <a class="back-link" href="{{ cancel_url }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Cancel</a>
   <div class="panel form-panel">
     <p class="eyebrow">{{ eyebrow }}</p>
     <h1>{{ title }}</h1>

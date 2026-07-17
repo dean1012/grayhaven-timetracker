@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Add user · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}
+<nav class="breadcrumbs" aria-label="Breadcrumb"><ol>
+  <li><a class="breadcrumb-label" href="{{ url_for('main.users') }}" title="Users">Users</a></li>
+  <li aria-current="page"><span class="breadcrumb-label" title="Add User">Add User</span></li>
+</ol></nav>
+{% endblock %}
 {% block content %}
 <section class="narrow-content">
-  <a class="back-link" href="{{ url_for('main.users') }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Back to Users</a>
   <div class="panel form-panel">
     <p class="eyebrow">ACCESS MANAGEMENT</p>
     <h1>Add User</h1>

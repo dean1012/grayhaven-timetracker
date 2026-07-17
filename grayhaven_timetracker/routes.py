@@ -902,6 +902,9 @@ def reset_client_report_password(client_id: int) -> Any:
         ),
         "submit_label": "Generate Password",
         "cancel_url": url_for("main.client", client_id=item.id),
+        "breadcrumb_parent_label": item.name,
+        "breadcrumb_parent_url": url_for("main.client", client_id=item.id),
+        "breadcrumb_label": "Generate Report Password",
         "totp_required": bool(actor.totp_secret),
     }
     if request.method != "POST":
@@ -1938,6 +1941,9 @@ def reset_user_password(user_id: int) -> Any:
         ),
         "submit_label": "Reset User Password",
         "cancel_url": url_for("main.users"),
+        "breadcrumb_parent_label": "Users",
+        "breadcrumb_parent_url": url_for("main.users"),
+        "breadcrumb_label": "Reset User Password",
         "totp_required": bool(actor.totp_secret),
     }
     if request.method != "POST":

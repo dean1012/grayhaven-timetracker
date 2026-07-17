@@ -1,12 +1,19 @@
 {% extends "base.html" %}
 {% set editing = client is defined %}
-{% block title %}{{ 'Edit Client' if editing else 'Add Client' }} · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block title %}{{ 'Edit Client' if editing else 'New Client' }} · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}
+<nav class="breadcrumbs" aria-label="Breadcrumb">
+  <ol>
+    {% if editing %}<li><a class="breadcrumb-label" href="{{ url_for('main.client', client_id=client.id) }}" title="{{ client.name }}">{{ client.name }}</a></li>{% endif %}
+    <li aria-current="page"><span class="breadcrumb-label" title="{{ 'Edit Client' if editing else 'New Client' }}">{{ 'Edit Client' if editing else 'New Client' }}</span></li>
+  </ol>
+</nav>
+{% endblock %}
 {% block content %}
 <section class="narrow-content">
-  <a class="back-link" href="{{ url_for('main.client', client_id=client.id) if editing else url_for('main.dashboard') }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> {{ 'Back to client' if editing else 'Back to dashboard' }}</a>
   <div class="panel form-panel">
     <p class="eyebrow">CLIENT MANAGEMENT</p>
-    <h1>{{ 'Edit Client' if editing else 'Add Client' }}</h1>
+    <h1>{{ 'Edit Client' if editing else 'New Client' }}</h1>
     <form method="post" class="form-stack" autocomplete="off" data-protonpass-ignore="true">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Client Name<input name="name" value="{{ request.form.get('name', client.name if editing else '') }}" maxlength="200" required autofocus autocomplete="off" data-protonpass-ignore="true"></label>
@@ -14,7 +21,7 @@
       <label>Contact Email<input type="email" name="contact_email" value="{{ request.form.get('contact_email', client.contact_email if editing else '') }}" maxlength="255" required autocomplete="off" data-protonpass-ignore="true"></label>
       <div class="form-actions">
         <a class="button button-secondary" href="{{ url_for('main.client', client_id=client.id) if editing else url_for('main.dashboard') }}">Cancel</a>
-        <button class="button button-primary" type="submit"><i class="fa-solid fa-check" aria-hidden="true"></i> {{ 'Update Client' if editing else 'Save Client' }}</button>
+        <button class="button button-primary" type="submit"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> {{ 'Update Client' if editing else 'Create Client' }}</button>
       </div>
     </form>
   </div>
