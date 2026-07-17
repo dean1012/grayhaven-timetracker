@@ -101,11 +101,13 @@
   {% else %}
   <section class="panel empty-state"><p>No contracts have been created for this client.</p></section>
   {% endfor %}
-  <aside class="report-contact">
-    <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
-    <p>Questions or concerns? <a class="external-link" href="{{ contact_url }}" target="_blank" rel="noopener noreferrer">Schedule a meeting with us <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i></a> or email your point of contact and we will be happy to help.</p>
-  </aside>
   </div>
   </div>
-  <footer class="report-footer"><strong>CONFIDENTIAL</strong><span>{{ report.client.name }}</span></footer>
+  <footer class="report-footer">
+    <div class="report-contact">
+      <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
+      <p>Questions or concerns? <a class="external-link" href="{{ contact_url }}" target="_blank" rel="noopener noreferrer">Schedule a meeting with us <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i></a> or email your point of contact and we will be happy to help.</p>
+    </div>
+    <div class="report-footer-meta"><strong>CONFIDENTIAL</strong><span>{{ report.client.name }}</span></div>
+  </footer>
 </article>
