@@ -107,6 +107,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .contract-name-link { display: flex; align-items: center; min-width: 0; color: var(--soft-white); }
 .contract-identity { display: flex; align-items: center; gap: 1rem; min-width: 0; overflow-wrap: anywhere; }
 .contract-row-detailed { display: grid; grid-template-columns: minmax(0, 36rem) minmax(0, 14rem) minmax(0, 1fr) auto; padding-block: 1rem; }
+.contract-contact-details { display: contents; }
 .contract-contact-identity { display: flex; align-items: center; gap: .5rem; min-width: 0; }
 .contract-contact-identity i { color: var(--primary-accent); }
 .contract-row-detailed .contract-identity strong { color: var(--soft-white); font-weight: 600; }
@@ -338,6 +339,15 @@ small { color: var(--cool-grey); font-weight: 400; }
   :root { --container-padding: 2rem; }
 }
 
+@media (width <1280px) and (width >=768px) {
+  .contract-row-detailed { grid-template-columns: minmax(0, 36rem) minmax(0, 1fr) auto; }
+  .contract-contact-details { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; column-gap: .5rem; row-gap: .25rem; min-width: 0; }
+  .contract-contact-identity { display: contents; }
+  .contract-contact-identity i { grid-column: 1; grid-row: 1; align-self: center; }
+  .contract-contact-identity strong { grid-column: 2; grid-row: 1; }
+  .contract-contact-email { grid-column: 2; grid-row: 2; }
+}
+
 @media (width <768px) {
   h1 { font-size: 2rem; }
   .app-header-inner { height: 68px; }
@@ -352,9 +362,14 @@ small { color: var(--cool-grey); font-weight: 400; }
   .client-card, .task-panel, .contract-directory, .user-directory, .session-directory, .audit-directory, .report-panel { padding: 1.25rem; }
   .contract-row { align-items: flex-start; flex-wrap: wrap; }
   .contract-row .rate { margin-left: auto; }
-  .contract-row-detailed { grid-template-columns: minmax(0, 1fr) auto; }
+  .contract-row-detailed { grid-template-columns: minmax(0, 1fr); }
   .contract-row-detailed .contract-name-link { grid-column: 1 / -1; min-width: 0; }
-  .contract-row-detailed .rate { grid-column: 1 / -1; justify-self: end; }
+  .contract-contact-details { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; column-gap: .5rem; row-gap: .25rem; min-width: 0; }
+  .contract-contact-identity { display: contents; }
+  .contract-contact-identity i { grid-column: 1; grid-row: 1; align-self: center; }
+  .contract-contact-identity strong { grid-column: 2; grid-row: 1; }
+  .contract-contact-email { grid-column: 2; grid-row: 2; }
+  .contract-row-detailed .rate { grid-column: 1 / -1; justify-self: start; margin-left: 0; }
   .contact-line { align-items: flex-start; flex-wrap: wrap; overflow-wrap: anywhere; }
   .active-timer { align-items: stretch; flex-direction: column; gap: 1rem; }
   .share-panel { align-items: stretch; flex-direction: column; }

@@ -40,8 +40,10 @@
       <strong>{{ contract.name }}</strong>
       </span>
     </a>
-    <span class="contract-contact-identity"><i class="fa-solid fa-address-card" aria-hidden="true"></i><strong title="{{ contract.contact_name }}">{{ contract.contact_name }}</strong></span>
-    <a class="contract-contact-email" href="mailto:{{ contract.contact_email }}?subject={{ ('RE: ' ~ client.name ~ '/' ~ contract.name ~ ' Contract')|urlencode }}" title="{{ contract.contact_email }}">{{ contract.contact_email }}</a>
+    <span class="contract-contact-details">
+      <span class="contract-contact-identity"><i class="fa-solid fa-address-card" aria-hidden="true"></i><strong title="{{ contract.contact_name }}">{{ contract.contact_name }}</strong></span>
+      <a class="contract-contact-email" href="mailto:{{ contract.contact_email }}?subject={{ ('RE: ' ~ client.name ~ '/' ~ contract.name ~ ' Contract')|urlencode }}" title="{{ contract.contact_email }}">{{ contract.contact_email }}</a>
+    </span>
     <a class="rate" href="{{ url_for('main.contract', contract_id=contract.id) }}">{{ format_money(contract.hourly_rate) }}/hr <i class="fa-solid fa-chevron-right" aria-hidden="true"></i></a>
   </div>
   {% else %}
