@@ -128,6 +128,11 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .contract-contact-identity strong { min-width: 0; overflow: hidden; color: var(--cool-grey); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 .contract-contact-email { min-width: 0; overflow: hidden; color: var(--primary-accent); }
 .contract-contact-email .truncate-text { color: inherit; }
+.user-contact-identity { display: inline-flex; align-items: center; gap: .5rem; min-width: 0; max-width: 100%; }
+.user-contact-identity i { flex: 0 0 auto; color: var(--primary-accent); }
+.user-contact-identity strong { min-width: 0; overflow: hidden; color: var(--cool-grey); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.user-contact-email { min-width: 0; max-width: 100%; overflow: hidden; color: var(--primary-accent); }
+.user-contact-email .truncate-text { color: inherit; }
 .contract-row i { color: var(--primary-accent); }
 .contract-row .rate { color: var(--cool-grey); font-size: .82rem; }
 .contract-row .rate i { margin-left: .7rem; color: var(--cool-grey); }

@@ -23,7 +23,7 @@
       {% for row in session_rows %}
         {% set entry = row.entry %}
         <tr>
-          {% if show_users %}<td>{{ entry.user.full_name }}</td>{% endif %}
+          {% if show_users %}<td><span class="user-contact-identity"><i class="fa-solid fa-address-card" aria-hidden="true"></i><strong class="truncate-text" title="{{ entry.user.full_name }}">{{ entry.user.full_name }}</strong></span></td>{% endif %}
           <td>{{ entry.task.name }}{% if entry.subtask %} → {{ entry.subtask.name }}{% endif %}</td>
           <td>{{ format_datetime(entry.started_at, timezone_info) }}</td>
           <td>{{ format_datetime(row.ended_at, timezone_info) }}{% if not entry.stopped_at %} <span class="live-label">active</span>{% endif %}</td>
