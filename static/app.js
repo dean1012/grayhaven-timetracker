@@ -438,7 +438,7 @@ let livePageEtag = "";
 
 async function reconcileLivePage() {
   const page = document.querySelector("[data-live-page]");
-  if (!page || livePageRequestActive || document.hidden || livePageHasUnsavedChanges(page)) {
+  if (!page || livePageRequestActive || livePageHasUnsavedChanges(page)) {
     return;
   }
   livePageRequestActive = true;
