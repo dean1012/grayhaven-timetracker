@@ -60,10 +60,35 @@ class BootstrapOutcome:
 
     user: User
     outcome: str
+    details: dict[str, Any]
 
 
 def _utc_now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+
+
+def _audit_user_state(user: User) -> dict[str, str | bool]:
+    """Return the non-sensitive user state suitable for immutable audit logs."""
+    return {
+        "Email": user.email,
+        "First Name": user.first_name,
+        "Last Name": user.last_name,
+        "Role": user.role,
+        "Enabled": user.is_enabled,
+        "Two-Factor Authentication": "Enabled" if user.totp_secret else "Disabled",
+    }
+
+
+def _audit_user_changes(
+    previous: dict[str, str | bool], user: User
+) -> dict[str, dict[str, str | bool]]:
+    """Express every non-sensitive bootstrap reconciliation change."""
+    current = _audit_user_state(user)
+    return {
+        field: {"from": value, "to": current[field]}
+        for field, value in previous.items()
+        if value != current[field]
+    }
 
 
 def _fingerprint(value: str) -> str:
@@ -260,7 +285,7 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
     if app.config.get("SKIP_BOOTSTRAP"):
         return []
     specs = configured_bootstrap_users(app)
-    records: list[tuple[BootstrapUser, User, bool]] = []
+    records: list[tuple[BootstrapUser, User, bool, dict[str, str | bool]]] = []
     changed_by_email: dict[str, bool] = {}
 
     for spec in specs:
@@ -282,7 +307,9 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
             )
             database.add(user)
             changed_by_email[spec.email] = True
+            previous_state: dict[str, str | bool] = {}
         else:
+            previous_state = _audit_user_state(user)
             prior_password, prior_totp = _prior_fingerprints(database, spec)
             prior_totp_secret = user.totp_secret
             changed_by_email[spec.email] = _apply_identity_and_authentication(
@@ -297,12 +324,12 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
                 user.role = "admin"
                 user.is_enabled = True
         _store_fingerprints(database, spec)
-        records.append((spec, user, created))
+        records.append((spec, user, created, previous_state))
 
     # Promote or enable desired administrators before demoting or disabling any
     # existing administrator so the database's last-admin guard remains valid.
     database.flush()
-    for spec, user, created in records:
+    for spec, user, created, _previous_state in records:
         if not created and (spec.role != "admin" or not spec.enabled):
             role_or_state_changed = (
                 user.role != spec.role or user.is_enabled != spec.enabled
@@ -337,6 +364,7 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
         user = database.scalar(select(User).where(User.email == email))
         if user is None or not user.is_enabled:
             continue
+        previous_state = _audit_user_state(user)
         _stop_active_timer(database, user)
         user.is_enabled = False
         user.session_version += 1
@@ -354,6 +382,7 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
                 ),
                 user,
                 False,
+                previous_state,
             )
         )
         changed_by_email[user.email] = True
@@ -370,8 +399,13 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
                 if changed_by_email[spec.email]
                 else "unchanged"
             ),
+            details=(
+                {"initial_values": _audit_user_state(user)}
+                if created
+                else {"changes": _audit_user_changes(previous_state, user)}
+            ),
         )
-        for spec, user, created in records
+        for spec, user, created, previous_state in records
     ]
 
 

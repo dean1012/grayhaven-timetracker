@@ -45,11 +45,24 @@ def safe_audit_text(value: str, *, maximum: int) -> str:
     )
 
 
-def _safe_detail_value(value: Any) -> str | int | float | bool | None:
+def _safe_detail_value(value: Any, *, depth: int = 0) -> Any:
+    """Return bounded JSON-safe audit detail data without credential material."""
+    if depth >= 4:
+        return safe_audit_text(str(value), maximum=512)
     if value is None or isinstance(value, (str, int, float, bool)):
         return safe_audit_text(value, maximum=512) if isinstance(value, str) else value
     if isinstance(value, (datetime, date)):
         return value.isoformat()
+    if isinstance(value, dict):
+        details: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized_key = safe_audit_text(str(key), maximum=100)
+            if any(fragment in normalized_key.lower() for fragment in SENSITIVE_KEY_FRAGMENTS):
+                continue
+            details[normalized_key] = _safe_detail_value(item, depth=depth + 1)
+        return details
+    if isinstance(value, (list, tuple)):
+        return [_safe_detail_value(item, depth=depth + 1) for item in value[:100]]
     return safe_audit_text(str(value), maximum=512)
 
 

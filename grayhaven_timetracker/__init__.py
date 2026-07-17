@@ -90,18 +90,20 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                 f"user_{bootstrap_outcome.outcome}",
                 source="system",
                 details={
-                    "enabled": user.is_enabled,
-                    "email": user.email,
                     "managed_by": "bootstrap",
-                    "role": user.role,
+                    "request_source": "Deployment Bootstrap",
                     "user": f"{user.full_name} (ID: {user.id})",
+                    **bootstrap_outcome.details,
                 },
             )
         record_audit_event(
             database,
             "application_started",
             source="system",
-            details={"version": app.config["APP_VERSION"]},
+            details={
+                "request_source": "Application Startup",
+                "version": app.config["APP_VERSION"],
+            },
         )
     register_request_logging(app)
     register_routes(app)

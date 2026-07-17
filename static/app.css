@@ -211,6 +211,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .subtask-row .row-actions { grid-column: 3; }
 .subtask-empty { margin: .8rem 0 .8rem 46px; font-size: .82rem; }
 .subtask-add { margin-top: .75rem; margin-left: 46px; }
+.audit-change { display: block; }
 .subtask-add input { width: 245px; min-height: 34px; font-size: .82rem; }
 .empty-state { padding: 4rem; text-align: center; }
 .empty-state i { margin-bottom: 1rem; color: var(--light-surface-accent); font-size: 2rem; }

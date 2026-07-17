@@ -232,9 +232,13 @@ def now_utc() -> datetime:
 
 def audit(event: str, **fields: Any) -> None:
     """Persist and emit a safe semantic event without disrupting its action."""
+    if fields.get("changes") == {}:
+        return
     database = get_session()
     actor = current_user()
     actor_id = fields.pop("actor_id", None)
+    source_ip = fields.pop("source_ip", None)
+    fields.pop("ip", None)
     if actor is None:
         candidate_id = actor_id if isinstance(actor_id, int) else fields.get("user_id")
         if isinstance(candidate_id, int):
@@ -259,12 +263,17 @@ def audit(event: str, **fields: Any) -> None:
             fields[label] = f"Time entry (ID: {identifier})"
         else:
             fields[label] = audit_object_label(getattr(item, attribute), identifier)
+    fields.setdefault(
+        "request_source",
+        "Web Application" if actor else "Public Shared Report",
+    )
     try:
         record_audit_event(
             database,
             event,
             source=actor.role if actor else "public",
             actor=actor,
+            ip_address=source_ip,
             details=fields,
         )
         database.commit()
@@ -369,6 +378,44 @@ def sensitive_action_rate_key(user: User) -> str:
 def audit_object_label(name: str, identifier: int) -> str:
     """Render one deleted or affected object without requiring a follow-up lookup."""
     return f"{name} (ID: {identifier})"
+
+
+def audit_changes(**values: tuple[Any, Any]) -> dict[str, dict[str, Any]]:
+    """Return only meaningful non-sensitive before-and-after audit changes."""
+    return {
+        field.replace("_", " ").title(): {"from": previous, "to": current}
+        for field, (previous, current) in values.items()
+        if previous != current
+    }
+
+
+def audit_rate(hourly_rate_cents: int) -> str:
+    """Format a contract rate for a human-readable audit event."""
+    return f"{format_money(Decimal(hourly_rate_cents) / Decimal(100))} per hour"
+
+
+def audit_time(value: datetime) -> str:
+    """Render a stored timestamp in the configured audit timezone."""
+    return format_datetime(
+        value, ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"]))
+    )
+
+
+def audit_time_entry_details(entry: TimeEntry) -> dict[str, str]:
+    """Describe a session with its complete current assignment."""
+    contract = entry.task.contract
+    return {
+        "client": audit_object_label(contract.client.name, contract.client_id),
+        "contract": audit_object_label(contract.name, contract.id),
+        "task": audit_object_label(entry.task.name, entry.task_id),
+        "subtask": (
+            audit_object_label(entry.subtask.name, entry.subtask_id)
+            if entry.subtask is not None and entry.subtask_id is not None
+            else "None"
+        ),
+        "user": audit_object_label(entry.user.full_name, entry.user_id),
+        "time entry": f"Time entry (ID: {entry.id})",
+    }
 
 
 def sensitive_action_failure(
@@ -722,7 +769,7 @@ def complete_login(user: User, ip: str, next_url: str | None) -> Any:
     session["authenticated_at"] = now_utc_timestamp()
     session["user_id"] = user.id
     session["session_version"] = user.session_version
-    audit("login_succeeded", user_id=user.id, ip=ip)
+    audit("login_succeeded", user_id=user.id, source_ip=ip)
     if user.password_change_required:
         return redirect(url_for("main.required_password_change"))
     return redirect(next_url or url_for("main.dashboard"))
@@ -744,7 +791,7 @@ def login() -> Any:
     ip = request.remote_addr or "unknown"
     rate_key = f"{ip}|{email}"
     if login_limiter.blocked(rate_key) or login_ip_limiter.blocked(ip):
-        audit("login_rate_limited", email=email, ip=ip)
+        audit("login_rate_limited", email=email, source_ip=ip)
         abort(429)
 
     user = find_user_by_email(email)
@@ -757,7 +804,7 @@ def login() -> Any:
         reason = (
             "disabled" if user is not None and not user.is_enabled else "credentials"
         )
-        audit("login_rejected", email=email, ip=ip, reason=reason)
+        audit("login_rejected", email=email, source_ip=ip, reason=reason)
         flash("The sign-in information was not accepted.", "error")
         return render_template("login.html"), 401
 
@@ -777,7 +824,7 @@ def login() -> Any:
     )
     if next_url:
         session["pending_login_next"] = next_url
-    audit("login_password_accepted", email=user.email, ip=ip)
+    audit("login_password_accepted", user_id=user.id, source_ip=ip)
     return redirect(url_for("main.login_authenticator"))
 
 
@@ -789,7 +836,11 @@ def login_authenticator() -> Any:
     user = pending_login_user()
     if user is None:
         if had_pending_login:
-            audit("login_challenge_rejected", reason="expired_or_invalidated")
+            audit(
+                "login_challenge_rejected",
+                reason="expired_or_invalidated",
+                source_ip=request.remote_addr,
+            )
         flash("Your sign-in session expired. Please sign in again.", "error")
         return redirect(url_for("main.login"))
     if request.method != "POST":
@@ -798,14 +849,19 @@ def login_authenticator() -> Any:
     ip = request.remote_addr or "unknown"
     rate_key = f"{ip}|{user.email}"
     if login_limiter.blocked(rate_key) or login_ip_limiter.blocked(ip):
-        audit("login_rate_limited", email=user.email, ip=ip, stage="authenticator")
+        audit(
+            "login_rate_limited",
+            email=user.email,
+            source_ip=ip,
+            stage="authenticator",
+        )
         abort(429)
     digits = request.form.getlist("totp_digit")
     token = "".join(digit.strip() for digit in digits)
     if not consume_totp(user, token):
         login_limiter.record_failure(rate_key)
         login_ip_limiter.record_failure(ip)
-        audit("login_rejected", email=user.email, ip=ip, reason="totp")
+        audit("login_rejected", email=user.email, source_ip=ip, reason="totp")
         flash("The authenticator code was not accepted.", "error")
         return render_template("login_authenticator.html"), 401
 
@@ -819,7 +875,7 @@ def login_authenticator() -> Any:
 @login_required
 def logout() -> Any:
     user = current_user()
-    audit("logout", user_id=user.id if user else None, ip=request.remote_addr)
+    audit("logout", user_id=user.id if user else None)
     session.clear()
     return redirect(url_for("main.login"))
 
@@ -893,6 +949,12 @@ def new_client() -> Any:
         "client_created",
         actor_id=cast(User, current_user()).id,
         client_id=item.id,
+        initial_values={
+            "Client Name": item.name,
+            "Contact Name": item.contact_name,
+            "Contact Email": item.contact_email,
+            "Live Report Access": "Link provisioned; password not generated",
+        },
     )
     flash("The client was created successfully.", "success")
     return redirect(url_for("main.client", client_id=item.id))
@@ -904,6 +966,11 @@ def edit_client(client_id: int) -> Any:
     item = cast(Client, get_or_404(Client, client_id))
     if request.method != "POST":
         return render_template("client_form.html", client=item)
+    previous_values = {
+        "client_name": item.name,
+        "contact_name": item.contact_name,
+        "contact_email": item.contact_email,
+    }
     try:
         name = form_text("name", "Client Name", 200)
         if get_session().scalar(
@@ -929,6 +996,11 @@ def edit_client(client_id: int) -> Any:
         "client_updated",
         actor_id=cast(User, current_user()).id,
         client_id=item.id,
+        changes=audit_changes(
+            client_name=(previous_values["client_name"], item.name),
+            contact_name=(previous_values["contact_name"], item.contact_name),
+            contact_email=(previous_values["contact_email"], item.contact_email),
+        ),
     )
     flash("Client details updated.", "success")
     return redirect(url_for("main.client", client_id=item.id))
@@ -1005,7 +1077,6 @@ def reset_client_report_password(client_id: int) -> Any:
             "client_report_password_reset_rate_limited",
             actor_id=actor.id,
             client_id=item.id,
-            ip=request.remote_addr,
         )
         abort(429)
     if not sensitive_action_credentials_valid(actor):
@@ -1014,7 +1085,6 @@ def reset_client_report_password(client_id: int) -> Any:
             "client_report_password_reset_rejected",
             actor_id=actor.id,
             client_id=item.id,
-            ip=request.remote_addr,
         )
         flash("The administrator credentials were not accepted.", "error")
         return render_template("sensitive_action_form.html", **confirmation), 400
@@ -1027,6 +1097,13 @@ def reset_client_report_password(client_id: int) -> Any:
         "client_report_password_reset",
         actor_id=actor.id,
         client_id=item.id,
+        changes=audit_changes(
+            report_access_version=(
+                item.report_password_version - 1,
+                item.report_password_version,
+            )
+        ),
+        shared_report_sessions_invalidated=True,
     )
     confirmation_token = report_password_confirmation_store.issue(
         actor_user_id=actor.id,
@@ -1120,6 +1197,12 @@ def new_contract(client_id: int) -> Any:
         actor_id=cast(User, current_user()).id,
         client_id=client_item.id,
         contract_id=contract_item.id,
+        initial_values={
+            "Contract": contract_item.name,
+            "Contact Name": contract_item.contact_name,
+            "Contact Email": contract_item.contact_email,
+            "Billable Rate": audit_rate(contract_item.hourly_rate_cents),
+        },
     )
     return redirect(url_for("main.contract", contract_id=contract_item.id))
 
@@ -1130,6 +1213,11 @@ def edit_contract(contract_id: int) -> Any:
     item = cast(Contract, get_or_404(Contract, contract_id))
     if request.method != "POST":
         return render_template("contract_form.html", client=item.client, contract=item)
+    previous_values = {
+        "contract": item.name,
+        "contact_name": item.contact_name,
+        "contact_email": item.contact_email,
+    }
     try:
         name = form_text("name", "Contract", 200)
         if get_session().scalar(
@@ -1163,6 +1251,11 @@ def edit_contract(contract_id: int) -> Any:
         actor_id=cast(User, current_user()).id,
         client_id=item.client_id,
         contract_id=item.id,
+        changes=audit_changes(
+            contract=(previous_values["contract"], item.name),
+            contact_name=(previous_values["contact_name"], item.contact_name),
+            contact_email=(previous_values["contact_email"], item.contact_email),
+        ),
     )
     flash("Contract details updated. The billable rate was not changed.", "success")
     return redirect(url_for("main.contract", contract_id=item.id))
@@ -1270,6 +1363,7 @@ def new_task(contract_id: int) -> Any:
             actor_id=cast(User, current_user()).id,
             contract_id=contract_id,
             task_id=task.id,
+            initial_values={"Task Name": task.name},
         )
         flash("Task added.", "success")
     return redirect(url_for("main.contract", contract_id=contract_id))
@@ -1306,6 +1400,7 @@ def new_subtask(task_id: int) -> Any:
             contract_id=task.contract_id,
             task_id=task.id,
             subtask_id=subtask.id,
+            initial_values={"Subtask Name": subtask.name},
         )
         flash("Subtask added.", "success")
     return redirect(url_for("main.contract", contract_id=task.contract_id))
@@ -1315,6 +1410,7 @@ def new_subtask(task_id: int) -> Any:
 @permission_required(TASK_EDIT)
 def rename_task(task_id: int) -> Any:
     task = cast(Task, get_or_404(Task, task_id))
+    previous_name = task.name
     try:
         name = form_text("name", "Task Name", 200)
         duplicate = get_session().scalar(
@@ -1337,6 +1433,7 @@ def rename_task(task_id: int) -> Any:
             actor_id=cast(User, current_user()).id,
             contract_id=task.contract_id,
             task_id=task.id,
+            changes=audit_changes(task_name=(previous_name, task.name)),
         )
         flash("Task renamed.", "success")
     return redirect(url_for("main.contract", contract_id=task.contract_id))
@@ -1346,6 +1443,7 @@ def rename_task(task_id: int) -> Any:
 @permission_required(TASK_EDIT)
 def rename_subtask(subtask_id: int) -> Any:
     subtask = cast(Subtask, get_or_404(Subtask, subtask_id))
+    previous_name = subtask.name
     try:
         name = form_text("name", "Subtask Name", 200)
         duplicate = get_session().scalar(
@@ -1369,6 +1467,7 @@ def rename_subtask(subtask_id: int) -> Any:
             contract_id=subtask.task.contract_id,
             task_id=subtask.task_id,
             subtask_id=subtask.id,
+            changes=audit_changes(subtask_name=(previous_name, subtask.name)),
         )
         flash("Subtask renamed.", "success")
     return redirect(url_for("main.contract", contract_id=subtask.task.contract_id))
@@ -1528,11 +1627,8 @@ def start_timer() -> Any:
         )
     audit(
         "timer_started",
-        user_id=user.id,
-        contract_id=task.contract_id,
-        task_id=task.id,
-        subtask_id=subtask.id if subtask else None,
-        time_entry_id=entry.id,
+        **audit_time_entry_details(entry),
+        initial_values={"Start Time": audit_time(entry.started_at)},
     )
     return redirect(url_for("main.contract", contract_id=task.contract_id))
 
@@ -1549,11 +1645,10 @@ def stop_timer(entry_id: int) -> Any:
     database.commit()
     audit(
         "timer_stopped",
-        user_id=user.id,
-        contract_id=entry.task.contract_id,
-        task_id=entry.task_id,
-        subtask_id=entry.subtask_id,
-        time_entry_id=entry.id,
+        **audit_time_entry_details(entry),
+        end_time=audit_time(entry.stopped_at),
+        duration=format_duration(duration_seconds(entry.started_at, entry.stopped_at)),
+        billable_rate=audit_rate(entry.task.contract.hourly_rate_cents),
     )
     destination = safe_next_url(request.form.get("next"))
     return redirect(
@@ -1648,11 +1743,15 @@ def new_time_entry(contract_id: int) -> Any:
     audit(
         "time_entry_created",
         actor_id=actor.id,
-        user_id=entry.user_id,
-        contract_id=contract_id,
-        task_id=entry.task_id,
-        subtask_id=entry.subtask_id,
-        time_entry_id=entry.id,
+        **audit_time_entry_details(entry),
+        initial_values={
+            "Start Time": audit_time(entry.started_at),
+            "End Time": audit_time(entry.stopped_at),
+            "Duration": format_duration(
+                duration_seconds(entry.started_at, entry.stopped_at)
+            ),
+            "Billable Rate": audit_rate(entry.task.contract.hourly_rate_cents),
+        },
     )
     flash("Time session added.", "success")
     return redirect(url_for("main.contract_sessions", contract_id=contract_id))
@@ -1773,6 +1872,10 @@ def edit_time_entry(entry_id: int) -> Any:
         abort(409, "Stop an active timer before editing it.")
     contract_item = entry.task.contract
     client_item = contract_item.client
+    previous_details = audit_time_entry_details(entry)
+    previous_started_at = entry.started_at
+    previous_stopped_at = entry.stopped_at
+    previous_rate = contract_item.hourly_rate_cents
     tasks = database.scalars(
         select(Task)
         .where(Task.contract_id == contract_item.id)
@@ -1874,11 +1977,36 @@ def edit_time_entry(entry_id: int) -> Any:
     audit(
         "time_entry_updated",
         actor_id=cast(User, current_user()).id,
-        user_id=entry.user_id,
-        client_id=selected_client.id,
-        contract_id=selected_contract.id,
-        previous_contract_id=original_contract_id,
-        time_entry_id=entry.id,
+        **audit_time_entry_details(entry),
+        changes=audit_changes(
+            client=(
+                previous_details["client"],
+                audit_object_label(selected_client.name, selected_client.id),
+            ),
+            contract=(
+                previous_details["contract"],
+                audit_object_label(selected_contract.name, selected_contract.id),
+            ),
+            task=(previous_details["task"], audit_object_label(task.name, task.id)),
+            subtask=(
+                previous_details["subtask"],
+                audit_object_label(subtask.name, subtask.id)
+                if subtask is not None
+                else "None",
+            ),
+            user=(
+                previous_details["user"], audit_object_label(entry_user.full_name, entry_user.id)
+            ),
+            start_time=(audit_time(previous_started_at), audit_time(started_at)),
+            end_time=(audit_time(previous_stopped_at), audit_time(stopped_at)),
+            duration=(
+                format_duration(duration_seconds(previous_started_at, previous_stopped_at)),
+                format_duration(duration_seconds(started_at, stopped_at)),
+            ),
+            billable_rate=(
+                audit_rate(previous_rate), audit_rate(selected_contract.hourly_rate_cents)
+            ),
+        ),
     )
     flash("Time session updated.", "success")
     return redirect(url_for("main.contract_sessions", contract_id=original_contract_id))
@@ -1931,7 +2059,16 @@ def delete_time_entry(entry_id: int) -> Any:
         abort(429)
     if not sensitive_action_credentials_valid(actor):
         sensitive_action_limiter.record_failure(rate_key)
-        audit("time_entry_delete_rejected", actor_id=actor.id, time_entry_id=entry.id)
+        audit(
+            "time_entry_delete_rejected",
+            actor_id=actor.id,
+            user=user_label,
+            client=client_label,
+            contract=contract_label,
+            task=task_label,
+            subtask=subtask_label,
+            time_entry=entry_label,
+        )
         flash("The administrator credentials were not accepted.", "error")
         return render_template("sensitive_action_form.html", **confirmation), 400
     sensitive_action_limiter.clear(rate_key)
@@ -1946,6 +2083,10 @@ def delete_time_entry(entry_id: int) -> Any:
         task=task_label,
         subtask=subtask_label,
         time_entry=entry_label,
+        start_time=audit_time(entry.started_at),
+        end_time=audit_time(entry.stopped_at),
+        duration=format_duration(duration_seconds(entry.started_at, entry.stopped_at)),
+        billable_rate=audit_rate(entry.task.contract.hourly_rate_cents),
     )
     flash("Time session deleted.", "success")
     return redirect(url_for("main.contract_sessions", contract_id=contract_id))
@@ -1975,6 +2116,8 @@ def required_password_change() -> Any:
 @login_required
 def update_profile_name() -> Any:
     user = cast(User, current_user())
+    previous_first_name = user.first_name
+    previous_last_name = user.last_name
     try:
         user.first_name = form_text("first_name", "First Name", 100)
         user.last_name = form_text("last_name", "Last Name", 100)
@@ -1982,7 +2125,14 @@ def update_profile_name() -> Any:
         flash(str(exc), "error")
     else:
         get_session().commit()
-        audit("profile_updated", user_id=user.id)
+        audit(
+            "profile_updated",
+            user_id=user.id,
+            changes=audit_changes(
+                first_name=(previous_first_name, user.first_name),
+                last_name=(previous_last_name, user.last_name),
+            ),
+        )
         flash("Profile updated.", "success")
     return redirect(url_for("main.profile"))
 
@@ -2009,7 +2159,11 @@ def change_password() -> Any:
         user.session_version += 1
         get_session().commit()
         session["session_version"] = user.session_version
-        audit("password_changed", user_id=user.id)
+        audit(
+            "password_changed",
+            user_id=user.id,
+            sessions_invalidated=True,
+        )
         flash("Password changed successfully.", "success")
         return redirect(url_for("main.dashboard" if was_required else "main.profile"))
     return redirect(
@@ -2051,7 +2205,7 @@ def confirm_totp() -> Any:
     user.session_version += 1
     get_session().commit()
     session["session_version"] = user.session_version
-    audit("totp_enabled", user_id=user.id)
+    audit("totp_enabled", user_id=user.id, sessions_invalidated=True)
     flash("Two-factor authentication has been enabled.", "success")
     return redirect(url_for("main.profile"))
 
@@ -2073,7 +2227,7 @@ def disable_totp() -> Any:
     user.session_version += 1
     get_session().commit()
     session["session_version"] = user.session_version
-    audit("totp_disabled", user_id=user.id)
+    audit("totp_disabled", user_id=user.id, sessions_invalidated=True)
     flash("Two-factor authentication has been disabled.", "success")
     return redirect(url_for("main.profile"))
 
@@ -2219,6 +2373,14 @@ def new_user() -> Any:
         "user_created",
         actor_id=cast(User, current_user()).id,
         user_id=user.id,
+        initial_values={
+            "Email": user.email,
+            "First Name": user.first_name,
+            "Last Name": user.last_name,
+            "Role": user.role,
+            "Enabled": user.is_enabled,
+            "Two-Factor Authentication": "Provisioned",
+        },
     )
     uri = provisioning_uri(user, secret)
     return render_template(
@@ -2241,6 +2403,11 @@ def edit_user(user_id: int) -> Any:
         return render_template(
             "user_edit_form.html", user=user, email_managed=email_managed
         )
+    previous_values = {
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+    }
     try:
         email = normalize_email(request.form.get("email", ""))
         if email_managed and email != user.email:
@@ -2271,7 +2438,16 @@ def edit_user(user_id: int) -> Any:
         ), 409
     if user.id == actor.id and email_changed:
         session["session_version"] = user.session_version
-    audit("user_updated", actor_id=actor.id, user_id=user.id)
+    audit(
+        "user_updated",
+        actor_id=actor.id,
+        user_id=user.id,
+        changes=audit_changes(
+            email=(previous_values["email"], user.email),
+            first_name=(previous_values["first_name"], user.first_name),
+            last_name=(previous_values["last_name"], user.last_name),
+        ),
+    )
     flash("User details updated.", "success")
     return redirect(url_for("main.users"))
 
@@ -2305,7 +2481,6 @@ def reset_user_password(user_id: int) -> Any:
             "user_password_reset_rate_limited",
             actor_id=actor.id,
             user_id=user.id,
-            ip=request.remote_addr,
         )
         abort(429)
     if not sensitive_action_credentials_valid(actor):
@@ -2314,7 +2489,6 @@ def reset_user_password(user_id: int) -> Any:
             "user_password_reset_rejected",
             actor_id=actor.id,
             user_id=user.id,
-            ip=request.remote_addr,
         )
         flash("The administrator credentials were not accepted.", "error")
         return render_template("sensitive_action_form.html", **confirmation), 400
@@ -2324,7 +2498,13 @@ def reset_user_password(user_id: int) -> Any:
     user.password_change_required = True
     user.session_version += 1
     get_session().commit()
-    audit("user_password_reset", actor_id=actor.id, user_id=user.id)
+    audit(
+        "user_password_reset",
+        actor_id=actor.id,
+        user_id=user.id,
+        sessions_invalidated=True,
+        must_change_at_next_sign_in=True,
+    )
     return render_template(
         "password_reset_created.html",
         user=user,
@@ -2340,6 +2520,7 @@ def toggle_user_enabled(user_id: int) -> Any:
     user = cast(User, get_or_404(User, user_id))
     if user.id == actor.id:
         abort(409, "Administrators cannot disable their current account.")
+    previous_enabled = user.is_enabled
     user.is_enabled = not user.is_enabled
     user.session_version += 1
     if not user.is_enabled:
@@ -2359,6 +2540,7 @@ def toggle_user_enabled(user_id: int) -> Any:
         "user_enabled" if user.is_enabled else "user_disabled",
         actor_id=actor.id,
         user_id=user.id,
+        changes=audit_changes(enabled=(previous_enabled, user.is_enabled)),
     )
     return redirect(url_for("main.users"))
 
@@ -2371,13 +2553,19 @@ def toggle_user_admin(user_id: int) -> Any:
     user = cast(User, get_or_404(User, user_id))
     if user.id == actor.id:
         abort(409, "Administrators cannot change their current role.")
+    previous_role = user.role
     user.role = "user" if user.role == "admin" else "admin"
     try:
         database.commit()
     except IntegrityError:
         database.rollback()
         abort(409, "At least one enabled administrator is required.")
-    audit("user_role_changed", actor_id=actor.id, user_id=user.id)
+    audit(
+        "user_role_changed",
+        actor_id=actor.id,
+        user_id=user.id,
+        changes=audit_changes(role=(previous_role, user.role)),
+    )
     return redirect(url_for("main.users"))
 
 
@@ -2422,7 +2610,7 @@ def shared_report(token: str) -> Any:
             audit(
                 "shared_report_rate_limited",
                 client_id=client_item.id,
-                ip=ip,
+                source_ip=ip,
             )
             abort(429)
         password_hash = client_item.report_password_hash
@@ -2433,7 +2621,7 @@ def shared_report(token: str) -> Any:
             audit(
                 "shared_report_rejected",
                 client_id=client_item.id,
-                ip=ip,
+                source_ip=ip,
             )
             flash(
                 "A report password has not been generated yet."
@@ -2446,7 +2634,7 @@ def shared_report(token: str) -> Any:
         audit(
             "shared_report_access_granted",
             client_id=client_item.id,
-            ip=ip,
+            source_ip=ip,
         )
         return set_shared_report_cookie(
             redirect(url_for("main.shared_report", token=token)),
@@ -2458,7 +2646,7 @@ def shared_report(token: str) -> Any:
     audit(
         "shared_report_viewed",
         client_id=client_item.id,
-        ip=request.remote_addr,
+        source_ip=request.remote_addr,
     )
     etag = report_state_etag(report)
     return render_template(
