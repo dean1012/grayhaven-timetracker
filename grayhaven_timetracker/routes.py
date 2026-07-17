@@ -265,7 +265,7 @@ def audit(event: str, **fields: Any) -> None:
             fields[label] = audit_object_label(getattr(item, attribute), identifier)
     fields.setdefault(
         "request_source",
-        "Web Application" if actor else "Public Shared Report",
+        "Public Shared Report" if event.startswith("shared_report_") else "Web Application",
     )
     try:
         record_audit_event(
