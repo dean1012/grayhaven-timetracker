@@ -106,11 +106,11 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .contract-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .9rem .2rem; color: var(--soft-white); border-bottom: 1px solid color-mix(in srgb, var(--charcoal-border) 60%, transparent); font-size: .92rem; }
 .contract-name-link { display: flex; align-items: center; min-width: 0; color: var(--soft-white); }
 .contract-identity { display: flex; align-items: center; gap: 1rem; min-width: 0; overflow-wrap: anywhere; }
-.contract-row-detailed { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.4fr) auto; padding-block: 1rem; }
+.contract-row-detailed { display: grid; grid-template-columns: minmax(0, 18rem) minmax(0, 18rem) minmax(0, 1fr) auto; padding-block: 1rem; }
 .contract-contact-identity { display: flex; align-items: center; gap: .5rem; min-width: 0; }
 .contract-contact-identity i { color: var(--primary-accent); }
 .contract-row-detailed .contract-identity strong { color: var(--soft-white); font-weight: 600; }
-.contract-contact-identity strong { min-width: 0; color: var(--soft-white); font-weight: var(--font-weight-medium); overflow-wrap: anywhere; }
+.contract-contact-identity strong { min-width: 0; color: var(--cool-grey); font-weight: 400; overflow-wrap: anywhere; }
 .contract-contact-email { min-width: 0; color: var(--primary-accent); overflow-wrap: anywhere; }
 .contract-contact-email:hover { color: var(--standard-hover); }
 .contract-row i { color: var(--primary-accent); }
@@ -324,10 +324,6 @@ small { color: var(--cool-grey); font-weight: 400; }
 .data-table th, .data-table td { padding: .85rem .7rem; text-align: left; vertical-align: top; border-bottom: 1px solid color-mix(in srgb, var(--charcoal-border) 65%, transparent); }
 .data-table th { color: var(--primary-accent); font-size: .73rem; letter-spacing: .1em; text-transform: uppercase; }
 .report-page .data-table td:nth-last-child(-n+3), .report-page .data-table th:nth-last-child(-n+3) { text-align: right; }
-.report-page .data-table.report-summary-table { width: 100%; table-layout: fixed; }
-.report-summary-task { width: 50%; }
-.report-summary-duration, .report-summary-cost { width: 25%; }
-.report-page .data-table.report-summary-table th, .report-page .data-table.report-summary-table td { text-align: left; }
 .report-pagination { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-sm); margin-top: var(--space-sm); color: var(--cool-grey); font-size: .82rem; }
 .live-label { display: inline-block; margin-left: .4rem; padding: .12rem .35rem; color: var(--alert-success); border: 1px solid color-mix(in srgb, var(--alert-success) 45%, transparent); border-radius: var(--border-radius-sm); font-size: .68rem; }
 .report-page hr { margin: 2.5rem 0 1rem; border: 0; border-top: 1px solid var(--charcoal-border); }
