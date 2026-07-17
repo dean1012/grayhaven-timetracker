@@ -54,7 +54,14 @@
   </header>
   {% endif %}
   <main class="app-viewport">
-    {% set live_page = request.endpoint in ('main.dashboard', 'main.client', 'main.contract', 'main.contract_sessions', 'main.users', 'main.audit_log') %}
+    {% set live_page = request.endpoint in (
+      'main.dashboard', 'main.client', 'main.contract', 'main.contract_sessions',
+      'main.users', 'main.audit_log', 'main.edit_client', 'main.delete_client',
+      'main.reset_client_report_password', 'main.client_report_password_confirmation',
+      'main.new_contract', 'main.edit_contract', 'main.delete_contract',
+      'main.delete_task', 'main.delete_subtask', 'main.new_time_entry',
+      'main.edit_time_entry', 'main.delete_time_entry'
+    ) %}
     <div class="page-shell"{% if live_page %} data-live-page data-live-etag="{{ live_page_etag }}" data-live-interval-ms="3000"{% endif %}>
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
