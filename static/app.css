@@ -468,6 +468,16 @@ small { color: var(--cool-grey); font-weight: 400; }
   .report-overview-grid { grid-template-columns: minmax(0, 1.45fr) minmax(420px, .75fr); }
 }
 
+@media (width <1180px) {
+  .report-page-public .report-overview-grid { grid-template-columns: minmax(0, 1fr); }
+  .report-page-public .chart-panel, .report-page-public .report-detail { display: none; }
+}
+
+@media (width <720px) {
+  .report-page-public .report-task-summary-table th:nth-child(3),
+  .report-page-public .report-task-summary-table td:nth-child(3) { display: none; }
+}
+
 @media (width >=1721px) {
   :root { --container-padding: 4rem; }
   .desktop-nav { display: flex; }

@@ -1,5 +1,5 @@
 <article
-  class="report-page"
+  class="report-page{% if shared_report %} report-page-public{% endif %}"
   data-live-report
   data-report-snapshot-at="{{ report.generated_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}"
   data-live-url="{{ live_report_url }}"
@@ -39,7 +39,7 @@
       <div class="panel report-panel">
         <div class="panel-heading"><div><p class="eyebrow">SUMMARY</p><h3>Time by Task and Subtask</h3></div></div>
         <div data-report-pagination="summary">
-          <table class="data-table">
+          <table class="data-table report-task-summary-table">
             <thead><tr><th>Task / subtask</th><th>Duration</th><th>Estimated Cost</th></tr></thead>
             <tbody>
               {% for group in contract_report.groups %}
