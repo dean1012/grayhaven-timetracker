@@ -19,7 +19,7 @@
       <label>Email Address<input type="email" name="email" value="{{ request.form.get('email', user.email) }}" maxlength="255" required {% if email_managed %}readonly{% endif %}>{% if email_managed %}<small>This user identity is managed by deployment configuration.</small>{% endif %}</label>
       <div class="form-actions">
         <a class="button button-secondary" href="{{ url_for('main.users') }}">Cancel</a>
-        <button class="button button-primary" type="submit"><i class="fa-solid fa-check" aria-hidden="true"></i> Update User</button>
+        <button class="button button-primary" type="submit"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Update User</button>
       </div>
     </form>
   </div>

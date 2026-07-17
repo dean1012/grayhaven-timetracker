@@ -133,6 +133,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .user-contact-identity strong { min-width: 0; overflow: hidden; color: var(--cool-grey); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 .user-contact-email { min-width: 0; max-width: 100%; overflow: hidden; color: var(--primary-accent); }
 .user-contact-email .truncate-text { color: inherit; }
+.user-totp-cell { display: inline-flex; align-items: center; gap: .55rem; }
 .contract-row i { color: var(--primary-accent); }
 .contract-row .rate { color: var(--cool-grey); font-size: .82rem; }
 .contract-row .rate i { margin-left: .7rem; color: var(--cool-grey); }
@@ -155,6 +156,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .status-pill { display: inline-block; padding: .2rem .55rem; color: var(--soft-white); border-radius: var(--pill-radius); font-size: .72rem; font-weight: var(--font-weight-semibold); }
 .status-enabled { background: color-mix(in srgb, var(--alert-success) 15%, transparent); }
 .status-disabled { background: color-mix(in srgb, var(--alert-error) 15%, transparent); }
+.status-neutral { color: var(--cool-grey); background: color-mix(in srgb, var(--cool-grey) 12%, transparent); }
 .status-warning { background: color-mix(in srgb, var(--alert-warning) 15%, transparent); }
 .secret-value { margin: 1.5rem 0; padding: 1rem; color: var(--soft-white); background: var(--deep-graphite); border: 1px solid var(--charcoal-border); border-radius: var(--border-radius); font-family: ui-monospace, monospace; font-size: 1.1rem; letter-spacing: .08em; overflow-wrap: anywhere; }
 .secret-copy-value { display: flex; align-items: center; gap: .65rem; }

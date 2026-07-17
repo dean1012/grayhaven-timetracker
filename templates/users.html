@@ -8,13 +8,14 @@
 <section class="panel user-directory" data-live-region="user-directory">
   <div class="table-scroll">
     <table class="data-table user-table">
-      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>TOTP</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>
       {% for user in users %}
         <tr>
           <td><span class="user-contact-identity"><i class="fa-solid fa-address-card" aria-hidden="true"></i><strong class="truncate-text" title="{{ user.full_name }}">{{ user.full_name }}</strong></span></td>
           <td><a class="user-contact-email external-link" href="mailto:{{ user.email }}?body={{ (user.full_name ~ ',')|urlencode }}" title="{{ user.email }}"><span class="truncate-text">{{ user.email }}</span></a></td>
           <td><span class="status-pill {{ 'status-disabled' if user.is_admin else 'status-enabled' }}">{{ 'Administrator' if user.is_admin else 'User' }}</span></td>
+          <td><span class="user-totp-cell"><span class="status-pill {{ 'status-enabled' if user.totp_secret else 'status-neutral' }}">{{ 'Configured' if user.totp_secret else 'Not Configured' }}</span>{% if user.totp_secret and user.id != logged_user.id and can('user:edit') %}<a class="icon-button stop" href="{{ url_for('main.disable_user_totp', user_id=user.id) }}" title="Disable TOTP" aria-label="Disable TOTP"><i class="fa-solid fa-ban" aria-hidden="true"></i></a>{% endif %}</span></td>
           <td><span class="status-pill {{ 'status-enabled' if user.is_enabled else 'status-disabled' }}">{{ 'Enabled' if user.is_enabled else 'Disabled' }}</span></td>
           <td>
             <div class="row-actions">

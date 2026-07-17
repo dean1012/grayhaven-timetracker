@@ -2707,6 +2707,57 @@ def reset_user_password(user_id: int) -> Any:
     )
 
 
+@main.route("/users/<int:user_id>/disable-totp", methods=["GET", "POST"])
+@permission_required(USER_EDIT)
+def disable_user_totp(user_id: int) -> Any:
+    database = get_session()
+    actor = cast(User, current_user())
+    user = cast(User, get_or_404(User, user_id))
+    if user.id == actor.id:
+        abort(409, "Use the profile page to disable your own TOTP.")
+    if not user.totp_secret:
+        return redirect(url_for("main.users"))
+    confirmation = {
+        "eyebrow": "DISABLE TOTP",
+        "title": user.full_name,
+        "description": "This will disable TOTP for the selected user immediately.",
+        "submit_label": "Disable TOTP",
+        "submit_class": "button-stop",
+        "submit_icon": "fa-ban",
+        "cancel_url": url_for("main.users"),
+        "breadcrumb_parent_label": "Users",
+        "breadcrumb_parent_url": url_for("main.users"),
+        "breadcrumb_label": "Disable TOTP",
+        "totp_required": bool(actor.totp_secret),
+    }
+    if request.method != "POST":
+        return render_template("sensitive_action_form.html", **confirmation)
+    rate_key = sensitive_action_rate_key(actor)
+    if sensitive_action_limiter.blocked(rate_key):
+        audit("user_totp_disable_rate_limited", actor_id=actor.id, user_id=user.id, source_ip=request.remote_addr)
+        abort(429)
+    if not sensitive_action_credentials_valid(actor):
+        sensitive_action_limiter.record_failure(rate_key)
+        audit("user_totp_disable_rejected", actor_id=actor.id, user_id=user.id, source_ip=request.remote_addr)
+        flash("The administrator credentials were not accepted.", "error")
+        return render_template("sensitive_action_form.html", **confirmation), 400
+    sensitive_action_limiter.clear(rate_key)
+    user.totp_secret = None
+    user.pending_totp_secret = None
+    reset_totp_replay_state(database, user.id)
+    user.session_version += 1
+    database.commit()
+    audit(
+        "totp_disabled",
+        actor_id=actor.id,
+        user_id=user.id,
+        source_ip=request.remote_addr,
+        sessions_invalidated=True,
+    )
+    flash("TOTP has been disabled for the user.", "success")
+    return redirect(url_for("main.users"))
+
+
 @main.route("/users/<int:user_id>/toggle-enabled", methods=["GET", "POST"])
 @permission_required(USER_EDIT)
 def toggle_user_enabled(user_id: int) -> Any:
