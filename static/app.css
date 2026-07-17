@@ -111,7 +111,8 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .contract-contact-identity i { color: var(--primary-accent); }
 .contract-row-detailed .contract-identity strong { color: var(--soft-white); font-weight: 600; }
 .contract-contact-identity strong { min-width: 0; color: var(--soft-white); font-weight: var(--font-weight-medium); overflow-wrap: anywhere; }
-.contract-contact-email { min-width: 0; color: var(--cool-grey); overflow-wrap: anywhere; }
+.contract-contact-email { min-width: 0; color: var(--primary-accent); overflow-wrap: anywhere; }
+.contract-contact-email:hover { color: var(--standard-hover); }
 .contract-row i { color: var(--primary-accent); }
 .contract-row .rate { color: var(--cool-grey); font-size: .82rem; }
 .contract-row .rate i { margin-left: .7rem; color: var(--cool-grey); }
@@ -323,16 +324,19 @@ small { color: var(--cool-grey); font-weight: 400; }
 .data-table th, .data-table td { padding: .85rem .7rem; text-align: left; vertical-align: top; border-bottom: 1px solid color-mix(in srgb, var(--charcoal-border) 65%, transparent); }
 .data-table th { color: var(--primary-accent); font-size: .73rem; letter-spacing: .1em; text-transform: uppercase; }
 .report-page .data-table td:nth-last-child(-n+3), .report-page .data-table th:nth-last-child(-n+3) { text-align: right; }
+.report-page .data-table.report-summary-table { width: 100%; table-layout: fixed; }
+.report-summary-task { width: 50%; }
+.report-summary-duration, .report-summary-cost { width: 25%; }
+.report-page .data-table.report-summary-table th, .report-page .data-table.report-summary-table td { text-align: left; }
 .report-pagination { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-sm); margin-top: var(--space-sm); color: var(--cool-grey); font-size: .82rem; }
 .live-label { display: inline-block; margin-left: .4rem; padding: .12rem .35rem; color: var(--alert-success); border: 1px solid color-mix(in srgb, var(--alert-success) 45%, transparent); border-radius: var(--border-radius-sm); font-size: .68rem; }
 .report-page hr { margin: 2.5rem 0 1rem; border: 0; border-top: 1px solid var(--charcoal-border); }
 .confidential { color: var(--primary-accent); font-size: .76rem; font-weight: 700; letter-spacing: .18em; text-align: right; }
-.report-contact { display: flex; align-items: center; gap: .8rem; padding: .75rem 1rem; color: var(--cool-grey); background: color-mix(in srgb, var(--primary-accent) 6%, transparent); border: 1px solid color-mix(in srgb, var(--primary-accent) 22%, transparent); border-radius: var(--border-radius); }
-.report-contact > i { color: var(--primary-accent); font-size: 1.2rem; }
+.report-contact { min-width: 0; color: var(--cool-grey); text-align: center; }
 .report-contact p { margin: 0; }
-.report-footer { display: flex; flex-direction: column; flex: 0 0 auto; align-items: stretch; gap: var(--space-sm); margin-top: 1rem; padding-top: 1rem; color: var(--cool-grey); border-top: 1px solid var(--primary-accent); font-size: .76rem; }
-.report-footer-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--space-md); }
-.report-footer-meta strong { color: var(--primary-accent); letter-spacing: .16em; }
+.report-footer { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; flex: 0 0 auto; align-items: center; gap: var(--space-md); margin-top: 1rem; padding-top: 1rem; color: var(--cool-grey); border-top: 1px solid var(--primary-accent); font-size: .76rem; }
+.report-footer > strong { color: var(--primary-accent); letter-spacing: .16em; }
+.report-footer-client { text-align: right; }
 
 @media (width >=640px) {
   :root { --container-padding: 2rem; }
@@ -379,8 +383,7 @@ small { color: var(--cool-grey); font-weight: 400; }
   .report-title h1 { font-size: 2rem; }
   .report-page > .panel { padding: 1.2rem; }
   .chart-panel { min-height: 0; }
-  .report-contact { align-items: flex-start; }
-  .report-footer-meta { width: 100%; }
+  .report-contact { text-align: left; }
 }
 
 @media (width <=575px) {
@@ -401,7 +404,7 @@ small { color: var(--cool-grey); font-weight: 400; }
   .report-contract-summary { grid-template-columns: minmax(0, 1fr); }
   .report-contract-heading { align-items: flex-start; flex-direction: column; gap: .35rem; }
   .report-pie { width: 210px; height: 210px; }
-  .report-footer { align-items: stretch; flex-direction: column; gap: .4rem; }
+  .report-footer { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .4rem; }
 }
 
 @media (width <=400px) {

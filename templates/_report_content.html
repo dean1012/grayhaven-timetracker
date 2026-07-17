@@ -39,7 +39,8 @@
       <div class="panel report-panel">
         <div class="panel-heading"><div><p class="eyebrow">SUMMARY</p><h3>Time by Task and Subtask</h3></div></div>
         <div data-report-pagination="summary">
-          <table class="data-table">
+          <table class="data-table report-summary-table">
+            <colgroup><col class="report-summary-task"><col class="report-summary-duration"><col class="report-summary-cost"></colgroup>
             <thead><tr><th>Task / subtask</th><th>Duration</th><th>Estimated Cost</th></tr></thead>
             <tbody>
               {% for group in contract_report.groups %}
@@ -104,10 +105,10 @@
   </div>
   </div>
   <footer class="report-footer">
+    <strong>CONFIDENTIAL</strong>
     <div class="report-contact">
-      <i class="fa-solid fa-circle-question" aria-hidden="true"></i>
       <p>Questions or concerns? <a class="external-link" href="{{ contact_url }}" target="_blank" rel="noopener noreferrer">Schedule a meeting with us <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i></a> or email your point of contact and we will be happy to help.</p>
     </div>
-    <div class="report-footer-meta"><strong>CONFIDENTIAL</strong><span>{{ report.client.name }}</span></div>
+    <span class="report-footer-client">{{ report.client.name }}</span>
   </footer>
 </article>
