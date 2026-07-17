@@ -22,9 +22,6 @@ from .auth import (
 from .config import ConfigurationError
 from .models import ApplicationMetadata, TimeEntry, User
 
-BOOTSTRAP_EMAIL_KEY = "bootstrap_admin_email"
-BOOTSTRAP_PASSWORD_KEY = "bootstrap_admin_password_fingerprint"  # noqa: S105
-BOOTSTRAP_TOTP_KEY = "bootstrap_admin_totp_fingerprint"
 BOOTSTRAP_USER_KEY_PREFIX = "bootstrap_user_"
 BOOTSTRAP_USER_ALLOWED_FIELDS = frozenset(
     {
@@ -91,12 +88,6 @@ def _set_metadata(database: Session, key: str, value: str) -> None:
         item.value = value
 
 
-def _delete_metadata(database: Session, key: str) -> None:
-    item = database.get(ApplicationMetadata, key)
-    if item is not None:
-        database.delete(item)
-
-
 def _validate_password_hash(value: str, label: str) -> None:
     try:
         parameters = extract_parameters(value)
@@ -109,47 +100,6 @@ def _validate_password_hash(value: str, label: str) -> None:
         or parameters.parallelism < 1
     ):
         raise ConfigurationError(f"{label} must use Argon2id with secure parameters")
-
-
-def _legacy_initial_admin(app: Flask) -> BootstrapUser | None:
-    password_hash = cast(str | None, app.config.get("INITIAL_ADMIN_PASSWORD_HASH"))
-    totp_secret = cast(str | None, app.config.get("INITIAL_ADMIN_TOTP_SECRET"))
-    if password_hash is None:
-        if totp_secret is not None:
-            raise ConfigurationError(
-                "INITIAL_ADMIN_TOTP_SECRET requires INITIAL_ADMIN_PASSWORD_HASH"
-            )
-        return None
-    try:
-        email = normalize_email(cast(str, app.config["INITIAL_ADMIN_EMAIL"]))
-        first_name = required_text(
-            cast(str, app.config["INITIAL_ADMIN_FIRST_NAME"]),
-            "Initial admin first name",
-            maximum=100,
-        )
-        last_name = required_text(
-            cast(str, app.config["INITIAL_ADMIN_LAST_NAME"]),
-            "Initial admin last name",
-            maximum=100,
-        )
-    except (KeyError, ValueError) as exc:
-        raise ConfigurationError(
-            "Initial administrator email, first name, and last name are required"
-        ) from exc
-    _validate_password_hash(password_hash, "INITIAL_ADMIN_PASSWORD_HASH")
-    if totp_secret is not None and not valid_totp_secret(totp_secret):
-        raise ConfigurationError(
-            "INITIAL_ADMIN_TOTP_SECRET must be a valid Base32 TOTP secret"
-        )
-    return BootstrapUser(
-        email=email,
-        first_name=first_name,
-        last_name=last_name,
-        password_hash=password_hash,
-        totp_secret=totp_secret,
-        role="admin",
-        enabled=True,
-    )
 
 
 def _manifest_user(value: Any, index: int) -> BootstrapUser:
@@ -203,30 +153,23 @@ def _manifest_user(value: Any, index: int) -> BootstrapUser:
 
 
 def configured_bootstrap_users(app: Flask) -> list[BootstrapUser]:
-    """Parse and validate legacy and manifest-based bootstrap users."""
-    users: list[BootstrapUser] = []
-    legacy = _legacy_initial_admin(app)
-    if legacy is not None:
-        users.append(legacy)
-
+    """Parse and validate deployment-managed bootstrap users."""
     raw_manifest = cast(str | None, app.config.get("BOOTSTRAP_USERS"))
-    if raw_manifest is not None:
-        try:
-            manifest = json.loads(raw_manifest)
-        except (TypeError, json.JSONDecodeError) as exc:
-            raise ConfigurationError("BOOTSTRAP_USERS must contain valid JSON") from exc
-        if not isinstance(manifest, list):
-            raise ConfigurationError("BOOTSTRAP_USERS must contain a JSON list")
-        if len(manifest) > BOOTSTRAP_USER_LIMIT:
-            raise ConfigurationError(
-                f"BOOTSTRAP_USERS cannot exceed {BOOTSTRAP_USER_LIMIT} entries"
-            )
-        users.extend(
-            _manifest_user(value, index) for index, value in enumerate(manifest)
-        )
-
-    if not users:
+    if raw_manifest is None:
+        raise ConfigurationError("BOOTSTRAP_USERS or BOOTSTRAP_USERS_FILE is required")
+    try:
+        manifest = json.loads(raw_manifest)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ConfigurationError("BOOTSTRAP_USERS must contain valid JSON") from exc
+    if not isinstance(manifest, list):
+        raise ConfigurationError("BOOTSTRAP_USERS must contain a JSON list")
+    if not manifest:
         raise ConfigurationError("At least one bootstrap user is required")
+    if len(manifest) > BOOTSTRAP_USER_LIMIT:
+        raise ConfigurationError(
+            f"BOOTSTRAP_USERS cannot exceed {BOOTSTRAP_USER_LIMIT} entries"
+        )
+    users = [_manifest_user(value, index) for index, value in enumerate(manifest)]
     emails = [user.email for user in users]
     if len(emails) != len(set(emails)):
         raise ConfigurationError("Bootstrap user email addresses must be unique")
@@ -241,10 +184,7 @@ def _prior_fingerprints(
     database: Session, spec: BootstrapUser
 ) -> tuple[str | None, str | None]:
     if spec.metadata_key is None:
-        return (
-            _metadata(database, BOOTSTRAP_PASSWORD_KEY),
-            _metadata(database, BOOTSTRAP_TOTP_KEY),
-        )
+        raise ConfigurationError("Bootstrap user metadata key is missing")
     raw = _metadata(database, spec.metadata_key)
     if raw is None:
         return None, None
@@ -266,13 +206,7 @@ def _store_fingerprints(database: Session, spec: BootstrapUser) -> None:
     password = _fingerprint(spec.password_hash)
     totp = _fingerprint(spec.totp_secret) if spec.totp_secret is not None else None
     if spec.metadata_key is None:
-        _set_metadata(database, BOOTSTRAP_EMAIL_KEY, spec.email)
-        _set_metadata(database, BOOTSTRAP_PASSWORD_KEY, password)
-        if totp is None:
-            _delete_metadata(database, BOOTSTRAP_TOTP_KEY)
-        else:
-            _set_metadata(database, BOOTSTRAP_TOTP_KEY, totp)
-        return
+        raise ConfigurationError("Bootstrap user metadata key is missing")
     _set_metadata(
         database,
         spec.metadata_key,
@@ -411,8 +345,4 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
 
 def is_deployment_managed_user(database: Session, email: str) -> bool:
     """Return whether deployment configuration owns an account identity."""
-    legacy_email = _metadata(database, BOOTSTRAP_EMAIL_KEY)
-    return (
-        legacy_email == email
-        or database.get(ApplicationMetadata, _managed_user_key(email)) is not None
-    )
+    return database.get(ApplicationMetadata, _managed_user_key(email)) is not None

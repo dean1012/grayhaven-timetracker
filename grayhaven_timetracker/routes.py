@@ -21,7 +21,6 @@ from flask import (
     Flask,
     Response,
     abort,
-    after_this_request,
     current_app,
     flash,
     jsonify,
@@ -127,11 +126,6 @@ PENDING_LOGIN_SESSION_KEYS = (
     "pending_login_next",
     "pending_login_session_version",
     "pending_login_user_id",
-)
-SHARED_REPORT_SESSION_KEYS = (
-    "shared_report_authenticated_at",
-    "shared_report_client_id",
-    "shared_report_password_version",
 )
 SHARED_REPORT_COOKIE_PREFIX = "grayhaven_timetracker_report_"
 SHARED_REPORT_COOKIE_PATH = "/shared/reports/"
@@ -318,26 +312,8 @@ def shared_report_cookie_allowed(client: Client) -> bool:
 
 
 def shared_report_access_allowed(client: Client) -> bool:
-    """Validate isolated report access and migrate a valid legacy session."""
-    if shared_report_cookie_allowed(client):
-        return True
-
-    authenticated_at = session.get("shared_report_authenticated_at")
-    now = now_utc_timestamp()
-    maximum_age = current_app.permanent_session_lifetime.total_seconds()
-    legacy_allowed = bool(
-        session.get("shared_report_client_id") == client.id
-        and session.get("shared_report_password_version")
-        == client.report_password_version
-        and isinstance(authenticated_at, (int, float))
-        and authenticated_at <= now + 60
-        and now - authenticated_at <= maximum_age
-    )
-    for key in SHARED_REPORT_SESSION_KEYS:
-        session.pop(key, None)
-    if legacy_allowed:
-        after_this_request(lambda response: set_shared_report_cookie(response, client))
-    return legacy_allowed
+    """Validate the isolated signed cookie for one client report."""
+    return shared_report_cookie_allowed(client)
 
 
 def get_shared_report_client(token: str) -> Client:
@@ -383,11 +359,7 @@ def shared_report_url(token: str) -> str:
 
 
 def ensure_client_report_token(client: Client) -> str:
-    """Return the permanent client report token, creating it for legacy rows."""
-    if client.report_token:
-        return client.report_token
-    client.report_token = secrets.token_urlsafe(32)
-    get_session().commit()
+    """Return the permanent client report token created with the client record."""
     return client.report_token
 
 

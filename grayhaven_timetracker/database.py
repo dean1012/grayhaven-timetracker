@@ -1,4 +1,4 @@
-"""SQLAlchemy and SQLCipher database lifecycle management."""
+"""SQLAlchemy and SQLCipher database lifecycle management for alpha builds."""
 
 from __future__ import annotations
 
@@ -8,14 +8,13 @@ from pathlib import Path
 from typing import Any, cast
 
 from flask import Flask, g
-from sqlalchemy import Connection, Engine, create_engine, event, text
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlcipher3 import dbapi2 as sqlcipher
 
 from .models import Base
 
 SQLITE_HEADER = b"SQLite format 3\x00"
-SCHEMA_VERSION = "7"
 
 
 class DatabaseError(RuntimeError):
@@ -84,233 +83,30 @@ def build_engine(path: Path, passphrase: str) -> Engine:
     return engine
 
 
-def migrate_schema(connection: Connection) -> str | None:
-    """Advance supported older schemas and return the prior schema, if changed."""
-    version = connection.execute(
-        text("SELECT value FROM application_metadata WHERE key = 'schema_version'")
-    ).scalar_one_or_none()
-    if version is None:
-        connection.execute(
-            text(
-                "INSERT INTO application_metadata (key, value) "
-                "VALUES ('schema_version', :version)"
-            ),
-            {"version": SCHEMA_VERSION},
-        )
-        return "new"
-    prior_version = version
-    if version == "1":
-        user_columns = {
-            row[1]
-            for row in connection.exec_driver_sql(
-                "PRAGMA table_info(user_account)"
-            ).fetchall()
-        }
-        if "password_change_required" not in user_columns:
-            connection.exec_driver_sql(
-                "ALTER TABLE user_account ADD COLUMN "
-                "password_change_required BOOLEAN NOT NULL DEFAULT 0"
-            )
-        contract_columns = {
-            row[1]
-            for row in connection.exec_driver_sql(
-                "PRAGMA table_info(contract)"
-            ).fetchall()
-        }
-        if "report_token_hash" not in contract_columns:
-            connection.exec_driver_sql(
-                "ALTER TABLE contract ADD COLUMN report_token_hash VARCHAR(64)"
-            )
-        if "report_expires_at" not in contract_columns:
-            connection.exec_driver_sql(
-                "ALTER TABLE contract ADD COLUMN report_expires_at DATETIME"
-            )
-        client_columns = {
-            row[1]
-            for row in connection.exec_driver_sql(
-                "PRAGMA table_info(client)"
-            ).fetchall()
-        }
-        if "report_password_hash" not in client_columns:
-            connection.exec_driver_sql(
-                "ALTER TABLE client ADD COLUMN report_password_hash VARCHAR(512)"
-            )
-        if "report_password_version" not in client_columns:
-            connection.exec_driver_sql(
-                "ALTER TABLE client ADD COLUMN "
-                "report_password_version INTEGER NOT NULL DEFAULT 1"
-            )
-        connection.exec_driver_sql(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_contract_report_token_hash "
-            "ON contract (report_token_hash) WHERE report_token_hash IS NOT NULL"
-        )
-        connection.execute(
-            text(
-                "UPDATE application_metadata SET value = :version "
-                "WHERE key = 'schema_version'"
-            ),
-            {"version": "2"},
-        )
-        version = "2"
-    if version == "2":
-        # Base.metadata.create_all creates the new audit table before migration;
-        # the schema marker advances only after that operation succeeds.
-        connection.execute(
-            text(
-                "UPDATE application_metadata SET value = :version "
-                "WHERE key = 'schema_version'"
-            ),
-            {"version": "3"},
-        )
-        version = "3"
-    if version == "3":
-        client_columns = {
-            row[1]
-            for row in connection.exec_driver_sql(
-                "PRAGMA table_info(client)"
-            ).fetchall()
-        }
-        if "report_token_hash" not in client_columns:
-            connection.exec_driver_sql(
-                "ALTER TABLE client ADD COLUMN report_token_hash VARCHAR(64)"
-            )
-        if "report_expires_at" not in client_columns:
-            connection.exec_driver_sql(
-                "ALTER TABLE client ADD COLUMN report_expires_at DATETIME"
-            )
-        connection.exec_driver_sql(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_client_report_token_hash "
-            "ON client (report_token_hash) WHERE report_token_hash IS NOT NULL"
-        )
-        connection.execute(
-            text(
-                "UPDATE application_metadata SET value = :version "
-                "WHERE key = 'schema_version'"
-            ),
-            {"version": "4"},
-        )
-        version = "4"
-    if version == "4":
-        client_columns = {
-            row[1]
-            for row in connection.exec_driver_sql(
-                "PRAGMA table_info(client)"
-            ).fetchall()
-        }
-        if "report_token" not in client_columns:
-            connection.exec_driver_sql(
-                "ALTER TABLE client ADD COLUMN report_token VARCHAR(128)"
-            )
-        connection.exec_driver_sql(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_client_report_token "
-            "ON client (report_token) WHERE report_token IS NOT NULL"
-        )
-        connection.execute(
-            text(
-                "UPDATE application_metadata SET value = :version "
-                "WHERE key = 'schema_version'"
-            ),
-            {"version": "5"},
-        )
-        version = "5"
-    if version == "5":
-        connection.exec_driver_sql(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_client_name "
-            "ON client (name COLLATE NOCASE)"
-        )
-        connection.exec_driver_sql(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_contract_client_name "
-            "ON contract (client_id, name COLLATE NOCASE)"
-        )
-        connection.execute(
-            text(
-                "UPDATE application_metadata SET value = :version "
-                "WHERE key = 'schema_version'"
-            ),
-            {"version": "6"},
-        )
-        version = "6"
-    if version == "6":
-        contract_columns = {
-            row[1]
-            for row in connection.exec_driver_sql(
-                "PRAGMA table_info(contract)"
-            ).fetchall()
-        }
-        if "created_at" not in contract_columns:
-            connection.exec_driver_sql(
-                "ALTER TABLE contract ADD COLUMN created_at DATETIME"
-            )
-            connection.exec_driver_sql(
-                "UPDATE contract SET created_at = CURRENT_TIMESTAMP "
-                "WHERE created_at IS NULL"
-            )
-        connection.exec_driver_sql(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_task_contract_name "
-            "ON task (contract_id, name COLLATE NOCASE)"
-        )
-        connection.exec_driver_sql(
-            "CREATE UNIQUE INDEX IF NOT EXISTS uq_subtask_task_name "
-            "ON subtask (task_id, name COLLATE NOCASE)"
-        )
-        connection.execute(
-            text(
-                "UPDATE application_metadata SET value = :version "
-                "WHERE key = 'schema_version'"
-            ),
-            {"version": SCHEMA_VERSION},
-        )
-        version = SCHEMA_VERSION
-    if version != SCHEMA_VERSION:
-        raise DatabaseError(
-            f"Database schema {version} is not supported by schema {SCHEMA_VERSION}"
-        )
-    return prior_version if prior_version != SCHEMA_VERSION else None
+def initialize_database(engine: Engine) -> None:
+    """Create the current alpha schema and install database integrity guards.
 
-
-def initialize_database(engine: Engine) -> str | None:
-    """Create or migrate the schema and install database integrity guards."""
+    Before the 1.0 production release, reset alpha data before applying an
+    incompatible schema change.
+    """
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
-        prior_schema = migrate_schema(connection)
         triggers = (
             """
             CREATE TRIGGER IF NOT EXISTS time_entry_subtask_insert_guard
             BEFORE INSERT ON time_entry
             WHEN NEW.subtask_id IS NOT NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM subtask
-                WHERE id = NEW.subtask_id AND task_id = NEW.task_id
-              )
-            BEGIN
-              SELECT RAISE(ABORT, 'subtask does not belong to task');
-            END
-            """,
-            """
-            CREATE TRIGGER IF NOT EXISTS enabled_admin_update_guard
-            BEFORE UPDATE OF role, is_enabled ON user_account
-            WHEN OLD.role = 'admin'
-              AND OLD.is_enabled = 1
-              AND (NEW.role != 'admin' OR NEW.is_enabled = 0)
-              AND NOT EXISTS (
-                SELECT 1 FROM user_account
-                WHERE id != OLD.id AND role = 'admin' AND is_enabled = 1
-              )
-            BEGIN
-              SELECT RAISE(ABORT, 'at least one enabled administrator is required');
-            END
+              AND NOT EXISTS (SELECT 1 FROM subtask WHERE id = NEW.subtask_id
+                              AND task_id = NEW.task_id)
+            BEGIN SELECT RAISE(ABORT, 'subtask does not belong to task'); END
             """,
             """
             CREATE TRIGGER IF NOT EXISTS time_entry_subtask_update_guard
             BEFORE UPDATE OF task_id, subtask_id ON time_entry
             WHEN NEW.subtask_id IS NOT NULL
-              AND NOT EXISTS (
-                SELECT 1 FROM subtask
-                WHERE id = NEW.subtask_id AND task_id = NEW.task_id
-              )
-            BEGIN
-              SELECT RAISE(ABORT, 'subtask does not belong to task');
-            END
+              AND NOT EXISTS (SELECT 1 FROM subtask WHERE id = NEW.subtask_id
+                              AND task_id = NEW.task_id)
+            BEGIN SELECT RAISE(ABORT, 'subtask does not belong to task'); END
             """,
             """
             CREATE TRIGGER IF NOT EXISTS time_entry_overlap_insert_guard
@@ -319,68 +115,64 @@ def initialize_database(engine: Engine) -> str | None:
               SELECT 1 FROM time_entry AS existing
               WHERE existing.user_id = NEW.user_id
                 AND NEW.started_at < COALESCE(
-                  existing.stopped_at, '9999-12-31 23:59:59.999999'
+                    existing.stopped_at, '9999-12-31 23:59:59.999999'
                 )
                 AND COALESCE(
-                  NEW.stopped_at, '9999-12-31 23:59:59.999999'
+                    NEW.stopped_at, '9999-12-31 23:59:59.999999'
                 ) > existing.started_at
             )
-            BEGIN
-              SELECT RAISE(ABORT, 'time entries for one user cannot overlap');
-            END
+            BEGIN SELECT RAISE(ABORT, 'time entries for one user cannot overlap'); END
             """,
             """
             CREATE TRIGGER IF NOT EXISTS time_entry_overlap_update_guard
             BEFORE UPDATE OF user_id, started_at, stopped_at ON time_entry
             WHEN EXISTS (
               SELECT 1 FROM time_entry AS existing
-              WHERE existing.id != OLD.id
-                AND existing.user_id = NEW.user_id
+              WHERE existing.id != OLD.id AND existing.user_id = NEW.user_id
                 AND NEW.started_at < COALESCE(
-                  existing.stopped_at, '9999-12-31 23:59:59.999999'
+                    existing.stopped_at, '9999-12-31 23:59:59.999999'
                 )
                 AND COALESCE(
-                  NEW.stopped_at, '9999-12-31 23:59:59.999999'
+                    NEW.stopped_at, '9999-12-31 23:59:59.999999'
                 ) > existing.started_at
             )
+            BEGIN SELECT RAISE(ABORT, 'time entries for one user cannot overlap'); END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS enabled_admin_update_guard
+            BEFORE UPDATE OF role, is_enabled ON user_account
+            WHEN OLD.role = 'admin' AND OLD.is_enabled = 1
+              AND (NEW.role != 'admin' OR NEW.is_enabled = 0)
+              AND NOT EXISTS (SELECT 1 FROM user_account WHERE id != OLD.id
+                              AND role = 'admin' AND is_enabled = 1)
             BEGIN
-              SELECT RAISE(ABORT, 'time entries for one user cannot overlap');
+              SELECT RAISE(ABORT, 'at least one enabled administrator is required');
             END
             """,
             """
             CREATE TRIGGER IF NOT EXISTS client_report_password_version_insert_guard
-            BEFORE INSERT ON client
-            WHEN NEW.report_password_version < 1
-            BEGIN
-              SELECT RAISE(ABORT, 'report password version must be positive');
-            END
+            BEFORE INSERT ON client WHEN NEW.report_password_version < 1
+            BEGIN SELECT RAISE(ABORT, 'report password version must be positive'); END
             """,
             """
             CREATE TRIGGER IF NOT EXISTS client_report_password_version_update_guard
             BEFORE UPDATE OF report_password_version ON client
             WHEN NEW.report_password_version < 1
-            BEGIN
-              SELECT RAISE(ABORT, 'report password version must be positive');
-            END
+            BEGIN SELECT RAISE(ABORT, 'report password version must be positive'); END
             """,
             """
             CREATE TRIGGER IF NOT EXISTS audit_event_update_guard
             BEFORE UPDATE ON audit_event
-            BEGIN
-              SELECT RAISE(ABORT, 'audit events are immutable');
-            END
+            BEGIN SELECT RAISE(ABORT, 'audit events are immutable'); END
             """,
             """
             CREATE TRIGGER IF NOT EXISTS audit_event_delete_guard
             BEFORE DELETE ON audit_event
-            BEGIN
-              SELECT RAISE(ABORT, 'audit events are immutable');
-            END
+            BEGIN SELECT RAISE(ABORT, 'audit events are immutable'); END
             """,
         )
         for trigger in triggers:
             connection.execute(text(trigger))
-    return prior_schema
 
 
 def verify_cipher_integrity(engine: Engine) -> None:
@@ -391,10 +183,7 @@ def verify_cipher_integrity(engine: Engine) -> None:
         )
         if cipher_errors:
             raise DatabaseError("SQLCipher page integrity validation failed")
-        sqlite_result = connection.exec_driver_sql(
-            "PRAGMA integrity_check"
-        ).scalar_one()
-        if sqlite_result != "ok":
+        if connection.exec_driver_sql("PRAGMA integrity_check").scalar_one() != "ok":
             raise DatabaseError("SQLite logical integrity validation failed")
 
 
@@ -408,15 +197,15 @@ def database_is_encrypted(path: Path) -> bool:
 
 def init_app(app: Flask) -> None:
     """Initialize the engine and request-scoped sessions for a Flask app."""
-    path = Path(cast(str, app.config["DATABASE_PATH"]))
-    passphrase = cast(str, app.config["SQLCIPHER_PASSPHRASE"])
-    engine = build_engine(path, passphrase)
-    prior_schema = initialize_database(engine)
+    engine = build_engine(
+        Path(cast(str, app.config["DATABASE_PATH"])),
+        cast(str, app.config["SQLCIPHER_PASSPHRASE"]),
+    )
+    initialize_database(engine)
     verify_cipher_integrity(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     app.extensions["database_engine"] = engine
     app.extensions["database_session_factory"] = factory
-    app.extensions["database_prior_schema"] = prior_schema
 
     @app.before_request
     def open_database_session() -> None:
@@ -458,12 +247,10 @@ def session_scope(app: Flask) -> Iterator[Session]:
 
 def dispose_app_database(app: Flask) -> None:
     """Dispose an application's engine, primarily for tests and maintenance."""
-    engine = cast(Engine, app.extensions["database_engine"])
-    engine.dispose()
+    cast(Engine, app.extensions["database_engine"]).dispose()
 
 
 def health_check(app: Flask) -> None:
     """Verify the database can answer a minimal keyed query."""
-    engine = cast(Engine, app.extensions["database_engine"])
-    with engine.connect() as connection:
+    with cast(Engine, app.extensions["database_engine"]).connect() as connection:
         connection.execute(text("SELECT 1")).scalar_one()

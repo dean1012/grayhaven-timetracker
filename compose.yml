@@ -7,16 +7,12 @@ services:
     container_name: grayhaven-timetracker
     environment:
       BRANDING_PATH: /app/branding
-      BOOTSTRAP_USERS_FILE: "${BOOTSTRAP_USERS_FILE:-}"
+      BOOTSTRAP_USERS_FILE: "${BOOTSTRAP_USERS_FILE:-/run/secrets/bootstrap_users}"
       DATABASE_PATH: /app/data/timetracker.sqlite3
-      INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-admin@example.invalid}
-      INITIAL_ADMIN_FIRST_NAME: ${INITIAL_ADMIN_FIRST_NAME:-Jerry}
-      INITIAL_ADMIN_LAST_NAME: ${INITIAL_ADMIN_LAST_NAME:-Smith}
-      INITIAL_ADMIN_PASSWORD_HASH_FILE: "${INITIAL_ADMIN_PASSWORD_HASH_FILE-/run/secrets/initial_admin_password_hash}"
-      INITIAL_ADMIN_TOTP_SECRET_FILE: "${INITIAL_ADMIN_TOTP_SECRET_FILE:-}"
       PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-}"
       SECRET_KEY_FILE: /run/secrets/flask_secret_key
       SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-false}"
+      SKIP_BOOTSTRAP: "${SKIP_BOOTSTRAP:-false}"
       SQLCIPHER_PASSPHRASE_FILE: /run/secrets/sqlcipher_passphrase
       TRUSTED_HOSTS: "${TRUSTED_HOSTS:-localhost,127.0.0.1}"
       TRUSTED_PROXY_COUNT: "${TRUSTED_PROXY_COUNT:-0}"

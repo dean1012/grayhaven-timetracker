@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline SQLCipher verification, migration, and key rotation utility."""
+"""Offline SQLCipher verification, backup, and key rotation utility."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from pathlib import Path
 from sqlcipher3 import dbapi2 as sqlcipher
 
 from grayhaven_timetracker.database import (
-    SQLITE_HEADER,
     DatabaseError,
     connect_sqlcipher,
     database_is_encrypted,
@@ -154,52 +153,6 @@ def rotate_key(database: Path, old_key_file: Path, new_key_file: Path) -> Path:
     return backup
 
 
-def encrypt_plaintext(database: Path, key_file: Path) -> Path:
-    """Replace a regular plaintext SQLite file with a verified encrypted copy."""
-    require_regular_file(database, "Database")
-    with database.open("rb") as database_file:
-        if database_file.read(len(SQLITE_HEADER)) != SQLITE_HEADER:
-            raise DatabaseError("Source database is not plaintext SQLite")
-
-    passphrase = read_secret(key_file)
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    backup = database.with_name(f"{database.name}.pre-migration-encrypted-{timestamp}")
-    if backup.exists() or backup.is_symlink():
-        raise DatabaseError(f"Recovery backup already exists: {backup}")
-    temporary = database.with_name(f".{database.name}.encrypted.tmp")
-    temporary.unlink(missing_ok=True)
-    remove_sidecars(temporary)
-
-    connection = sqlcipher.connect(str(database))
-    try:
-        connection.execute("SELECT count(*) FROM sqlite_master").fetchone()
-        connection.execute(
-            f"ATTACH DATABASE {sql_literal(str(temporary))} "
-            f"AS encrypted KEY {sql_literal(passphrase)}"
-        )
-        connection.execute("SELECT sqlcipher_export('encrypted')").fetchone()
-        connection.execute("DETACH DATABASE encrypted")
-    finally:
-        connection.close()
-
-    temporary_connection = connect_sqlcipher(temporary, passphrase)
-    try:
-        if temporary_connection.execute("PRAGMA cipher_integrity_check").fetchall():
-            raise DatabaseError("Encrypted export failed integrity validation")
-        temporary_connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
-        temporary_connection.execute("PRAGMA journal_mode = DELETE").fetchone()
-    finally:
-        temporary_connection.close()
-
-    shutil.copy2(temporary, backup)
-    os.chmod(backup, 0o600)
-    remove_sidecars(database)
-    os.replace(temporary, database)
-    os.chmod(database, 0o600)
-    verify_database(database, key_file)
-    return backup
-
-
 def create_backup(database: Path, key_file: Path, output: Path) -> None:
     """Create a transactionally consistent encrypted online backup."""
     require_regular_file(database, "Database")
@@ -272,12 +225,6 @@ def parser() -> argparse.ArgumentParser:
     verify.add_argument("database", type=Path)
     verify.add_argument("key_file", type=Path)
 
-    migrate = subparsers.add_parser(
-        "encrypt-plaintext", help="Convert an existing plaintext SQLite database"
-    )
-    migrate.add_argument("database", type=Path)
-    migrate.add_argument("key_file", type=Path)
-
     rekey = subparsers.add_parser("rekey", help="Rotate an existing SQLCipher key")
     rekey.add_argument("database", type=Path)
     rekey.add_argument("old_key_file", type=Path)
@@ -299,9 +246,6 @@ def main() -> int:
         if arguments.command == "verify":
             verify_database(arguments.database, arguments.key_file)
             print("SQLCipher encryption and integrity verified.")
-        elif arguments.command == "encrypt-plaintext":
-            backup = encrypt_plaintext(arguments.database, arguments.key_file)
-            print(f"Encrypted recovery backup retained at {backup}")
         elif arguments.command == "rekey":
             backup = rotate_key(
                 arguments.database,

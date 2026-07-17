@@ -98,31 +98,23 @@ def environment_config() -> dict[str, Any]:
     if secret_key is not None and len(secret_key) < 32:
         raise ConfigurationError("SECRET_KEY must contain at least 32 characters")
 
+    skip_bootstrap = _read_bool("SKIP_BOOTSTRAP", False)
+    bootstrap_users = (
+        None if skip_bootstrap else _read_secret("BOOTSTRAP_USERS", required=False)
+    )
+
     return {
         "APP_VERSION": os.environ.get("APP_VERSION", "unversioned"),
         "BRANDING_PATH": str(
             Path(os.environ.get("BRANDING_PATH", "/app/branding")).resolve()
         ),
-        "BOOTSTRAP_USERS": _read_secret("BOOTSTRAP_USERS", required=False),
+        "BOOTSTRAP_USERS": bootstrap_users,
         "CONTACT_URL": os.environ.get(
             "CONTACT_URL",
             DEFAULT_CONTACT_URL,
         ),
         "DATABASE_PATH": str(database_path),
         "DISPLAY_TIMEZONE": os.environ.get("TZ", "America/Chicago"),
-        "INITIAL_ADMIN_EMAIL": os.environ.get("INITIAL_ADMIN_EMAIL", "").strip(),
-        "INITIAL_ADMIN_FIRST_NAME": os.environ.get(
-            "INITIAL_ADMIN_FIRST_NAME", ""
-        ).strip(),
-        "INITIAL_ADMIN_LAST_NAME": os.environ.get(
-            "INITIAL_ADMIN_LAST_NAME", ""
-        ).strip(),
-        "INITIAL_ADMIN_PASSWORD_HASH": _read_secret(
-            "INITIAL_ADMIN_PASSWORD_HASH", required=False
-        ),
-        "INITIAL_ADMIN_TOTP_SECRET": _read_secret(
-            "INITIAL_ADMIN_TOTP_SECRET", required=False
-        ),
         "MAX_CONTENT_LENGTH": 1024 * 1024,
         "PUBLIC_BASE_URL": os.environ.get("PUBLIC_BASE_URL", "").rstrip("/") or None,
         "SECRET_KEY": secret_key,
@@ -130,6 +122,7 @@ def environment_config() -> dict[str, Any]:
         "SESSION_COOKIE_NAME": "grayhaven_timetracker_session",
         "SESSION_COOKIE_SAMESITE": "Lax",
         "SESSION_COOKIE_SECURE": _read_bool("SESSION_COOKIE_SECURE", False),
+        "SKIP_BOOTSTRAP": skip_bootstrap,
         "SQLCIPHER_PASSPHRASE": sqlcipher_passphrase,
         "TRUSTED_PROXY_COUNT": _read_int("TRUSTED_PROXY_COUNT", 0),
         "TRUSTED_HOSTS": _read_trusted_hosts(),

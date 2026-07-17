@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% set editing = client is defined %}
-{% block title %}{{ 'Edit Client' if editing else 'New Client' }} · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block title %}{{ 'Update Client' if editing else 'New Client' }} · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block breadcrumbs %}
 <nav class="breadcrumbs" aria-label="Breadcrumb">
   <ol>
     {% if editing %}<li><a class="breadcrumb-label" href="{{ url_for('main.client', client_id=client.id) }}" title="{{ client.name }}">{{ client.name }}</a></li>{% endif %}
-    <li aria-current="page"><span class="breadcrumb-label" title="{{ 'Edit Client' if editing else 'New Client' }}">{{ 'Edit Client' if editing else 'New Client' }}</span></li>
+    <li aria-current="page"><span class="breadcrumb-label" title="{{ 'Update Client' if editing else 'New Client' }}">{{ 'Update Client' if editing else 'New Client' }}</span></li>
   </ol>
 </nav>
 {% endblock %}
@@ -13,7 +13,7 @@
 <section class="narrow-content">
   <div class="panel form-panel">
     <p class="eyebrow">CLIENT MANAGEMENT</p>
-    <h1>{{ 'Edit Client' if editing else 'New Client' }}</h1>
+    <h1>{{ 'Update Client' if editing else 'New Client' }}</h1>
     <form method="post" class="form-stack" autocomplete="off" data-protonpass-ignore="true">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Client Name<input name="name" value="{{ request.form.get('name', client.name if editing else '') }}" maxlength="200" required autofocus autocomplete="off" data-protonpass-ignore="true"></label>

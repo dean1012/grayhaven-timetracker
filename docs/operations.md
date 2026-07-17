@@ -136,12 +136,7 @@ confirmed to match.
 
 ## Deployment-Managed User Reconciliation
 
-For local UAT, deployment automation can supply one initial administrator's
-email, display name, and Argon2id password hash through the `INITIAL_ADMIN_*`
-settings. The TOTP secret is optional; omission creates the account without
-TOTP so the administrator can enroll it from **Profile** after login.
-
-The production-oriented interface is `BOOTSTRAP_USERS_FILE`. Ansible should
+`BOOTSTRAP_USERS_FILE` is the deployment interface. Ansible should
 render a JSON list from encrypted Grayhaven vault data, validate it before
 deployment, install it as a permission-restricted secret file with `no_log`,
 and point the container at the installed path. This mirrors the existing

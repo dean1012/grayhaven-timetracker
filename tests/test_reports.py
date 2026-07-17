@@ -83,10 +83,13 @@ class ContractReportTests(AppTestCase):
                 "America/Chicago",
                 snapshot_at=datetime(2026, 7, 15, 5, 0, 0),
             )
-            self.assertEqual([item.contract.name for item in report.contracts], [
-                "Newest Contract",
-                "Hamilton Beach - Phase 1",
-            ])
+            self.assertEqual(
+                [item.contract.name for item in report.contracts],
+                [
+                    "Hamilton Beach - Phase 1",
+                    "Newest Contract",
+                ],
+            )
             self.assertEqual(
                 report.total_seconds,
                 sum(item.total_seconds for item in report.contracts),
@@ -126,8 +129,6 @@ class ContractReportTests(AppTestCase):
             self.assertEqual(
                 report.total_cost, sum(group.cost for group in report.groups)
             )
-            self.assertEqual(len(report.pie_slices), 2)
-            self.assertIn("A 86.000", report.pie_slices[0].path)
             pdf = build_pdf(
                 report,
                 self.root / "missing-branding",
@@ -172,21 +173,7 @@ class ContractReportTests(AppTestCase):
             )
             self.assertNotEqual(report_state_etag(first), report_state_etag(stopped))
 
-    def test_single_group_pie_uses_a_complete_circle(self) -> None:
-        seed = self.seed_contract()
-        with session_scope(self.app) as database:
-            contract = database.get(Contract, seed.contract_id)
-            assert contract is not None
-            report = build_contract_report(
-                database,
-                contract,
-                "America/Chicago",
-                snapshot_at=datetime(2026, 7, 15, 5, 0, 0),
-            )
-            self.assertEqual(len(report.pie_slices), 1)
-            self.assertEqual(report.pie_slices[0].path.count(" A "), 2)
-
-    def test_empty_report_has_zero_totals_and_no_pie_slices(self) -> None:
+    def test_empty_report_has_zero_totals(self) -> None:
         with session_scope(self.app) as database:
             client = Client(
                 name="Empty Client",
@@ -205,13 +192,14 @@ class ContractReportTests(AppTestCase):
             report = build_contract_report(database, contract, "America/Chicago")
             self.assertEqual(report.sessions, ())
             self.assertEqual(report.groups, ())
-            self.assertEqual(report.pie_slices, ())
             self.assertEqual(report.total_seconds, 0)
             self.assertEqual(report.total_cost, Decimal("0"))
 
 
 class PdfTests(AppTestCase):
-    def test_pdf_contains_two_pages_metadata_and_clickable_contact_link(self) -> None:
+    def test_pdf_contains_overview_contract_pages_and_clickable_contact_link(
+        self,
+    ) -> None:
         seed = self.seed_contract()
         branding = self.root / "branding-with-wordmark"
         branding.mkdir()
@@ -233,12 +221,12 @@ class PdfTests(AppTestCase):
                 "https://example.invalid/contact",
             ).getvalue()
         self.assertTrue(data.startswith(b"%PDF-"))
-        self.assertEqual(pdf_page_count(data), 2)
+        self.assertEqual(pdf_page_count(data), 3)
         self.assertIn(b"Grayhaven Systems LLC", data)
         self.assertIn(b"https://example.invalid/contact", data)
         self.assertIn(b"/Subtype /Link", data)
 
-    def test_empty_pdf_still_renders_summary_and_detail_pages(self) -> None:
+    def test_empty_pdf_still_renders_overview_summary_and_detail_pages(self) -> None:
         with session_scope(self.app) as database:
             client = Client(
                 name="Empty Client",
@@ -258,7 +246,7 @@ class PdfTests(AppTestCase):
             data = build_pdf(
                 report, Path("/missing"), "https://example.invalid/contact"
             ).getvalue()
-        self.assertEqual(pdf_page_count(data), 2)
+        self.assertEqual(pdf_page_count(data), 3)
 
     def test_large_summary_splits_without_layout_errors(self) -> None:
         with session_scope(self.app) as database:
@@ -294,7 +282,7 @@ class PdfTests(AppTestCase):
             data = build_pdf(
                 report, Path("/missing"), "https://example.invalid/contact"
             ).getvalue()
-        self.assertGreater(pdf_page_count(data), 2)
+        self.assertGreater(pdf_page_count(data), 3)
 
 
 if __name__ == "__main__":

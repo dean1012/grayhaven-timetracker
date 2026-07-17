@@ -163,8 +163,6 @@ class DatabaseMaintenanceTests(unittest.TestCase):
         self.database.unlink()
         self.create_encrypted_database()
         with self.assertRaises(DatabaseError):
-            database_maintenance.encrypt_plaintext(self.database, self.old_key_file)
-        with self.assertRaises(DatabaseError):
             database_maintenance.rotate_key(
                 self.database, self.old_key_file, self.old_key_file
             )
@@ -174,26 +172,6 @@ class DatabaseMaintenanceTests(unittest.TestCase):
         with self.assertRaises(DatabaseError):
             database_maintenance.verify_database(missing, self.old_key_file)
         self.assertFalse(missing.exists())
-
-    def test_plaintext_migration_rejects_symbolic_links(self) -> None:
-        target = self.root / "plaintext-target.sqlite3"
-        plaintext = sqlite3.connect(target)
-        plaintext.execute("CREATE TABLE sample (value TEXT NOT NULL)")
-        plaintext.execute("INSERT INTO sample VALUES ('preserved')")
-        plaintext.commit()
-        plaintext.close()
-        alias = self.root / "plaintext-alias.sqlite3"
-        alias.symlink_to(target)
-
-        with self.assertRaises(DatabaseError):
-            database_maintenance.encrypt_plaintext(alias, self.old_key_file)
-
-        self.assertTrue(alias.is_symlink())
-        with sqlite3.connect(target) as connection:
-            self.assertEqual(
-                connection.execute("SELECT value FROM sample").fetchone()[0],
-                "preserved",
-            )
 
     def test_backup_rejects_source_and_sidecar_path_collisions(self) -> None:
         colliding_source = self.root / ".online.sqlite3.tmp"
@@ -306,51 +284,9 @@ class DatabaseMaintenanceTests(unittest.TestCase):
                 self.database, self.old_key_file, self.new_key_file
             )
 
-        self.database.unlink()
-        plaintext = sqlite3.connect(self.database)
-        plaintext.execute("CREATE TABLE sample (value TEXT)")
-        plaintext.commit()
-        plaintext.close()
-        migration_backup = self.database.with_name(
-            f"{self.database.name}.pre-migration-encrypted-20260715T120000Z"
-        )
-        migration_backup.touch()
-        with (
-            patch.object(database_maintenance, "datetime") as clock,
-            self.assertRaises(DatabaseError),
-        ):
-            clock.now.return_value = fixed
-            database_maintenance.encrypt_plaintext(self.database, self.old_key_file)
-
-    def test_plaintext_migration_encrypts_and_preserves_data(self) -> None:
-        plaintext = sqlite3.connect(self.database)
-        plaintext.execute("CREATE TABLE sample (value TEXT NOT NULL)")
-        plaintext.execute("INSERT INTO sample VALUES ('migrated')")
-        plaintext.commit()
-        plaintext.close()
-
-        recovery = database_maintenance.encrypt_plaintext(
-            self.database, self.old_key_file
-        )
-        self.assertTrue(recovery.is_file())
-        self.assertTrue(database_is_encrypted(recovery))
-        database_maintenance.verify_database(self.database, self.old_key_file)
-        connection = connect_sqlcipher(self.database, SQLCIPHER_PASSPHRASE)
-        self.assertEqual(
-            connection.execute("SELECT value FROM sample").fetchone()[0], "migrated"
-        )
-        connection.close()
-        missing = self.root / "missing.sqlite3"
-        with self.assertRaises(DatabaseError):
-            database_maintenance.encrypt_plaintext(missing, self.old_key_file)
-
     def test_command_line_dispatch_and_error_status(self) -> None:
         commands = (
             (["maintain", "verify", "db", "key"], "verify_database"),
-            (
-                ["maintain", "encrypt-plaintext", "db", "key"],
-                "encrypt_plaintext",
-            ),
             (["maintain", "rekey", "db", "old", "new"], "rotate_key"),
             (["maintain", "backup", "db", "key", "output"], "create_backup"),
         )
@@ -361,7 +297,7 @@ class DatabaseMaintenanceTests(unittest.TestCase):
                 patch.object(database_maintenance, target) as operation,
                 redirect_stdout(io.StringIO()),
             ):
-                if target in {"encrypt_plaintext", "rotate_key"}:
+                if target == "rotate_key":
                     operation.return_value = Path("recovery")
                 self.assertEqual(database_maintenance.main(), 0)
                 operation.assert_called_once()
@@ -402,11 +338,6 @@ class DemoSeedTests(AppTestCase):
         empty_app = create_app(
             test_config(
                 empty_root,
-                INITIAL_ADMIN_EMAIL="",
-                INITIAL_ADMIN_FIRST_NAME="",
-                INITIAL_ADMIN_LAST_NAME="",
-                INITIAL_ADMIN_PASSWORD_HASH=None,
-                INITIAL_ADMIN_TOTP_SECRET=None,
                 SKIP_BOOTSTRAP=True,
             )
         )

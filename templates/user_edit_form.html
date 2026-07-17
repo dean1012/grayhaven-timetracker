@@ -1,16 +1,16 @@
 {% extends "base.html" %}
-{% block title %}Edit user · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block title %}Update User · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block breadcrumbs %}
 <nav class="breadcrumbs" aria-label="Breadcrumb"><ol>
   <li><a class="breadcrumb-label" href="{{ url_for('main.users') }}" title="Users">Users</a></li>
-  <li aria-current="page"><span class="breadcrumb-label" title="Edit User">Edit User</span></li>
+  <li aria-current="page"><span class="breadcrumb-label" title="Update User">Update User</span></li>
 </ol></nav>
 {% endblock %}
 {% block content %}
 <section class="narrow-content">
   <div class="panel form-panel">
     <p class="eyebrow">ACCESS MANAGEMENT</p>
-    <h1>Edit User</h1>
+    <h1>Update User</h1>
     <p class="muted">Changing the email updates the sign-in name and invalidates the user’s other sessions.</p>
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

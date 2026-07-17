@@ -45,10 +45,9 @@ to adapt the runtime branding, deployment, and operating procedures.
   report includes all contracts newest first. Each client receives a permanent
   report URL when created; administrators explicitly generate or replace the
   client password when access is needed.
-- Live browser-report timers, grouped totals, cost, and distribution that
-  advance every second and discover timer changes without reloading the page.
-- Report summaries grouped by task and subtask, including duration, cost, and
-  a pie chart.
+- Live browser-report timers and grouped totals that advance every second and
+  discover timer changes without reloading the page.
+- Report summaries grouped by task and subtask, including duration and cost.
 - Detailed report sessions with user, start time, end time, duration, and cost.
 - SQLCipher encryption at rest and UTC timestamp storage.
 - An administrator-only, append-only audit log for user, public-report, and
@@ -104,8 +103,6 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(48))' \
   > secrets/flask_secret_key
 python3 -c 'import secrets; print(secrets.token_urlsafe(48))' \
   > secrets/sqlcipher_passphrase
-python3 -c 'from getpass import getpass; from grayhaven_timetracker.auth import hash_password; print(hash_password(getpass()))' \
-  > secrets/initial_admin_password_hash
 chmod 600 secrets/*
 ```
 
@@ -151,22 +148,18 @@ Required settings are:
 
 - `SECRET_KEY` or `SECRET_KEY_FILE`
 - `SQLCIPHER_PASSPHRASE` or `SQLCIPHER_PASSPHRASE_FILE`
-- at least one enabled administrator supplied through the single-account
-  settings or the deployment-managed user manifest described below
+- `BOOTSTRAP_USERS` or `BOOTSTRAP_USERS_FILE` with at least one enabled
+  administrator
 
-The local single-account path uses `INITIAL_ADMIN_EMAIL`,
-`INITIAL_ADMIN_FIRST_NAME`, `INITIAL_ADMIN_LAST_NAME`, and
-`INITIAL_ADMIN_PASSWORD_HASH` or `INITIAL_ADMIN_PASSWORD_HASH_FILE`.
-`INITIAL_ADMIN_TOTP_SECRET` or `INITIAL_ADMIN_TOTP_SECRET_FILE` is optional.
-When omitted, the administrator is created without TOTP and can enroll an
-authenticator from the profile page after signing in.
-
-Production automation can instead supply `BOOTSTRAP_USERS_FILE` containing a
+Deployment automation supplies `BOOTSTRAP_USERS_FILE` containing a
 JSON list rendered from encrypted Grayhaven vault data. This follows the
 existing per-domain htpasswd pattern: the vault owns complete credential
 entries, Ansible validates and writes a permission-restricted generated file,
-and the service reads that file without logging it. The equivalent direct
-`BOOTSTRAP_USERS` variable is supported but is not recommended for production.
+and the service reads that file without logging it. The direct
+`BOOTSTRAP_USERS` variable is suitable only for local development.
+Use [examples/bootstrap_users.sample.json](examples/bootstrap_users.sample.json)
+as the non-secret local-development shape; replace every placeholder hash
+before mounting it as `secrets/bootstrap_users`.
 
 ```json
 [
@@ -206,6 +199,10 @@ and `PUBLIC_BASE_URL`.
 external HTTPS origin when live report links are generated behind a reverse
 proxy. Configuring an external origin requires Secure cookies and a matching
 trusted host; the application refuses to start otherwise.
+
+For one-off alpha UAT restarts that retain an already initialized database,
+`SKIP_BOOTSTRAP=true` bypasses bootstrap-user reconciliation. Do not set it for
+a fresh deployment: that deployment must provide `BOOTSTRAP_USERS_FILE`.
 
 The application does not hard-code a deployment hostname. Each environment
 must set its own exact `PUBLIC_BASE_URL` and `TRUSTED_HOSTS`, enable Secure

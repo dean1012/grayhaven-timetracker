@@ -35,44 +35,23 @@
       <div class="summary-card"><span>Contract duration</span><strong data-report-contract-total-duration>{{ format_duration(contract_report.total_seconds) }}</strong></div>
       <div class="summary-card"><span>Cost</span><strong data-report-contract-total-cost>{{ format_money(contract_report.total_cost) }}</strong></div>
     </section>
-    <section class="report-overview-grid">
-      <div class="panel report-panel">
-        <div class="panel-heading"><div><p class="eyebrow">SUMMARY</p><h3>Time by Task and Subtask</h3></div></div>
-        <div data-report-pagination="summary">
-          <table class="data-table report-task-summary-table">
-            <thead><tr><th>Task / Subtask</th><th>Duration</th><th>Cost</th></tr></thead>
-            <tbody>
-              {% for group in contract_report.groups %}
-              <tr data-report-group="{{ group.label }}">
-                <td>{{ group.label }}</td>
-                <td data-report-group-duration>{{ format_duration(group.seconds) }}</td>
-                <td data-report-group-cost>{{ format_money(group.cost) }}</td>
-              </tr>
-              {% else %}
-              <tr><td colspan="3">No time has been recorded.</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <div class="panel report-panel chart-panel" data-report-chart>
-        <p class="eyebrow">DISTRIBUTION</p>
-        <h3>Time Distribution</h3>
-        {% if contract_report.groups %}
-        <svg class="report-pie" viewBox="0 0 200 200" role="img" aria-label="Pie chart showing time by task and subtask">
-          {% for group in contract_report.groups %}
-          {% set slice = contract_report.pie_slices[loop.index0] if contract_report.pie_slices else none %}
-          <path class="chart-color-{{ loop.index0 % 8 }}" data-report-pie="{{ group.label }}" d="{{ slice.path if slice else '' }}"><title>{{ group.label }}: {{ format_duration(group.seconds) }} ({{ format_money(group.cost) }})</title></path>
-          {% endfor %}
-        </svg>
-        <ul class="chart-legend">
-          {% for group in contract_report.groups %}
-          <li data-report-legend="{{ group.label }}"><span class="legend-swatch chart-color-{{ loop.index0 % 8 }}"></span><span>{{ group.label }}</span><strong data-report-legend-value>{{ format_duration(group.seconds) }} · {{ format_money(group.cost) }}</strong></li>
-          {% endfor %}
-        </ul>
-        {% else %}
-        <div class="empty-chart">No time recorded</div>
-        {% endif %}
+    <section class="panel report-panel">
+      <div class="panel-heading"><div><p class="eyebrow">SUMMARY</p><h3>Time by Task and Subtask</h3></div></div>
+      <div data-report-pagination="summary">
+        <table class="data-table report-task-summary-table">
+          <thead><tr><th>Task / Subtask</th><th>Duration</th><th>Cost</th></tr></thead>
+          <tbody>
+            {% for group in contract_report.groups %}
+            <tr data-report-group="{{ group.label }}">
+              <td>{{ group.label }}</td>
+              <td data-report-group-duration>{{ format_duration(group.seconds) }}</td>
+              <td data-report-group-cost>{{ format_money(group.cost) }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="3">No time has been recorded.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </section>
     <section class="panel report-detail report-panel">

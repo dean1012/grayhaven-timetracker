@@ -32,14 +32,8 @@ from .config import (
     validate_public_deployment,
     validate_timezone,
 )
-from .database import (
-    SCHEMA_VERSION,
-    rollback_request_session,
-    session_scope,
-)
-from .database import (
-    init_app as init_database,
-)
+from .database import init_app as init_database
+from .database import rollback_request_session, session_scope
 from .logging_config import configure_logging
 from .models import User
 from .routes import register_routes
@@ -89,14 +83,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     init_database(app)
     with session_scope(app) as database:
         bootstrap_outcomes = reconcile_bootstrap_users(app, database)
-        prior_schema = app.extensions.get("database_prior_schema")
-        if prior_schema is not None:
-            record_audit_event(
-                database,
-                "database_initialized",
-                source="system",
-                details={"prior_schema": prior_schema, "schema": SCHEMA_VERSION},
-            )
         for bootstrap_outcome in bootstrap_outcomes:
             user = bootstrap_outcome.user
             record_audit_event(

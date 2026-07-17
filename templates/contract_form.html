@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% set editing = contract is defined %}
-{% block title %}{{ 'Edit Contract' if editing else 'New Contract' }} · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block title %}{{ 'Update Contract' if editing else 'New Contract' }} · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block breadcrumbs %}
 <nav class="breadcrumbs" aria-label="Breadcrumb">
   <ol>
     <li><a class="breadcrumb-label" href="{{ url_for('main.client', client_id=client.id) }}" title="{{ client.name }}">{{ client.name }}</a></li>
     {% if editing %}<li><a class="breadcrumb-label" href="{{ url_for('main.contract', contract_id=contract.id) }}" title="{{ contract.name }}">{{ contract.name }}</a></li>{% endif %}
-    <li aria-current="page"><span class="breadcrumb-label" title="{{ 'Edit Contract' if editing else 'New Contract' }}">{{ 'Edit Contract' if editing else 'New Contract' }}</span></li>
+    <li aria-current="page"><span class="breadcrumb-label" title="{{ 'Update Contract' if editing else 'New Contract' }}">{{ 'Update Contract' if editing else 'New Contract' }}</span></li>
   </ol>
 </nav>
 {% endblock %}
@@ -14,7 +14,7 @@
 <section class="narrow-content">
   <div class="panel form-panel">
     <p class="eyebrow">{{ client.name|upper }}</p>
-    <h1>{{ 'Edit Contract' if editing else 'New Contract' }}</h1>
+    <h1>{{ 'Update Contract' if editing else 'New Contract' }}</h1>
     <form method="post" class="form-stack" autocomplete="off" data-protonpass-ignore="true">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Contract<input name="name" value="{{ request.form.get('name', contract.name if editing else '') }}" maxlength="200" required autofocus autocomplete="off" data-protonpass-ignore="true"></label>

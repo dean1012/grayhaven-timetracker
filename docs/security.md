@@ -136,7 +136,7 @@ encrypted message.
   it. Host root, container-process compromise, or stolen runtime secrets remain
   critical threats.
 - SQLite supports the current low-concurrency workload. Horizontal application
-  scaling requires a coordinated database migration.
+  scaling requires a separately designed persistence strategy.
 - Client and contract names, hourly rates, and task data are shared with every
   enabled internal user by design.
 - The audit history is append-only and has no in-application retention or

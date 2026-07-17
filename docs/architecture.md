@@ -75,9 +75,8 @@ or deletion.
 ## Live Report Access
 
 Each client stores one permanent, high-entropy report-link token in the
-encrypted SQLCipher database so the URL can be displayed and reused. Legacy
-expiration and hash columns are retained only by the migration path and are no
-longer consulted. Each client has one Argon2id report-password hash and a
+encrypted SQLCipher database so the URL can be displayed and reused. Each
+client has one Argon2id report-password hash and a
 monotonically increasing password version. The linked report contains every
 contract for that client, newest first, with contract-specific rates and totals.
 
@@ -148,12 +147,10 @@ stored timer.
 ## Persistence and Growth
 
 SQLCipher SQLite is appropriate for the initial single-host, low-write
-workload. Schema version 4 includes account recovery state, client-wide live
-report access,
-and the audit trail. The domain model and SQLAlchemy boundary keep future
-migration to a server RDBMS feasible, but such a migration will require schema
-migrations, provider-specific integrity constraints, concurrency testing, and
-revised backup procedures.
+workload. The current alpha schema includes account recovery state, client-wide
+live report access, and the audit trail. Until the 1.0 production release,
+incompatible schema changes require resetting alpha data rather than a
+compatibility path.
 
 The encrypted database must reside on persistent storage. Branding and secret
 mounts are separately managed and are not part of the application image. Audit

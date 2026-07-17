@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import tempfile
 import unittest
@@ -55,11 +56,18 @@ def test_config(root: Path, **overrides: object) -> dict[str, object]:
         "CONTACT_URL": "https://example.invalid/contact",
         "DATABASE_PATH": str(root / "timetracker.sqlite3"),
         "DISPLAY_TIMEZONE": "America/Chicago",
-        "INITIAL_ADMIN_EMAIL": ADMIN_EMAIL,
-        "INITIAL_ADMIN_FIRST_NAME": ADMIN_FIRST_NAME,
-        "INITIAL_ADMIN_LAST_NAME": ADMIN_LAST_NAME,
-        "INITIAL_ADMIN_PASSWORD_HASH": ADMIN_PASSWORD_HASH,
-        "INITIAL_ADMIN_TOTP_SECRET": ADMIN_TOTP_SECRET,
+        "BOOTSTRAP_USERS": json.dumps(
+            [
+                {
+                    "email": ADMIN_EMAIL,
+                    "first_name": ADMIN_FIRST_NAME,
+                    "last_name": ADMIN_LAST_NAME,
+                    "password_hash": ADMIN_PASSWORD_HASH,
+                    "role": "admin",
+                    "totp_secret": ADMIN_TOTP_SECRET,
+                }
+            ]
+        ),
         "SECRET_KEY": "Test-Flask-secret-key-with-at-least-32-chars!",
         "SESSION_COOKIE_SECURE": False,
         "SKIP_BRANDING_VALIDATION": True,

@@ -245,51 +245,6 @@ function allocateReportSessionCosts(sessions, hourlyRateCents) {
   return allocations.map((item) => item.cents);
 }
 
-function reportPiePath(startAngle, endAngle) {
-  const center = 100;
-  const radius = 86;
-  const point = (angle) => [
-    center + radius * Math.cos(angle),
-    center + radius * Math.sin(angle),
-  ];
-  const [startX, startY] = point(startAngle);
-  const [endX, endY] = point(endAngle);
-  if (endAngle - startAngle >= 2 * Math.PI - 1e-9) {
-    const [middleX, middleY] = point(startAngle + Math.PI);
-    return `M ${center.toFixed(3)} ${center.toFixed(3)} L ${startX.toFixed(3)} ${startY.toFixed(3)} A ${radius.toFixed(3)} ${radius.toFixed(3)} 0 1 1 ${middleX.toFixed(3)} ${middleY.toFixed(3)} A ${radius.toFixed(3)} ${radius.toFixed(3)} 0 1 1 ${startX.toFixed(3)} ${startY.toFixed(3)} Z`;
-  }
-  const largeArc = endAngle - startAngle > Math.PI ? 1 : 0;
-  return `M ${center.toFixed(3)} ${center.toFixed(3)} L ${startX.toFixed(3)} ${startY.toFixed(3)} A ${radius.toFixed(3)} ${radius.toFixed(3)} 0 ${largeArc} 1 ${endX.toFixed(3)} ${endY.toFixed(3)} Z`;
-}
-
-function updateReportPie(section, groups) {
-  const totalSeconds = groups.reduce((total, group) => total + group.seconds, 0);
-  let angle = -Math.PI / 2;
-  groups.forEach((group, index) => {
-    const nextAngle = index < groups.length - 1
-      ? angle + 2 * Math.PI * group.seconds / Math.max(totalSeconds, 1)
-      : 3 * Math.PI / 2;
-    const path = Array.from(section.querySelectorAll("[data-report-pie]")).find(
-      (item) => item.dataset.reportPie === group.label,
-    );
-    if (path) {
-      path.setAttribute("d", totalSeconds > 0 ? reportPiePath(angle, nextAngle) : "");
-      const title = path.querySelector("title");
-      if (title) {
-        title.textContent = `${group.label}: ${formatDuration(group.seconds)} (${moneyFormatter.format(group.costCents / 100)})`;
-      }
-    }
-    const legend = Array.from(section.querySelectorAll("[data-report-legend]")).find(
-      (item) => item.dataset.reportLegend === group.label,
-    );
-    const legendValue = legend?.querySelector("[data-report-legend-value]");
-    if (legendValue) {
-      legendValue.textContent = `${formatDuration(group.seconds)} · ${moneyFormatter.format(group.costCents / 100)}`;
-    }
-    angle = nextAngle;
-  });
-}
-
 function updateLiveReportSection(section) {
   const hourlyRateCents = Number(section.dataset.hourlyRateCents);
   if (!Number.isSafeInteger(hourlyRateCents)) {
@@ -345,7 +300,6 @@ function updateLiveReportSection(section) {
   if (sectionCost) {
     sectionCost.textContent = moneyFormatter.format(totalCostCents / 100);
   }
-  updateReportPie(section, groups);
   return { seconds: totalSeconds, costCents: totalCostCents };
 }
 
@@ -460,7 +414,7 @@ document.addEventListener("click", (event) => {
   });
 });
 
-document.querySelectorAll(".flash-success").forEach((flash) => {
+document.querySelectorAll(".flash").forEach((flash) => {
   window.setTimeout(() => {
     flash.classList.add("is-dismissing");
     window.setTimeout(() => flash.remove(), 300);
@@ -512,6 +466,10 @@ document.querySelectorAll("[data-session-editor]").forEach((form) => {
     }));
   };
   const loadAssignments = async (contractId, selected = "") => {
+    if (!contractId) {
+      setOptions(assignmentSelect, [], "");
+      return;
+    }
     const response = await window.fetch(endpoint(form.dataset.assignmentsUrlTemplate, contractId), { credentials: "same-origin" });
     if (!response.ok) throw new Error("Unable to load assignments");
     const tasks = await response.json();
@@ -521,23 +479,21 @@ document.querySelectorAll("[data-session-editor]").forEach((form) => {
     ]);
     setOptions(assignmentSelect, options, selected || options[0]?.value);
   };
-  const loadContracts = async (clientId, selected = "") => {
+  const loadContracts = async (clientId, selected = "", assignment = "") => {
     const response = await window.fetch(endpoint(form.dataset.contractsUrlTemplate, clientId), { credentials: "same-origin" });
     if (!response.ok) throw new Error("Unable to load contracts");
     const contracts = await response.json();
     const options = contracts.map((contract) => ({ value: String(contract.id), label: contract.name }));
     setOptions(contractSelect, options, selected || options[0]?.value);
-    if (contractSelect.value) await loadAssignments(contractSelect.value);
+    await loadAssignments(contractSelect.value, assignment);
   };
   clientSelect.addEventListener("change", () => {
-    loadContracts(clientSelect.value).catch(() => {});
+    loadContracts(clientSelect.value, "", "").catch(() => {});
   });
   contractSelect.addEventListener("change", () => {
     loadAssignments(contractSelect.value).catch(() => {});
   });
-  loadContracts(clientSelect.value, contractSelect.value).then(() => {
-    loadAssignments(contractSelect.value, assignmentSelect.value).catch(() => {});
-  }).catch(() => {});
+  loadContracts(clientSelect.value, contractSelect.value, assignmentSelect.value).catch(() => {});
 });
 
 document.addEventListener("keydown", (event) => {
