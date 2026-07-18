@@ -18,7 +18,7 @@
   {% if logged_user %}
   {% set profile_active = request.endpoint in ('main.profile', 'main.required_password_change', 'main.change_password', 'main.setup_totp', 'main.confirm_totp', 'main.disable_totp', 'main.update_profile_name') %}
   {% set sessions_active = request.endpoint == 'main.my_sessions' %}
-  {% set users_active = request.endpoint in ('main.users', 'main.new_user', 'main.edit_user', 'main.reset_user_password', 'main.toggle_user_enabled', 'main.toggle_user_admin') %}
+  {% set users_active = request.endpoint in ('main.users', 'main.new_user', 'main.edit_user', 'main.reset_user_password', 'main.reset_user_password_confirmation', 'main.toggle_user_enabled', 'main.toggle_user_admin') %}
   {% set audit_active = request.endpoint == 'main.audit_log' %}
   {% set dashboard_active = not profile_active and not sessions_active and not users_active and not audit_active %}
   <header class="app-header">

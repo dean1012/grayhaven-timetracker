@@ -142,6 +142,10 @@ REPORT_PASSWORD_CONFIRMATION_SESSION_KEYS = (
     "report_password_confirmation_client_id",
     "report_password_confirmation_token",
 )
+USER_PASSWORD_CONFIRMATION_SESSION_KEYS = (
+    "user_password_confirmation_user_id",
+    "user_password_confirmation_token",
+)
 
 
 @dataclass(frozen=True)
@@ -2881,10 +2885,41 @@ def reset_user_password(user_id: int) -> Any:
         sessions_invalidated=True,
         must_change_at_next_sign_in=True,
     )
+    confirmation_token = report_password_confirmation_store.issue(
+        actor_user_id=actor.id,
+        client_id=user.id,
+        report_password=temporary_password,
+    )
+    for key in USER_PASSWORD_CONFIRMATION_SESSION_KEYS:
+        session.pop(key, None)
+    session["user_password_confirmation_user_id"] = user.id
+    session["user_password_confirmation_token"] = confirmation_token
+    return redirect(url_for("main.reset_user_password_confirmation", user_id=user.id))
+
+
+@main.get("/users/<int:user_id>/reset-password/confirmation")
+@permission_required(USER_PASSWORD_RESET)
+def reset_user_password_confirmation(user_id: int) -> Any:
+    user = cast(User, get_or_404(User, user_id))
+    actor = cast(User, current_user())
+    next_url = url_for("main.users")
+    confirmation_user_id = session.pop("user_password_confirmation_user_id", None)
+    confirmation_token = session.pop("user_password_confirmation_token", None)
+    if confirmation_user_id != user.id or not isinstance(confirmation_token, str):
+        return redirect(next_url)
+    confirmation = report_password_confirmation_store.consume(
+        confirmation_token,
+        actor_user_id=actor.id,
+        client_id=user.id,
+    )
+    if confirmation is None:
+        return redirect(next_url)
     return render_template(
         "password_reset_created.html",
         user=user,
-        temporary_password=temporary_password,
+        temporary_password=confirmation.report_password,
+        confirmation_ttl_seconds=REPORT_PASSWORD_CONFIRMATION_TTL_SECONDS,
+        next_url=next_url,
     )
 
 
