@@ -28,7 +28,7 @@ jobs:
           fi
 
       - name: Checkout repository
-        uses: actions/checkout@v4.1.7
+        uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 # v4.1.7
         with:
           persist-credentials: false
 
@@ -38,7 +38,7 @@ jobs:
           git tag -v ${{ github.ref_name }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5.1.1
+        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # v5.1.1
         with:
           python-version: "3.12"
 
@@ -60,10 +60,10 @@ jobs:
           docker build --build-arg APP_VERSION=local-validation --tag grayhaven-timetracker:validation .
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3.4.0
+        uses: docker/setup-buildx-action@4c0215fde272c134d7a2aa7f3d99598539256d15 # v3.4.0
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3.2.0
+        uses: docker/login-action@0d4c9c5ea7693da7b068278f7b52bda2a190a446 # v3.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -71,7 +71,7 @@ jobs:
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v5.5.1
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81 # v5.5.1
         with:
           images: ghcr.io/${{ github.repository }}
           tags: type=ref,event=tag
@@ -83,7 +83,7 @@ jobs:
 
       - name: Build and push Docker image
         id: build-and-push
-        uses: docker/build-push-action@v5.4.0
+        uses: docker/build-push-action@2a17ab46db1a71c890a93c7843b0b52c01828f24 # v5.4.0
         with:
           context: .
           push: true
@@ -93,11 +93,12 @@ jobs:
             APP_VERSION=${{ github.ref_name }}
 
       - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v1.2.0
+        uses: actions/attest-build-provenance@1a5124b0773d578688757a35c5e851d785715201 # v1.2.0
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.build-and-push.outputs.digest }}
           push-to-registry: true
 
       - name: Echo image digest
-        run: echo "Image digest: ${{ steps.build-and-push.outputs.digest }}"
+        run: |
+          echo "Image digest: ${{ steps.build-and-push.outputs.digest }}"
