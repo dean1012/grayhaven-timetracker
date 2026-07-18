@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Update Session Status · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li><a class="breadcrumb-label" href="{{ breadcrumb_parent_url }}" title="{{ breadcrumb_parent_label }}">{{ breadcrumb_parent_label }}</a></li><li aria-current="page"><span class="breadcrumb-label" title="Update Session Status">Update Session Status</span></li></ol></nav>{% endblock %}
+{% block content %}
+<section class="narrow-content"><div class="panel form-panel">
+  <p class="eyebrow">PAYMENT STATUS</p><h1>Update Session Status</h1>
+  <p class="muted">Update financial status only. Any correction requires a reason and is permanently audited.</p>
+  <form method="post" class="form-stack" autocomplete="off" data-protonpass-ignore="true">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Payment Status<span class="select-control"><select name="billing_status" required autocomplete="off" data-protonpass-ignore="true">{% for value, label in status_labels.items() %}<option value="{{ value }}" {% if request.form.get('billing_status', entry.billing_status) == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span></label>
+    <label>Invoice Number<input name="invoice_number" value="{{ request.form.get('invoice_number', entry.invoice_number or '') }}" maxlength="100" autocomplete="off" data-protonpass-ignore="true"></label>
+    <label>Invoice Date<input type="date" name="invoice_date" value="{{ request.form.get('invoice_date', entry.invoice_date.isoformat() if entry.invoice_date else '') }}" autocomplete="off" data-protonpass-ignore="true"></label>
+    <label>Client Paid Date<input type="date" name="client_paid_date" value="{{ request.form.get('client_paid_date', entry.client_paid_date.isoformat() if entry.client_paid_date else '') }}" autocomplete="off" data-protonpass-ignore="true"></label>
+    <label>Disbursement Date<input type="date" name="disbursement_date" value="{{ request.form.get('disbursement_date', entry.disbursement_date.isoformat() if entry.disbursement_date else '') }}" autocomplete="off" data-protonpass-ignore="true"></label>
+    <label>Transaction Number<input name="transaction_number" value="{{ request.form.get('transaction_number', entry.transaction_number or '') }}" maxlength="100" autocomplete="off" data-protonpass-ignore="true"></label>
+    <label>Correction Reason<textarea name="correction_reason" rows="3" maxlength="1000" required autocomplete="off" data-protonpass-ignore="true">{{ request.form.get('correction_reason', '') }}</textarea></label>
+    <p class="muted">Re-enter your password to continue.{% if totp_required %} Your authenticator code is also required.{% endif %}</p>
+    <input type="password" name="current_password" maxlength="1024" required autocomplete="current-password" aria-label="Re-enter password">
+    {% if totp_required %}{% include "_totp_bubbles.html" %}{% endif %}
+    <div class="form-actions"><a class="button button-secondary" href="{{ cancel_url }}">Cancel</a><button class="button button-primary" type="submit"><i class="fa-solid fa-file-invoice-dollar" aria-hidden="true"></i> Update Session Status</button></div>
+  </form>
+</div></section>
+{% endblock %}

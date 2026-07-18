@@ -8,7 +8,7 @@ import re
 import secrets
 from collections import OrderedDict
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
@@ -34,7 +34,7 @@ from flask import (
     url_for,
 )
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -108,6 +108,7 @@ from .reports import (
     ClientReport,
     ContractReport,
     build_client_report,
+    calculate_cost,
     duration_seconds,
     format_datetime,
     format_duration,
@@ -251,6 +252,7 @@ def audit(event: str, **fields: Any) -> None:
     actor = current_user()
     actor_id = fields.pop("actor_id", None)
     source_ip = fields.pop("source_ip", None)
+    audit_source = fields.pop("audit_source", None)
     fields.pop("ip", None)
     if actor is None:
         candidate_id = actor_id if isinstance(actor_id, int) else fields.get("user_id")
@@ -284,7 +286,8 @@ def audit(event: str, **fields: Any) -> None:
         record_audit_event(
             database,
             event,
-            source=actor.role if actor else "public",
+            source=(audit_source if audit_source in AUDIT_SOURCES else None)
+            or (actor.role if actor else "public"),
             actor=actor,
             ip_address=source_ip,
             details=fields,
@@ -609,6 +612,17 @@ def user_setup_mailto(
 
 def form_text(name: str, label: str, maximum: int) -> str:
     return required_text(request.form.get(name, ""), label, maximum=maximum)
+
+
+def correction_reason() -> str:
+    """Require a concise explanation for a manual session operation."""
+    return form_text("correction_reason", "Correction Reason", 1_000)
+
+
+def require_active_contract(contract: Contract) -> None:
+    """Reject operational changes while a contract is archived."""
+    if contract.archived_at is not None:
+        abort(409, "Activate the contract before changing its work data.")
 
 
 def get_or_404(model: type[Any], identifier: int) -> Any:
@@ -1232,12 +1246,18 @@ def delete_client(client_id: int) -> Any:
         "breadcrumb_parent_url": url_for("main.client", client_id=item.id),
         "breadcrumb_label": "Delete Client",
         "totp_required": bool(actor.totp_secret),
+        "correction_reason_required": True,
     }
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
+    try:
+        reason = correction_reason()
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return render_template("sensitive_action_form.html", **confirmation), 400
     client_label = audit_object_label(item.name, item.id)
     failure = sensitive_action_failure(
-        actor, confirmation, "client_delete", client=client_label
+        actor, confirmation, "client_delete", client=client_label, correction_reason=reason
     )
     if failure is not None:
         return failure
@@ -1251,6 +1271,7 @@ def delete_client(client_id: int) -> Any:
         actor_id=actor.id,
         client=client_label,
         deleted_time_entries=deleted_time,
+        correction_reason=reason,
     )
     flash("Client and associated work data deleted.", "success")
     return redirect(url_for("main.dashboard"))
@@ -1421,6 +1442,7 @@ def new_contract(client_id: int) -> Any:
 @permission_required(CONTRACT_EDIT)
 def edit_contract(contract_id: int) -> Any:
     item = cast(Contract, get_or_404(Contract, contract_id))
+    require_active_contract(item)
     if request.method != "POST":
         return render_template("contract_form.html", client=item.client, contract=item)
     previous_values = {
@@ -1477,6 +1499,7 @@ def delete_contract(contract_id: int) -> Any:
     """Delete a contract and its work data after administrator reauthentication."""
     database = get_session()
     item = cast(Contract, get_or_404(Contract, contract_id))
+    require_active_contract(item)
     actor = cast(User, current_user())
     client_id = item.client_id
     client_name = item.client.name
@@ -1494,9 +1517,15 @@ def delete_contract(contract_id: int) -> Any:
         "breadcrumb_parent_url": url_for("main.client", client_id=client_id),
         "breadcrumb_label": "Delete Contract",
         "totp_required": bool(actor.totp_secret),
+        "correction_reason_required": True,
     }
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
+    try:
+        reason = correction_reason()
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return render_template("sensitive_action_form.html", **confirmation), 400
     client_label = audit_object_label(client_name, client_id)
     contract_label = audit_object_label(contract_name, item.id)
     failure = sensitive_action_failure(
@@ -1505,6 +1534,7 @@ def delete_contract(contract_id: int) -> Any:
         "contract_delete",
         client=client_label,
         contract=contract_label,
+        correction_reason=reason,
     )
     if failure is not None:
         return failure
@@ -1518,9 +1548,97 @@ def delete_contract(contract_id: int) -> Any:
         client=client_label,
         contract=contract_label,
         deleted_time_entries=deleted_time,
+        correction_reason=reason,
     )
     flash("Contract and associated work data deleted.", "success")
     return redirect(url_for("main.client", client_id=client_id))
+
+
+@main.route("/contracts/<int:contract_id>/archive", methods=["GET", "POST"])
+@permission_required(CONTRACT_EDIT)
+def archive_contract(contract_id: int) -> Any:
+    """Archive or activate a contract after administrator reauthentication."""
+    database = get_session()
+    item = cast(Contract, get_or_404(Contract, contract_id))
+    actor = cast(User, current_user())
+    activating = item.archived_at is not None
+    confirmation = {
+        "eyebrow": "ACTIVATE CONTRACT" if activating else "ARCHIVE CONTRACT",
+        "title": item.name,
+        "description": (
+            "Activate this contract and restore its operational controls."
+            if activating
+            else "Archive this contract, stop its active timers, and disable all operational controls."
+        ),
+        "submit_label": "Activate Contract" if activating else "Archive Contract",
+        "submit_icon": "fa-box-open" if activating else "fa-box-archive",
+        "submit_class": "button-primary" if activating else "button-danger",
+        "cancel_url": url_for("main.contract", contract_id=item.id),
+        "breadcrumb_parent_label": item.client.name,
+        "breadcrumb_parent_url": url_for("main.client", client_id=item.client_id),
+        "breadcrumb_label": "Activate Contract" if activating else "Archive Contract",
+        "totp_required": bool(actor.totp_secret),
+    }
+    if request.method != "POST":
+        return render_template("sensitive_action_form.html", **confirmation)
+    failure = sensitive_action_failure(
+        actor,
+        confirmation,
+        "contract_activate" if activating else "contract_archive",
+        client=audit_object_label(item.client.name, item.client_id),
+        contract=audit_object_label(item.name, item.id),
+    )
+    if failure is not None:
+        return failure
+    if activating:
+        item.archived_at = None
+        item.archived_by_user_id = None
+        database.commit()
+        audit(
+            "contract_activated",
+            actor_id=actor.id,
+            client_id=item.client_id,
+            contract_id=item.id,
+            changes={"Archived": {"from": "Archived", "to": "Active"}},
+        )
+        flash("Contract activated.", "success")
+    else:
+        stopped_count = 0
+        stopped_at = now_utc()
+        stopped_entries: list[TimeEntry] = []
+        entries = database.scalars(
+            select(TimeEntry)
+            .join(TimeEntry.task)
+            .where(Task.contract_id == item.id, TimeEntry.stopped_at.is_(None))
+            .options(selectinload(TimeEntry.task), selectinload(TimeEntry.user))
+        ).all()
+        for entry in entries:
+            entry.stopped_at = max(stopped_at, entry.started_at)
+            stopped_entries.append(entry)
+            stopped_count += 1
+        item.archived_at = stopped_at
+        item.archived_by_user_id = actor.id
+        database.commit()
+        for entry in stopped_entries:
+            audit(
+                "timer_stopped_automatically",
+                actor_id=actor.id,
+                audit_source="system",
+                initiated_by=actor.id,
+                **audit_time_entry_details(entry),
+                end_time=audit_time(entry.stopped_at),
+                stop_reason="Contract archived",
+            )
+        audit(
+            "contract_archived",
+            actor_id=actor.id,
+            client_id=item.client_id,
+            contract_id=item.id,
+            stopped_timers=stopped_count,
+            changes={"Archived": {"from": "Active", "to": "Archived"}},
+        )
+        flash("Contract archived and active timers stopped.", "success")
+    return redirect(url_for("main.contract", contract_id=item.id))
 
 
 @main.get("/contracts/<int:contract_id>")
@@ -1547,6 +1665,7 @@ def contract(contract_id: int) -> str:
 @permission_required(TASK_ADD)
 def new_task(contract_id: int) -> Any:
     contract_item = cast(Contract, get_or_404(Contract, contract_id))
+    require_active_contract(contract_item)
     try:
         name = form_text("name", "Task Name", 200)
     except ValueError as exc:
@@ -1583,6 +1702,7 @@ def new_task(contract_id: int) -> Any:
 @permission_required(TASK_ADD)
 def new_subtask(task_id: int) -> Any:
     task = cast(Task, get_or_404(Task, task_id))
+    require_active_contract(task.contract)
     try:
         name = form_text("name", "Subtask Name", 200)
     except ValueError as exc:
@@ -1620,6 +1740,7 @@ def new_subtask(task_id: int) -> Any:
 @permission_required(TASK_EDIT)
 def rename_task(task_id: int) -> Any:
     task = cast(Task, get_or_404(Task, task_id))
+    require_active_contract(task.contract)
     previous_name = task.name
     try:
         name = form_text("name", "Task Name", 200)
@@ -1653,6 +1774,7 @@ def rename_task(task_id: int) -> Any:
 @permission_required(TASK_EDIT)
 def rename_subtask(subtask_id: int) -> Any:
     subtask = cast(Subtask, get_or_404(Subtask, subtask_id))
+    require_active_contract(subtask.task.contract)
     previous_name = subtask.name
     try:
         name = form_text("name", "Subtask Name", 200)
@@ -1688,6 +1810,7 @@ def rename_subtask(subtask_id: int) -> Any:
 def delete_task(task_id: int) -> Any:
     database = get_session()
     task = cast(Task, get_or_404(Task, task_id))
+    require_active_contract(task.contract)
     actor = cast(User, current_user())
     if not actor.is_admin:
         abort(403)
@@ -1710,9 +1833,15 @@ def delete_task(task_id: int) -> Any:
         "breadcrumb_parent_url": url_for("main.contract", contract_id=task.contract_id),
         "breadcrumb_label": "Delete Task",
         "totp_required": bool(actor.totp_secret),
+        "correction_reason_required": True,
     }
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
+    try:
+        reason = correction_reason()
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return render_template("sensitive_action_form.html", **confirmation), 400
     failure = sensitive_action_failure(
         actor,
         confirmation,
@@ -1720,6 +1849,7 @@ def delete_task(task_id: int) -> Any:
         client=client_label,
         contract=contract_label,
         task=task_label,
+        correction_reason=reason,
     )
     if failure is not None:
         return failure
@@ -1732,6 +1862,7 @@ def delete_task(task_id: int) -> Any:
         contract=contract_label,
         task=task_label,
         deleted_time_entries=deleted_time,
+        correction_reason=reason,
     )
     flash("Task deleted.", "success")
     return redirect(url_for("main.contract", contract_id=contract_id))
@@ -1742,6 +1873,7 @@ def delete_task(task_id: int) -> Any:
 def delete_subtask(subtask_id: int) -> Any:
     database = get_session()
     subtask = cast(Subtask, get_or_404(Subtask, subtask_id))
+    require_active_contract(subtask.task.contract)
     actor = cast(User, current_user())
     if not actor.is_admin:
         abort(403)
@@ -1766,9 +1898,15 @@ def delete_subtask(subtask_id: int) -> Any:
         "breadcrumb_parent_url": url_for("main.contract", contract_id=contract_id),
         "breadcrumb_label": "Delete Subtask",
         "totp_required": bool(actor.totp_secret),
+        "correction_reason_required": True,
     }
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
+    try:
+        reason = correction_reason()
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return render_template("sensitive_action_form.html", **confirmation), 400
     failure = sensitive_action_failure(
         actor,
         confirmation,
@@ -1777,6 +1915,7 @@ def delete_subtask(subtask_id: int) -> Any:
         contract=contract_label,
         task=task_label,
         subtask=subtask_label,
+        correction_reason=reason,
     )
     if failure is not None:
         return failure
@@ -1790,6 +1929,7 @@ def delete_subtask(subtask_id: int) -> Any:
         task=task_label,
         subtask=subtask_label,
         deleted_time_entries=deleted_time,
+        correction_reason=reason,
     )
     flash("Subtask deleted.", "success")
     return redirect(url_for("main.contract", contract_id=contract_id))
@@ -1825,6 +1965,7 @@ def start_timer() -> Any:
         subtask=subtask,
         started_at=now_utc(),
         stopped_at=None,
+        billing_status="pending_invoice",
     )
     database.add(entry)
     try:
@@ -1849,12 +1990,14 @@ def stop_timer(entry_id: int) -> Any:
     database = get_session()
     entry = cast(TimeEntry, get_or_404(TimeEntry, entry_id))
     user = cast(User, current_user())
-    if entry.user_id != user.id or entry.stopped_at is not None:
+    if (entry.user_id != user.id and not user.is_admin) or entry.stopped_at is not None:
         abort(403)
+    require_active_contract(entry.task.contract)
     entry.stopped_at = max(now_utc(), entry.started_at)
     database.commit()
     audit(
         "timer_stopped",
+        actor_id=user.id,
         **audit_time_entry_details(entry),
         end_time=audit_time(entry.stopped_at),
         duration=format_duration(duration_seconds(entry.started_at, entry.stopped_at)),
@@ -1882,6 +2025,7 @@ def new_time_entry(contract_id: int) -> Any:
     )
     if contract_item is None:
         abort(404)
+    require_active_contract(contract_item)
     users = (
         database.scalars(select(User).order_by(User.last_name, User.first_name)).all()
         if can(TIME_ENTRY_ADD_ANY)
@@ -1902,6 +2046,8 @@ def new_time_entry(contract_id: int) -> Any:
         )
     actor = cast(User, current_user())
     try:
+        require_active_contract(contract_item)
+        reason = correction_reason()
         entry_user = actor
         if can(TIME_ENTRY_ADD_ANY):
             raw_user_id = request.form.get("user_id", "")
@@ -1943,6 +2089,7 @@ def new_time_entry(contract_id: int) -> Any:
         subtask=subtask,
         started_at=started_at,
         stopped_at=stopped_at,
+        billing_status="pending_invoice",
     )
     database.add(entry)
     try:
@@ -1962,6 +2109,7 @@ def new_time_entry(contract_id: int) -> Any:
             ),
             "Billable Rate": audit_rate(entry.task.contract.hourly_rate_cents),
         },
+        correction_reason=reason,
     )
     flash("Time session added.", "success")
     return redirect(url_for("main.contract_sessions", contract_id=contract_id))
@@ -1988,6 +2136,7 @@ def contract_sessions(contract_id: int) -> str:
     conditions = [Task.contract_id == contract_id]
     if not can(TIME_ENTRY_VIEW_ANY):
         conditions.append(TimeEntry.user_id == cast(User, current_user()).id)
+        conditions.append(TimeEntry.billing_status == "pending_invoice")
     database = get_session()
     total = int(
         database.scalar(
@@ -2011,7 +2160,12 @@ def contract_sessions(contract_id: int) -> str:
             selectinload(TimeEntry.task),
             selectinload(TimeEntry.subtask),
         )
-        .order_by(TimeEntry.started_at.desc(), TimeEntry.id.desc())
+        .order_by(
+            TimeEntry.stopped_at.is_(None).desc(),
+            case((TimeEntry.billing_status == "pending_invoice", 0), else_=1),
+            func.coalesce(TimeEntry.stopped_at, TimeEntry.started_at).desc(),
+            TimeEntry.id.desc(),
+        )
         .offset((page - 1) * SESSION_PAGE_SIZE)
         .limit(SESSION_PAGE_SIZE)
     )
@@ -2025,8 +2179,25 @@ def contract_sessions(contract_id: int) -> str:
                 entry.started_at,
                 entry.stopped_at or max(snapshot_at, entry.started_at),
             ),
-            "can_edit": entry.stopped_at is not None and can(TIME_ENTRY_EDIT_ANY),
-            "can_delete": entry.stopped_at is not None and can(TIME_ENTRY_DELETE_ANY),
+            "cost": calculate_cost(
+                duration_seconds(
+                    entry.started_at,
+                    entry.stopped_at or max(snapshot_at, entry.started_at),
+                ),
+                entry.task.contract.hourly_rate_cents,
+            ),
+            "can_edit": (
+                entry.stopped_at is not None
+                and entry.billing_status == "pending_invoice"
+                and contract_item.archived_at is None
+                and can(TIME_ENTRY_EDIT_ANY)
+            ),
+            "can_delete": (
+                entry.stopped_at is not None
+                and entry.billing_status == "pending_invoice"
+                and contract_item.archived_at is None
+                and can(TIME_ENTRY_DELETE_ANY)
+            ),
         }
         for entry in entries
     ]
@@ -2058,20 +2229,37 @@ def my_sessions() -> str:
     """Render the authenticated user's sessions across all contracts."""
     try:
         page = int(request.args.get("page", "1"))
+        finalized_page = int(request.args.get("finalized_page", "1"))
     except ValueError:
         abort(400)
-    if page < 1:
+    if page < 1 or finalized_page < 1:
         abort(400)
     user = cast(User, current_user())
     database = get_session()
-    condition = TimeEntry.user_id == user.id
-    total = int(database.scalar(select(func.count(TimeEntry.id)).where(condition)) or 0)
-    page_count = max(1, (total + SESSION_PAGE_SIZE - 1) // SESSION_PAGE_SIZE)
-    if page > page_count:
-        return redirect(url_for("main.my_sessions", page=page_count))
-    entries = database.scalars(
+    base_condition = TimeEntry.user_id == user.id
+    pending_condition = base_condition & (TimeEntry.billing_status == "pending_invoice")
+    finalized_condition = base_condition & (TimeEntry.billing_status != "pending_invoice")
+    pending_total = int(
+        database.scalar(select(func.count(TimeEntry.id)).where(pending_condition)) or 0
+    )
+    finalized_total = int(
+        database.scalar(select(func.count(TimeEntry.id)).where(finalized_condition)) or 0
+    )
+    page_count = max(1, (pending_total + SESSION_PAGE_SIZE - 1) // SESSION_PAGE_SIZE)
+    finalized_page_count = max(
+        1, (finalized_total + SESSION_PAGE_SIZE - 1) // SESSION_PAGE_SIZE
+    )
+    if page > page_count or finalized_page > finalized_page_count:
+        return redirect(
+            url_for(
+                "main.my_sessions",
+                page=min(page, page_count),
+                finalized_page=min(finalized_page, finalized_page_count),
+            )
+        )
+    pending_entries = database.scalars(
         select(TimeEntry)
-        .where(condition)
+        .where(pending_condition)
         .options(
             selectinload(TimeEntry.task)
             .selectinload(Task.contract)
@@ -2086,8 +2274,26 @@ def my_sessions() -> str:
         .offset((page - 1) * SESSION_PAGE_SIZE)
         .limit(SESSION_PAGE_SIZE)
     ).all()
+    finalized_entries = database.scalars(
+        select(TimeEntry)
+        .where(finalized_condition)
+        .options(
+            selectinload(TimeEntry.task)
+            .selectinload(Task.contract)
+            .selectinload(Contract.client),
+            selectinload(TimeEntry.subtask),
+        )
+        .order_by(
+            case((TimeEntry.billing_status == "invoiced", 0), else_=1),
+            TimeEntry.stopped_at.desc(),
+            TimeEntry.id.desc(),
+        )
+        .offset((finalized_page - 1) * SESSION_PAGE_SIZE)
+        .limit(SESSION_PAGE_SIZE)
+    ).all()
     snapshot_at = now_utc()
-    session_rows = [
+    def build_rows(entries: list[TimeEntry]) -> list[dict[str, Any]]:
+        return [
         {
             "entry": entry,
             "ended_at": entry.stopped_at or max(snapshot_at, entry.started_at),
@@ -2095,25 +2301,61 @@ def my_sessions() -> str:
                 entry.started_at,
                 entry.stopped_at or max(snapshot_at, entry.started_at),
             ),
-            "can_edit": entry.stopped_at is not None
-            and (can(TIME_ENTRY_EDIT_OWN) or can(TIME_ENTRY_EDIT_ANY)),
-            "can_delete": entry.stopped_at is not None
-            and (can(TIME_ENTRY_DELETE_OWN) or can(TIME_ENTRY_DELETE_ANY)),
+            "cost": calculate_cost(
+                duration_seconds(
+                    entry.started_at,
+                    entry.stopped_at or max(snapshot_at, entry.started_at),
+                ),
+                entry.task.contract.hourly_rate_cents,
+            ),
         }
         for entry in entries
-    ]
+        ]
+    summary: dict[str, dict[str, Any]] = {
+        status: {"seconds": 0, "cost": Decimal(0)}
+        for status in ("pending_invoice", "invoiced", "client_paid", "disbursed")
+    }
+    all_entries = database.scalars(
+        select(TimeEntry)
+        .where(base_condition)
+        .options(selectinload(TimeEntry.task).selectinload(Task.contract))
+    ).all()
+    for entry in all_entries:
+        seconds = duration_seconds(
+            entry.started_at,
+            entry.stopped_at or max(snapshot_at, entry.started_at),
+        )
+        summary[entry.billing_status]["seconds"] += seconds
+        summary[entry.billing_status]["cost"] += calculate_cost(
+            seconds, entry.task.contract.hourly_rate_cents
+        )
     return render_template(
         "my_sessions.html",
-        session_rows=session_rows,
-        total=total,
+        session_rows=build_rows(pending_entries),
+        finalized_rows=build_rows(finalized_entries),
+        pending_total=pending_total,
+        finalized_total=finalized_total,
         page=page,
         page_count=page_count,
+        finalized_page=finalized_page,
+        finalized_page_count=finalized_page_count,
+        summary=summary,
         previous_url=(
             url_for("main.my_sessions", page=page - 1) if page > 1 else None
         ),
         next_url=(
             url_for("main.my_sessions", page=page + 1)
             if page < page_count
+            else None
+        ),
+        finalized_previous_url=(
+            url_for("main.my_sessions", page=page, finalized_page=finalized_page - 1)
+            if finalized_page > 1
+            else None
+        ),
+        finalized_next_url=(
+            url_for("main.my_sessions", page=page, finalized_page=finalized_page + 1)
+            if finalized_page < finalized_page_count
             else None
         ),
         timezone_info=ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"])),
@@ -2128,7 +2370,7 @@ def session_client_contracts(client_id: int) -> Response:
         get_session()
         .scalars(
             select(Contract)
-            .where(Contract.client_id == client_id)
+            .where(Contract.client_id == client_id, Contract.archived_at.is_(None))
             .order_by(Contract.name)
         )
         .all()
@@ -2142,6 +2384,10 @@ def session_client_contracts(client_id: int) -> Response:
 @permission_required(TIME_ENTRY_EDIT_ANY)
 def session_contract_assignments(contract_id: int) -> Response:
     """Return task and subtask options for the selected session contract."""
+    contract = get_session().get(Contract, contract_id)
+    if contract is None:
+        abort(404)
+    require_active_contract(contract)
     tasks = (
         get_session()
         .scalars(
@@ -2184,7 +2430,10 @@ def edit_time_entry(entry_id: int) -> Any:
         abort(404)
     if entry.stopped_at is None:
         abort(409, "Stop an active timer before editing it.")
+    if entry.billing_status != "pending_invoice":
+        abort(409, "Return the session to Pending Invoice before editing it.")
     contract_item = entry.task.contract
+    require_active_contract(contract_item)
     original_contract_value = request.args.get("original_contract_id", "")
     if not original_contract_value:
         if request.method != "POST":
@@ -2237,6 +2486,7 @@ def edit_time_entry(entry_id: int) -> Any:
             end_value=datetime_local_value(entry.stopped_at, timezone_name),
         )
     try:
+        reason = correction_reason()
         raw_user_id = request.form.get("user_id", "")
         raw_client_id = request.form.get("client_id", "")
         raw_contract_id = request.form.get("contract_id", "")
@@ -2255,6 +2505,7 @@ def edit_time_entry(entry_id: int) -> Any:
             or selected_contract.client_id != selected_client.id
         ):
             raise ValueError("Select a valid user, client, and contract.")
+        require_active_contract(selected_contract)
         task, subtask = parse_assignment(
             request.form.get("assignment", ""), selected_contract.id
         )
@@ -2343,6 +2594,7 @@ def edit_time_entry(entry_id: int) -> Any:
                 audit_rate(previous_rate), audit_rate(selected_contract.hourly_rate_cents)
             ),
         ),
+        correction_reason=reason,
     )
     flash("Time session updated.", "success")
     return redirect(url_for("main.contract_sessions", contract_id=original_contract_id))
@@ -2361,6 +2613,9 @@ def delete_time_entry(entry_id: int) -> Any:
         abort(404)
     if entry.stopped_at is None:
         abort(409, "Stop an active timer before deleting it.")
+    if entry.billing_status != "pending_invoice":
+        abort(409, "Return the session to Pending Invoice before deleting it.")
+    require_active_contract(entry.task.contract)
     contract_id = entry.task.contract_id
     client_label = audit_object_label(entry.task.contract.client.name, entry.task.contract.client_id)
     contract_label = audit_object_label(entry.task.contract.name, contract_id)
@@ -2387,9 +2642,15 @@ def delete_time_entry(entry_id: int) -> Any:
         ),
         "breadcrumb_label": "Delete Session",
         "totp_required": bool(actor.totp_secret),
+        "correction_reason_required": True,
     }
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
+    try:
+        reason = correction_reason()
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return render_template("sensitive_action_form.html", **confirmation), 400
     rate_key = sensitive_action_rate_key(actor)
     if sensitive_action_limiter.blocked(rate_key):
         abort(429)
@@ -2404,6 +2665,7 @@ def delete_time_entry(entry_id: int) -> Any:
             task=task_label,
             subtask=subtask_label,
             time_entry=entry_label,
+            correction_reason=reason,
         )
         flash("The administrator credentials were not accepted.", "error")
         return render_template("sensitive_action_form.html", **confirmation), 400
@@ -2423,9 +2685,157 @@ def delete_time_entry(entry_id: int) -> Any:
         end_time=audit_time(entry.stopped_at),
         duration=format_duration(duration_seconds(entry.started_at, entry.stopped_at)),
         billable_rate=audit_rate(entry.task.contract.hourly_rate_cents),
+        correction_reason=reason,
     )
     flash("Time session deleted.", "success")
     return redirect(url_for("main.contract_sessions", contract_id=contract_id))
+
+
+@main.route("/sessions/<int:entry_id>/status", methods=["GET", "POST"])
+@permission_required(TIME_ENTRY_EDIT_ANY)
+def edit_time_entry_status(entry_id: int) -> Any:
+    """Change payment status with administrator reauthentication and audit detail."""
+    database = get_session()
+    entry = database.scalar(
+        select(TimeEntry)
+        .where(TimeEntry.id == entry_id)
+        .options(
+            selectinload(TimeEntry.task).selectinload(Task.contract),
+            selectinload(TimeEntry.subtask),
+            selectinload(TimeEntry.user),
+        )
+    )
+    if entry is None:
+        abort(404)
+    if entry.stopped_at is None:
+        abort(409, "Stop the active timer before changing payment status.")
+    require_active_contract(entry.task.contract)
+    actor = cast(User, current_user())
+    status_labels = {
+        "pending_invoice": "Pending Invoice",
+        "invoiced": "Invoiced",
+        "client_paid": "Client Paid",
+        "disbursed": "Disbursed",
+    }
+    confirmation = {
+        "eyebrow": "UPDATE PAYMENT STATUS",
+        "title": "Update Session Status",
+        "description": "Update the payment status and required financial metadata for this session.",
+        "cancel_url": url_for("main.contract_sessions", contract_id=entry.task.contract_id),
+        "breadcrumb_parent_label": entry.task.contract.name,
+        "breadcrumb_parent_url": url_for("main.contract", contract_id=entry.task.contract_id),
+        "breadcrumb_label": "Update Session Status",
+        "entry": entry,
+        "status_labels": status_labels,
+        "totp_required": bool(actor.totp_secret),
+    }
+    if request.method != "POST":
+        return render_template("session_status_form.html", **confirmation)
+    try:
+        reason = correction_reason()
+        rate_key = sensitive_action_rate_key(actor)
+        if sensitive_action_limiter.blocked(rate_key):
+            abort(429)
+        if not sensitive_action_credentials_valid(actor):
+            sensitive_action_limiter.record_failure(rate_key)
+            audit(
+                "time_entry_status_update_rejected",
+                actor_id=actor.id,
+                time_entry=f"Time entry (ID: {entry.id})",
+                correction_reason=reason,
+            )
+            flash("The administrator credentials were not accepted.", "error")
+            return render_template("session_status_form.html", **confirmation), 400
+        sensitive_action_limiter.clear(rate_key)
+        target_status = request.form.get("billing_status", "").strip()
+        if target_status not in status_labels:
+            raise ValueError("Select a valid payment status.")
+        old_values = {
+            "status": status_labels[entry.billing_status],
+            "invoice_number": entry.invoice_number or "None",
+            "invoice_date": str(entry.invoice_date or "None"),
+            "client_paid_date": str(entry.client_paid_date or "None"),
+            "disbursement_date": str(entry.disbursement_date or "None"),
+            "transaction_number": entry.transaction_number or "None",
+        }
+        invoice_number = entry.invoice_number
+        invoice_date = entry.invoice_date
+        client_paid_date = entry.client_paid_date
+        disbursement_date = entry.disbursement_date
+        transaction_number = entry.transaction_number
+        if target_status == "pending_invoice":
+            invoice_number = None
+            invoice_date = None
+            client_paid_date = None
+            disbursement_date = None
+            transaction_number = None
+        elif target_status == "invoiced":
+            invoice_number = required_text(
+                request.form.get("invoice_number", ""), "Invoice Number", maximum=100
+            )
+            raw_invoice_date = request.form.get("invoice_date", "")
+            if not raw_invoice_date:
+                raise ValueError("Invoice Date is required.")
+            invoice_date = date.fromisoformat(raw_invoice_date)
+            client_paid_date = None
+            disbursement_date = None
+            transaction_number = None
+        elif target_status == "client_paid":
+            if not invoice_number or not invoice_date:
+                raise ValueError("The session must have invoice details before client payment.")
+            raw_client_paid_date = request.form.get("client_paid_date", "")
+            if not raw_client_paid_date:
+                raise ValueError("Client Paid Date is required.")
+            client_paid_date = date.fromisoformat(raw_client_paid_date)
+            disbursement_date = None
+            transaction_number = None
+        else:
+            if not invoice_number or not invoice_date or not client_paid_date:
+                raise ValueError("The session must have invoice and client payment details before disbursement.")
+            raw_disbursement_date = request.form.get("disbursement_date", "")
+            if not raw_disbursement_date:
+                raise ValueError("Disbursement Date is required.")
+            disbursement_date = date.fromisoformat(raw_disbursement_date)
+            transaction_number = required_text(
+                request.form.get("transaction_number", ""),
+                "Transaction Number",
+                maximum=100,
+            )
+        entry.billing_status = target_status
+        entry.invoice_number = invoice_number
+        entry.invoice_date = invoice_date
+        entry.client_paid_date = client_paid_date
+        entry.disbursement_date = disbursement_date
+        entry.transaction_number = transaction_number
+        database.commit()
+    except (ValueError, OverflowError) as exc:
+        database.rollback()
+        flash(str(exc), "error")
+        return render_template("session_status_form.html", **confirmation), 400
+    new_values = {
+        "status": status_labels[entry.billing_status],
+        "invoice_number": entry.invoice_number or "None",
+        "invoice_date": str(entry.invoice_date or "None"),
+        "client_paid_date": str(entry.client_paid_date or "None"),
+        "disbursement_date": str(entry.disbursement_date or "None"),
+        "transaction_number": entry.transaction_number or "None",
+    }
+    audit(
+        "time_entry_status_updated",
+        actor_id=actor.id,
+        **audit_time_entry_details(entry),
+        changes=audit_changes(**{
+            "status": (old_values["status"], new_values["status"]),
+            "invoice_number": (old_values["invoice_number"], new_values["invoice_number"]),
+            "invoice_date": (old_values["invoice_date"], new_values["invoice_date"]),
+            "client_paid_date": (old_values["client_paid_date"], new_values["client_paid_date"]),
+            "disbursement_date": (old_values["disbursement_date"], new_values["disbursement_date"]),
+            "transaction_number": (old_values["transaction_number"], new_values["transaction_number"]),
+        }),
+        correction_reason=reason,
+    )
+    flash("Session payment status updated.", "success")
+    return redirect(url_for("main.contract_sessions", contract_id=entry.task.contract_id))
 
 
 # ---------------------------------------------------------------------------

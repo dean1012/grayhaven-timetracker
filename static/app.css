@@ -144,6 +144,8 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .button:focus-visible, .icon-button:focus-visible, input:focus-visible, select:focus-visible, .text-link:focus-visible, .nav-button:focus-visible { outline: 2px solid var(--primary-accent); outline-offset: 3px; }
 .button-primary { color: var(--deep-graphite); background: var(--primary-accent); border-color: var(--primary-accent); }
 .button-primary:hover { color: var(--deep-graphite); background: var(--elevated-hover); border-color: var(--elevated-hover); }
+.button-danger { color: var(--soft-white); background: var(--alert-error); border-color: var(--alert-error); }
+.button-danger:hover { color: var(--soft-white); background: color-mix(in srgb, var(--alert-error) 82%, var(--soft-white)); border-color: color-mix(in srgb, var(--alert-error) 82%, var(--soft-white)); }
 .button-success { color: var(--deep-graphite); background: var(--muted-emerald); border-color: var(--muted-emerald); }
 .button-success:hover { color: var(--deep-graphite); background: var(--alert-success); border-color: var(--alert-success); }
 .button-secondary { color: var(--soft-white); background: color-mix(in srgb, var(--deep-graphite) 34%, transparent); }
@@ -259,6 +261,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .flash-error { background: color-mix(in srgb, var(--alert-error) 14%, transparent); border-color: color-mix(in srgb, var(--alert-error) 50%, transparent); }
 .flash-success { background: color-mix(in srgb, var(--alert-success) 14%, transparent); border-color: color-mix(in srgb, var(--alert-success) 50%, transparent); }
 .flash-warning { background: color-mix(in srgb, var(--alert-warning) 14%, transparent); border-color: color-mix(in srgb, var(--alert-warning) 50%, transparent); }
+.archived-warning { display: flex; align-items: center; gap: .65rem; margin-bottom: 1.5rem; }
 .app-footer { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: var(--space-sm); width: min(1680px, calc(100% - var(--container-padding) - var(--container-padding))); margin: 0 auto; padding: 1.2rem 0 2.5rem; color: var(--slate-grey); border-top: 1px solid color-mix(in srgb, var(--charcoal-border) 60%, transparent); font-size: .78rem; white-space: nowrap; }
 .app-footer-confidential { color: var(--primary-accent); font-weight: var(--font-weight-bold); letter-spacing: .16em; }
 .active-timer { display: flex; align-items: center; justify-content: space-between; gap: 2rem; margin-bottom: 1.5rem; padding: 1.2rem 1.4rem; background: linear-gradient(180deg, color-mix(in srgb, var(--alert-success) 8%, transparent), color-mix(in srgb, var(--background-mid) 92%, transparent)); border-color: color-mix(in srgb, var(--alert-success) 55%, transparent); }
@@ -355,7 +358,8 @@ small { color: var(--cool-grey); font-weight: 400; }
 .data-table th, .data-table td { padding: .85rem .7rem; text-align: left; vertical-align: top; border-bottom: 1px solid color-mix(in srgb, var(--charcoal-border) 65%, transparent); }
 .data-table th { color: var(--primary-accent); font-size: .73rem; letter-spacing: .1em; text-transform: uppercase; }
 .report-page .data-table td, .report-page .data-table th { text-align: left; }
-.report-page .data-table.report-task-summary-table td:nth-child(3), .report-page .data-table.report-task-summary-table th:nth-child(3), .report-page .report-detail .data-table td:nth-child(6), .report-page .report-detail .data-table th:nth-child(6) { text-align: right; }
+.report-page .data-table.report-task-summary-table td:nth-child(3), .report-page .data-table.report-task-summary-table th:nth-child(3), .report-page .report-detail .data-table td:nth-child(7), .report-page .report-detail .data-table th:nth-child(7) { text-align: right; }
+.session-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin-bottom: 1.5rem; overflow: hidden; }
 .report-pagination { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-sm); margin-top: var(--space-sm); color: var(--cool-grey); font-size: .82rem; }
 .live-label { display: inline-block; margin-left: .4rem; padding: .12rem .35rem; color: var(--alert-success); border: 1px solid color-mix(in srgb, var(--alert-success) 45%, transparent); border-radius: var(--border-radius-sm); font-size: .68rem; }
 .report-page hr { margin: 2.5rem 0 1rem; border: 0; border-top: 1px solid var(--charcoal-border); }
@@ -442,6 +446,7 @@ small { color: var(--cool-grey); font-weight: 400; }
   .report-meta { font-size: .75rem; }
   .report-summary { grid-template-columns: minmax(0, 1fr); }
   .report-contract-summary { grid-template-columns: minmax(0, 1fr); }
+  .session-summary { grid-template-columns: minmax(0, 1fr); }
   .report-contract-heading { align-items: flex-start; flex-direction: column; gap: .35rem; }
   .report-footer { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .4rem; }
 }

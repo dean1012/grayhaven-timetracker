@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, joinedload
 
 from .models import Client, Contract, Task, TimeEntry
@@ -28,6 +28,7 @@ class ReportSession:
     seconds: int
     cost: Decimal
     active: bool
+    billing_status: str
 
 
 @dataclass(frozen=True)
@@ -141,6 +142,7 @@ def report_state_etag(report: ContractReport | ClientReport) -> str:
                         item.label,
                         item.started_at.isoformat(),
                         None if item.active else item.ended_at.isoformat(),
+                        item.billing_status,
                     ]
                     for item in section.sessions
                 ],
@@ -168,7 +170,10 @@ def build_contract_report(
     entries = database.scalars(
         select(TimeEntry)
         .join(TimeEntry.task)
-        .where(Task.contract_id == contract.id)
+        .where(
+            Task.contract_id == contract.id,
+            or_(TimeEntry.stopped_at.is_(None), TimeEntry.billing_status == "pending_invoice"),
+        )
         .options(
             joinedload(TimeEntry.user),
             joinedload(TimeEntry.task),
@@ -216,6 +221,7 @@ def build_contract_report(
             seconds=item[4],
             cost=session_costs[index],
             active=item[5],
+            billing_status="pending_invoice",
         )
         for index, item in enumerate(session_data)
     )
@@ -249,7 +255,7 @@ def build_client_report(
     generated_at = snapshot_at or utc_now()
     contracts = database.scalars(
         select(Contract)
-        .where(Contract.client_id == client.id)
+        .where(Contract.client_id == client.id, Contract.archived_at.is_(None))
         .options(joinedload(Contract.client))
         .order_by(Contract.created_at.desc(), Contract.id.desc())
     ).all()
@@ -287,5 +293,4 @@ def build_client_report(
         total_seconds=sum(section.total_seconds for section in sections),
         total_cost=sum((section.total_cost for section in sections), Decimal(0)),
     )
-
 

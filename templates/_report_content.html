@@ -62,7 +62,7 @@
       <div class="panel-heading"><div><p class="eyebrow">DETAIL</p><h3>Session Log</h3></div></div>
       <div data-report-pagination="sessions">
         <div class="table-scroll"><table class="data-table">
-          <thead><tr><th>User</th><th>Task / Subtask</th><th>Start</th><th>End</th><th>Duration</th><th>Cost</th></tr></thead>
+          <thead><tr><th>User</th><th>Task / Subtask</th><th>Start</th><th>End</th><th>Status</th><th>Duration</th><th>Cost</th></tr></thead>
           <tbody>
             {% for entry in contract_report.sessions %}
             <tr data-report-session data-report-group="{{ entry.label }}" data-base-seconds="{{ entry.seconds }}" data-active="{{ 'true' if entry.active else 'false' }}">
@@ -70,11 +70,12 @@
               <td>{{ entry.label }}</td>
               <td>{{ format_datetime(entry.started_at, report.timezone) }}</td>
               <td>{% if entry.active %}<span class="live-label">active now</span>{% else %}{{ format_datetime(entry.ended_at, report.timezone) }}{% endif %}</td>
+              <td>{% if entry.active %}<span class="status-pill status-running"><i class="fa-solid fa-circle" aria-hidden="true"></i> Running</span>{% else %}<span class="status-pill status-neutral">Pending Invoice</span>{% endif %}</td>
               <td data-report-session-duration>{{ format_duration(entry.seconds) }}</td>
               <td data-report-session-cost>{{ format_money(entry.cost) }}</td>
             </tr>
             {% else %}
-            <tr><td colspan="6">No sessions have been recorded.</td></tr>
+            <tr><td colspan="7">No sessions have been recorded.</td></tr>
             {% endfor %}
           </tbody>
         </table></div>

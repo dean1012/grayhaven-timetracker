@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -121,6 +121,10 @@ class Contract(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None)
     )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    archived_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_account.id", ondelete="RESTRICT"), nullable=True
+    )
     client: Mapped[Client] = relationship(back_populates="contracts")
     tasks: Mapped[list[Task]] = relationship(
         back_populates="contract", order_by="Task.id"
@@ -175,6 +179,14 @@ class TimeEntry(Base):
             "stopped_at IS NULL OR stopped_at >= started_at",
             name="ck_time_entry_order",
         ),
+        CheckConstraint(
+            "billing_status IN ('pending_invoice', 'invoiced', 'client_paid', 'disbursed')",
+            name="ck_time_entry_billing_status",
+        ),
+        CheckConstraint(
+            "stopped_at IS NULL OR billing_status = 'pending_invoice' OR invoice_number IS NOT NULL",
+            name="ck_time_entry_invoice_metadata",
+        ),
         Index(
             "uq_active_timer_per_user",
             "user_id",
@@ -195,6 +207,14 @@ class TimeEntry(Base):
     )
     started_at: Mapped[datetime] = mapped_column(DateTime)
     stopped_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    billing_status: Mapped[str] = mapped_column(
+        String(32), default="pending_invoice", server_default="pending_invoice"
+    )
+    invoice_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    invoice_date: Mapped[date | None] = mapped_column(nullable=True)
+    client_paid_date: Mapped[date | None] = mapped_column(nullable=True)
+    disbursement_date: Mapped[date | None] = mapped_column(nullable=True)
+    transaction_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     user: Mapped[User] = relationship(back_populates="time_entries")
     task: Mapped[Task] = relationship(back_populates="time_entries")
