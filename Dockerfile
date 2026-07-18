@@ -1,4 +1,4 @@
-FROM python:3.13-slim@sha256:bffeb7bd6a85767587059c6ba23e1e9122078e3aa3fa836099171b9bb5a9bb00
+FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6
 
 ENV PIP_NO_CACHE_DIR=1 \
     PYTHONPATH=/app \
