@@ -1,0 +1,104 @@
+---
+name: Publish Release Image
+
+on:
+  push:
+    tags:
+      - "build/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+jobs:
+  publish:
+    name: Publish Release Image
+    runs-on: ubuntu-latest
+    environment: container-publish
+
+    steps:
+      - name: Verify build tag
+        run: |
+          if [[ ! "${{ github.ref_name }}" =~ ^build\/[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Refusing to publish a non-build tag."
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 # v4.1.7
+        with:
+          persist-credentials: false
+
+      - name: Verify tag signature
+        run: |
+          git fetch --tags
+          git tag -v ${{ github.ref_name }}
+
+      - name: Set up Python
+        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # v5.1.1
+        with:
+          python-version: "3.12"
+
+      - name: Install validation tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run validation
+        run: |
+          python -m pip_audit --progress-spinner off -r requirements.txt
+          python -m compileall -q grayhaven_timetracker scripts tests
+          mypy --strict grayhaven_timetracker scripts
+          ruff check grayhaven_timetracker scripts tests
+          ruff format --check grayhaven_timetracker scripts tests
+          python -m coverage run -m unittest discover -s tests -v
+          python -m coverage report
+          docker build --build-arg APP_VERSION=local-validation --tag grayhaven-timetracker:validation .
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4c0215fde272c134d7a2aa7f3d99598539256d15 # v3.4.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@0d4c9c5ea7693da7b068278f7b52bda2a190a446 # v3.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81 # v5.5.1
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: type=ref,event=tag
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build and push Docker image
+        id: build-and-push
+        uses: docker/build-push-action@2a17ab46db1a71c890a93c7843b0b52c01828f24 # v5.4.0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ github.ref_name }}
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@1a5124b0773d578688757a35c5e851d785715201 # v1.2.0
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.build-and-push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Echo image digest
+        run: |
+          echo "Image digest: ${{ steps.build-and-push.outputs.digest }}"

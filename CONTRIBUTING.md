@@ -136,7 +136,7 @@ To prepare a release:
 7. Record the published GHCR digest and verify that the public image can be
    pulled without authentication.
 
-The publishing workflow validates the signed tag and tagged revision before it
+The `publish.yml` workflow validates the signed tag and tagged revision before it
 publishes the immutable version tag to
 `ghcr.io/dean1012/grayhaven-timetracker`. It does not publish `latest`.
 Deployment automation must select the reviewed image by digest.
