@@ -3496,12 +3496,13 @@ def toggle_user_enabled(user_id: int) -> Any:
     user.session_version += 1
     if not user.is_enabled:
         stopped_at = now_utc()
-        for entry in database.scalars(
-            select(TimeEntry).where(
-                TimeEntry.user_id == user.id, TimeEntry.stopped_at.is_(None)
-            )
-        ):
-            entry.stopped_at = max(stopped_at, entry.started_at)
+        with database.no_autoflush:
+            for entry in database.scalars(
+                select(TimeEntry).where(
+                    TimeEntry.user_id == user.id, TimeEntry.stopped_at.is_(None)
+                )
+            ):
+                entry.stopped_at = max(stopped_at, entry.started_at)
     try:
         database.commit()
     except IntegrityError:

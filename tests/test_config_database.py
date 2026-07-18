@@ -12,13 +12,18 @@ from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pyotp
-from sqlalchemy import select
+from argon2 import PasswordHasher
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
 from grayhaven_timetracker import create_app
 from grayhaven_timetracker.audit import record_audit_event
 from grayhaven_timetracker.auth import hash_password, verify_password
-from grayhaven_timetracker.bootstrap import reconcile_bootstrap_users
+from grayhaven_timetracker.bootstrap import (
+    _validate_password_hash,
+    configured_bootstrap_users,
+    reconcile_bootstrap_users,
+)
 from grayhaven_timetracker.config import (
     ConfigurationError,
     environment_config,
@@ -48,6 +53,7 @@ from grayhaven_timetracker.models import (
     TimeEntry,
     User,
 )
+from grayhaven_timetracker.reports import allocate_session_costs, duration_seconds
 from tests.helpers import (
     ADMIN_EMAIL,
     ADMIN_PASSWORD,
@@ -185,6 +191,16 @@ class ConfigurationTests(unittest.TestCase):
             environment_config()
 
         values = self.required_environment()
+        values.pop("SECRET_KEY")
+        values["SECRET_KEY_FILE"] = "/tmp/secret"
+        with (
+            patch.dict(os.environ, values, clear=True),
+            patch("grayhaven_timetracker.config.Path.read_text", side_effect=OSError),
+            self.assertRaisesRegex(ConfigurationError, "Unable to read SECRET_KEY_FILE"),
+        ):
+            environment_config()
+
+        values = self.required_environment()
         del values["SQLCIPHER_PASSPHRASE"]
         values["SQLCIPHER_PASSPHRASE_FILE"] = "/does/not/exist"
         with (
@@ -316,12 +332,27 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class DatabaseAndModelTests(AppTestCase):
+    def test_report_duration_and_empty_cost_allocation_boundaries(self) -> None:
+        self.assertEqual(duration_seconds(datetime(2026, 7, 15, 1), datetime(2026, 7, 15, 0)), 0)
+        self.assertEqual(allocate_session_costs([], 5_500), ())
+
     def test_database_schema_version_is_recorded(self) -> None:
         with session_scope(self.app) as database:
             marker = database.get(SchemaVersion, 1)
             self.assertIsNotNone(marker)
             assert marker is not None
             self.assertEqual(marker.version, CURRENT_SCHEMA_VERSION)
+
+    def test_database_rejects_unsupported_schema_version(self) -> None:
+        from grayhaven_timetracker.database import initialize_database
+
+        with session_scope(self.app) as database:
+            database.execute(
+                text("UPDATE schema_version SET version = :version WHERE id = 1"),
+                {"version": CURRENT_SCHEMA_VERSION - 1},
+            )
+        with self.assertRaisesRegex(DatabaseError, "Unsupported database schema version"):
+            initialize_database(self.app.extensions["database_engine"])
 
     def test_sql_literal_escapes_quotes_and_rejects_nul(self) -> None:
         self.assertEqual(sql_literal("alpha'beta"), "'alpha''beta'")
@@ -478,6 +509,22 @@ class DatabaseAndModelTests(AppTestCase):
                     "safe": "visible�",
                 },
             )
+            deep = record_audit_event(
+                database,
+                "deep_action",
+                source="admin",
+                actor=admin,
+                details={
+                    "nested": {"level": {"next": {"deeper": {"secret": "drop"}}}},
+                    "deep_value": {"a": {"b": {"c": {"d": "bounded"}}}},
+                    "items": tuple(range(101)),
+                    "credential_value": "drop",
+                },
+            )
+            database.flush()
+            self.assertEqual(len(deep.details["items"]), 100)
+            self.assertIn("nested", deep.details)
+            self.assertNotIn("credential_value", deep.details)
 
         with session_scope(self.app) as database:
             loaded_item = database.get(AuditEvent, item_id)
@@ -569,6 +616,25 @@ class BootstrapTests(AppTestCase):
             assert first_admin is not None
             self.assertEqual(first_admin.password_hash, changed_hash)
             self.assertEqual(first_admin.totp_secret, changed_totp)
+
+    def test_bootstrap_validation_rejects_invalid_password_hash_parameters(self) -> None:
+        with self.assertRaisesRegex(ConfigurationError, "valid Argon2 hash"):
+            _validate_password_hash("not-a-hash", "password_hash")
+        weak_hash = PasswordHasher(time_cost=1, memory_cost=1024, parallelism=1).hash(
+            ADMIN_PASSWORD
+        )
+        with self.assertRaisesRegex(ConfigurationError, "secure parameters"):
+            _validate_password_hash(weak_hash, "password_hash")
+
+    def test_bootstrap_manifest_rejects_empty_and_duplicate_entries(self) -> None:
+        manifest = [dict(self.bootstrap_manifest()[0])]
+        self.app.config["BOOTSTRAP_USERS"] = "[]"
+        with self.assertRaisesRegex(ConfigurationError, "At least one"):
+            configured_bootstrap_users(self.app)
+        manifest.append(dict(manifest[0]))
+        self.app.config["BOOTSTRAP_USERS"] = json.dumps(manifest)
+        with self.assertRaisesRegex(ConfigurationError, "unique"):
+            configured_bootstrap_users(self.app)
 
     @unittest.skip("Bootstrap is now one-time first-install provisioning")
     def _obsolete_bootstrap_reconciliation_test(self) -> None:

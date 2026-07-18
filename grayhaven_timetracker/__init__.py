@@ -82,8 +82,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     with session_scope(app) as database:
         bootstrap_outcomes = reconcile_bootstrap_users(app, database)
         for bootstrap_outcome in bootstrap_outcomes:
-            if bootstrap_outcome.outcome == "unchanged":
-                continue
             user = bootstrap_outcome.user
             record_audit_event(
                 database,

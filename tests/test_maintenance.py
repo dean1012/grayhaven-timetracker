@@ -202,6 +202,24 @@ class DatabaseMaintenanceTests(unittest.TestCase):
         )
         connection.close()
 
+    def test_backup_rejects_resolved_source_collision(self) -> None:
+        self.create_encrypted_database()
+        output = self.root / "alias.sqlite3"
+        with (
+            patch.object(
+                database_maintenance,
+                "resolved_path",
+                side_effect=[
+                    self.database,
+                    self.database,
+                    self.database.with_name(self.database.name + "-wal"),
+                    self.database.with_name(self.database.name + "-shm"),
+                ],
+            ),
+            self.assertRaisesRegex(DatabaseError, "must differ"),
+        ):
+            database_maintenance.create_backup(self.database, self.old_key_file, output)
+
     def test_failed_rekey_backup_copy_preserves_the_source(self) -> None:
         self.create_encrypted_database()
 
