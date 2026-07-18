@@ -194,6 +194,6 @@ runtime interface. The managed environment owns:
 - Image promotion and deployment orchestration.
 
 These boundaries are intentional. Copying this repository alone does not
-reproduce Grayhaven's production environment.
+reproduce Grayhaven's managed deployment.
 
 [Back to top](#application-architecture)

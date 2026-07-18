@@ -11,8 +11,8 @@ image promotion, scheduled backups, and observability integration.
 - [Service Health](#service-health)
 - [Deployment](#deployment)
 - [Backups](#backups)
-- [Staging Restore Exercise](#staging-restore-exercise)
-- [Production Restore](#production-restore)
+- [Backup and Restore Verification](#backup-and-restore-verification)
+- [Database Restore](#database-restore)
 - [SQLCipher Key Rotation](#sqlcipher-key-rotation)
 - [User Provisioning and Recovery](#user-provisioning-and-recovery)
 - [Contract and Billing Corrections](#contract-and-billing-corrections)
@@ -98,13 +98,13 @@ and alerting remain deployment responsibilities.
 
 [Back to top](#operations)
 
-## Staging Restore Exercise
+## Backup and Restore Verification
 
-Complete this exercise before production use and after material changes to the
-database, backup job, secret paths, or deployment role:
+Verify the complete backup and restore path periodically and after material
+changes to the database, backup job, secret paths, or deployment automation:
 
-1. Add representative staging records, including users, clients, contracts,
-   time in multiple billing states, a shared report, and audit events.
+1. Identify representative existing records, including users, clients,
+   contracts, billing metadata, shared-report configuration, and audit events.
 2. Run the online backup command and require the restic job to capture that
    exact artifact.
 3. Record the restic snapshot ID, artifact checksum, application version,
@@ -112,15 +112,15 @@ database, backup job, secret paths, or deployment role:
 4. Restore the artifact from restic into an isolated path; do not use the local
    pre-snapshot copy.
 5. Verify the isolated artifact with
-   `scripts/database_maintenance.py verify` and the matching staging key.
-6. Stop the staging application and retain its current database and sidecars.
-7. Install the restored artifact as `data/timetracker.sqlite3`, set the correct
-   owner and mode `0600`, and remove stale `-wal` and `-shm` files.
-8. Start the application and verify health, login, TOTP, representative records,
-   billing metadata, shared-report access, and audit history.
-9. Create and stop a timer to prove the restored database remains writable.
-10. Record the result and either retain or securely remove exercise artifacts
-    according to the staging data policy.
+   `scripts/database_maintenance.py verify` and the matching key.
+6. Start the matching application build against the restored database on an
+   isolated recovery target.
+7. Verify health, login, TOTP, the identified records, billing metadata,
+   shared-report access, and audit history.
+8. Perform a controlled write to prove the restored database remains writable,
+   then discard that recovery copy rather than returning it to service.
+9. Record the result and dispose of recovery artifacts according to the
+   applicable data-retention policy.
 
 This validates the application database path through the complete chain:
 consistent SQLCipher artifact, restic capture, restic restore, integrity check,
@@ -128,7 +128,7 @@ and application recovery.
 
 [Back to top](#operations)
 
-## Production Restore
+## Database Restore
 
 1. Identify the approved restic snapshot, backup artifact, application build,
    schema version, and SQLCipher key version.
@@ -252,9 +252,8 @@ administrators.
 The managed environment owns collection, retention, dashboards, alerts, and
 access controls. When Grayhaven's Grafana stack is enabled, its integration
 should consume the existing structured stream rather than require an
-application-specific logging mode. Validate production log collection and
-alerts before the service receives real data when that stack is unavailable in
-staging.
+application-specific logging mode. Validate log collection and alerts before
+the service receives real data.
 
 Monitor persistent-volume growth because the audit history is intentionally not
 editable or deletable through the application.

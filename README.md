@@ -18,7 +18,7 @@ for its own environment.
 
 - [Scope](#scope)
 - [Managed Environment](#managed-environment)
-- [Local UAT](#local-uat)
+- [Local Setup](#local-setup)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 - [License](#license)
@@ -63,11 +63,11 @@ The runtime contract requires:
   an externally reachable deployment.
 
 The supplied Compose definition is intentionally loopback-only and suitable for
-local UAT. It is not a complete production deployment.
+local evaluation. It is not a complete managed deployment.
 
 [Back to top](#grayhaven-systems-llc-time-tracker)
 
-## Local UAT
+## Local Setup
 
 Create the required local directories and secret files:
 
@@ -92,8 +92,8 @@ curl --fail http://127.0.0.1:8000/health
 Open `http://127.0.0.1:8000`. For the complete runtime interface and bootstrap
 manifest format, see [Configuration](docs/configuration.md).
 
-Local UAT defaults must not be reused for staging or production. Generate new
-secrets and start with a clean database when establishing a managed deployment.
+Local defaults must not be reused in a managed deployment. Generate new
+secrets and start with a clean database when establishing one.
 
 [Back to top](#grayhaven-systems-llc-time-tracker)
 

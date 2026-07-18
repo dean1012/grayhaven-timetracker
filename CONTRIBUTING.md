@@ -30,7 +30,7 @@ python3 -m pip install -r requirements.txt
 python3 -m pip install -r requirements-dev.txt
 ```
 
-Docker is required for production-image and Compose validation. ShellCheck,
+Docker is required for container-image and Compose validation. ShellCheck,
 actionlint, yamllint, and markdownlint-cli2 are required to run every CI check
 locally.
 
