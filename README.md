@@ -119,8 +119,6 @@ pull request requirements.
 
 ## License
 
-Copyright 2026 Grayhaven Systems LLC.
-
 Licensed under the [MIT License](LICENSE).
 
 [Back to top](#grayhaven-systems-llc-time-tracker)
