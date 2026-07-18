@@ -25,6 +25,7 @@ from flask import (
     abort,
     current_app,
     flash,
+    g,
     jsonify,
     redirect,
     render_template,
@@ -61,7 +62,6 @@ from .auth import (
     verify_password,
     verify_password_constant_time,
 )
-from .bootstrap import is_deployment_managed_user
 from .database import get_session, health_check
 from .models import (
     AuditEvent,
@@ -809,11 +809,25 @@ def register_routes(app: Flask) -> None:
         if path.startswith("/api/") or request.method not in {"GET", "HEAD", "POST"}:
             return error
 
-        client_match = re.fullmatch(
-            r"/(?:clients|reports)/(\d+)(?:/.*)?", path
-        )
+        client_match = re.fullmatch(r"/clients/(\d+)(?:/.*)?", path)
         if client_match:
+            if get_session().get(Client, int(client_match.group(1))) is not None:
+                return error
             return stale_resource_redirect("main.dashboard", "client_deleted")
+
+        report_match = re.fullmatch(r"/reports/(\d+)(?:/.*)?", path)
+        if report_match:
+            contract_id = int(report_match.group(1))
+            if get_session().get(Contract, contract_id) is not None:
+                return error
+            client_id = deleted_resource_parent_id(
+                ("contract_deleted",), "contract", contract_id, "client"
+            )
+            if client_id is not None and get_session().get(Client, client_id):
+                return stale_resource_redirect(
+                    "main.client", "contract_deleted", client_id=client_id
+                )
+            return stale_resource_redirect("main.dashboard", "contract_deleted")
 
         contract_match = re.fullmatch(r"/contracts/(\d+)(?:/.*)?", path)
         if contract_match:
@@ -861,7 +875,7 @@ def register_routes(app: Flask) -> None:
                 return stale_resource_redirect(
                     "main.contract_sessions", "time_entry_deleted", contract_id=contract_id
                 )
-            return stale_resource_redirect("main.dashboard", "time_entry_deleted")
+            return error
 
         return (
             render_template(
@@ -872,9 +886,15 @@ def register_routes(app: Flask) -> None:
 
     def live_page_etag() -> str:
         """Fingerprint application state without volatile rendered markup."""
-        revision = get_session().scalar(select(func.max(AuditEvent.id))) or 0
-        actor = current_user()
-        state = f"{actor.id if actor else 'public'}|{request.full_path}|{revision}"
+        database = getattr(g, "database_session", None)
+        if database is None:
+            actor_id = "public"
+            revision = 0
+        else:
+            revision = database.scalar(select(func.max(AuditEvent.id))) or 0
+            actor = current_user()
+            actor_id = actor.id if actor else "public"
+        state = f"{actor_id}|{request.full_path}|{revision}"
         return hashlib.sha256(state.encode()).hexdigest()
 
     @app.before_request
@@ -1588,7 +1608,7 @@ def archive_contract(contract_id: int) -> Any:
             else "Archive this contract, stop its active timers, and disable all operational controls."
         ),
         "submit_label": "Activate Contract" if activating else "Archive Contract",
-        "submit_icon": "fa-box-open" if activating else "fa-box-archive",
+        "submit_icon": "fa-folder-open",
         "submit_class": "button-primary" if activating else "button-danger",
         "cancel_url": url_for("main.contract", contract_id=item.id),
         "breadcrumb_parent_label": item.client.name,
@@ -3238,11 +3258,8 @@ def edit_user(user_id: int) -> Any:
     database = get_session()
     actor = cast(User, current_user())
     user = cast(User, get_or_404(User, user_id))
-    email_managed = is_deployment_managed_user(database, user.email)
     if request.method != "POST":
-        return render_template(
-            "user_edit_form.html", user=user, email_managed=email_managed
-        )
+        return render_template("user_edit_form.html", user=user)
     previous_values = {
         "email": user.email,
         "first_name": user.first_name,
@@ -3250,8 +3267,6 @@ def edit_user(user_id: int) -> Any:
     }
     try:
         email = normalize_email(request.form.get("email", ""))
-        if email_managed and email != user.email:
-            raise ValueError("A deployment-managed user email cannot be changed here.")
         existing = find_user_by_email(email)
         if existing is not None and existing.id != user.id:
             raise ValueError("A user with that email already exists.")
@@ -3259,9 +3274,7 @@ def edit_user(user_id: int) -> Any:
         last_name = form_text("last_name", "Last Name", 100)
     except ValueError as exc:
         flash(str(exc), "error")
-        return render_template(
-            "user_edit_form.html", user=user, email_managed=email_managed
-        ), 400
+        return render_template("user_edit_form.html", user=user), 400
     email_changed = user.email != email
     user.email = email
     user.first_name = first_name
@@ -3273,9 +3286,7 @@ def edit_user(user_id: int) -> Any:
     except IntegrityError:
         database.rollback()
         flash("A user with that email already exists.", "error")
-        return render_template(
-            "user_edit_form.html", user=user, email_managed=email_managed
-        ), 409
+        return render_template("user_edit_form.html", user=user), 409
     if user.id == actor.id and email_changed:
         session["session_version"] = user.session_version
     audit(

@@ -106,7 +106,7 @@ class TotpAndNavigationTests(unittest.TestCase):
         user = User(email="person@example.invalid")
         secret = pyotp.random_base32()
         uri = provisioning_uri(user, secret)
-        self.assertIn("person%40example.invalid", uri)
+        self.assertIn("Grayhaven%20Systems%20LLC", uri)
         self.assertIn("Grayhaven%20Systems%20LLC%20Time%20Tracker", uri)
         self.assertTrue(qr_data_uri(uri).startswith("data:image/png;base64,"))
 

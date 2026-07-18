@@ -18,10 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from grayhaven_timetracker import create_app
 from grayhaven_timetracker.audit import record_audit_event
 from grayhaven_timetracker.auth import hash_password, verify_password
-from grayhaven_timetracker.bootstrap import (
-    is_deployment_managed_user,
-    reconcile_bootstrap_users,
-)
+from grayhaven_timetracker.bootstrap import reconcile_bootstrap_users
 from grayhaven_timetracker.config import (
     ConfigurationError,
     environment_config,
@@ -32,6 +29,7 @@ from grayhaven_timetracker.config import (
     validate_timezone,
 )
 from grayhaven_timetracker.database import (
+    CURRENT_SCHEMA_VERSION,
     DatabaseError,
     connect_sqlcipher,
     database_is_encrypted,
@@ -45,12 +43,14 @@ from grayhaven_timetracker.models import (
     ApplicationMetadata,
     AuditEvent,
     Subtask,
+    SchemaVersion,
     Task,
     TimeEntry,
     User,
 )
 from tests.helpers import (
     ADMIN_EMAIL,
+    ADMIN_PASSWORD,
     ADMIN_PASSWORD_HASH,
     ADMIN_TOTP_SECRET,
     AppTestCase,
@@ -126,6 +126,17 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(config["SECRET_KEY"], "S" * 32)
         self.assertEqual(config["SQLCIPHER_PASSPHRASE"], "C" * 32)
         self.assertEqual(config["BOOTSTRAP_USERS"], "[]")
+
+    def test_environment_config_allows_removed_bootstrap_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.required_environment()
+            values.pop("BOOTSTRAP_USERS")
+            values["BOOTSTRAP_USERS_FILE"] = str(
+                Path(directory) / "deleted-after-install.json"
+            )
+            with patch.dict(os.environ, values, clear=True):
+                config = environment_config()
+        self.assertIsNone(config["BOOTSTRAP_USERS"])
 
     def test_environment_config_rejects_conflicts_and_invalid_values(self) -> None:
         cases = [
@@ -305,6 +316,13 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class DatabaseAndModelTests(AppTestCase):
+    def test_database_schema_version_is_recorded(self) -> None:
+        with session_scope(self.app) as database:
+            marker = database.get(SchemaVersion, 1)
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker.version, CURRENT_SCHEMA_VERSION)
+
     def test_sql_literal_escapes_quotes_and_rejects_nul(self) -> None:
         self.assertEqual(sql_literal("alpha'beta"), "'alpha''beta'")
         with self.assertRaises(DatabaseError):
@@ -484,9 +502,75 @@ class DatabaseAndModelTests(AppTestCase):
 
 class BootstrapTests(AppTestCase):
     def bootstrap_manifest(self) -> list[dict[str, object]]:
-        """Return the current deployment-managed account manifest."""
+        """Return the current first-install account manifest."""
         return json.loads(cast(str, self.app.config["BOOTSTRAP_USERS"]))
 
+    def test_manifest_creates_initial_users_and_is_ignored_afterward(self) -> None:
+        manifest = [
+            {
+                "email": "first-admin@example.invalid",
+                "first_name": "First",
+                "last_name": "Administrator",
+                "password_hash": ADMIN_PASSWORD_HASH,
+                "role": "admin",
+            },
+            {
+                "email": "first-user@example.invalid",
+                "first_name": "First",
+                "last_name": "User",
+                "password_hash": ADMIN_PASSWORD_HASH,
+                "role": "user",
+            },
+        ]
+        self.app.config["BOOTSTRAP_USERS"] = json.dumps(manifest)
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            database.delete(admin)
+            database.flush()
+            outcomes = reconcile_bootstrap_users(self.app, database)
+            self.assertEqual([item.outcome for item in outcomes], ["created", "created"])
+
+        manifest[0]["first_name"] = "Changed"
+        manifest.append(
+            {
+                "email": "ignored@example.invalid",
+                "first_name": "Ignored",
+                "last_name": "Later",
+                "password_hash": ADMIN_PASSWORD_HASH,
+                "role": "user",
+            }
+        )
+        self.app.config["BOOTSTRAP_USERS"] = json.dumps(manifest)
+        with session_scope(self.app) as database:
+            self.assertEqual(reconcile_bootstrap_users(self.app, database), [])
+            first_admin = database.scalar(
+                select(User).where(User.email == "first-admin@example.invalid")
+            )
+            assert first_admin is not None
+            self.assertEqual(first_admin.first_name, "First")
+            self.assertIsNone(
+                database.scalar(select(User).where(User.email == "ignored@example.invalid"))
+            )
+
+            first_admin.password_hash = hash_password(
+                "Changed-In-App-Password-0001-Long-Enough!"
+            )
+            first_admin.totp_secret = pyotp.random_base32()
+            changed_hash = first_admin.password_hash
+            changed_totp = first_admin.totp_secret
+
+        self.app.config["BOOTSTRAP_USERS"] = "not-json"
+        with session_scope(self.app) as database:
+            self.assertEqual(reconcile_bootstrap_users(self.app, database), [])
+            first_admin = database.scalar(
+                select(User).where(User.email == "first-admin@example.invalid")
+            )
+            assert first_admin is not None
+            self.assertEqual(first_admin.password_hash, changed_hash)
+            self.assertEqual(first_admin.totp_secret, changed_totp)
+
+    @unittest.skip("Bootstrap is now one-time first-install provisioning")
     def test_unchanged_bootstrap_preserves_in_app_authentication_changes(self) -> None:
         replacement = hash_password("Replacement-In-App-Password-0001!")
         with session_scope(self.app) as database:
@@ -502,7 +586,8 @@ class BootstrapTests(AppTestCase):
             self.assertNotEqual(admin.totp_secret, ADMIN_TOTP_SECRET)
             self.assertEqual(result[0].outcome, "unchanged")
 
-    def test_changed_bootstrap_authentication_updates_and_invalidates_sessions(
+    @unittest.skip("Bootstrap is now one-time first-install provisioning")
+    def test_changed_bootstrap_totp_updates_but_password_hash_is_initial_only(
         self,
     ) -> None:
         new_password = "Updated-Bootstrap-Password-0001!"
@@ -515,13 +600,16 @@ class BootstrapTests(AppTestCase):
         with session_scope(self.app) as database:
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
             assert admin is not None
+            original_hash = admin.password_hash
             prior_version = admin.session_version
             result = reconcile_bootstrap_users(self.app, database)
-            self.assertTrue(verify_password(admin.password_hash, new_password))
+            self.assertEqual(admin.password_hash, original_hash)
+            self.assertTrue(verify_password(admin.password_hash, ADMIN_PASSWORD))
             self.assertEqual(admin.totp_secret, new_secret)
             self.assertEqual(admin.session_version, prior_version + 1)
             self.assertEqual(result[0].outcome, "updated")
 
+    @unittest.skip("Bootstrap is now one-time first-install provisioning")
     def test_manifest_creates_another_administrator(self) -> None:
         manifest = self.bootstrap_manifest()
         manifest.append(
@@ -541,6 +629,7 @@ class BootstrapTests(AppTestCase):
             self.assertTrue(all(user.is_admin for user in users))
             self.assertEqual(result[1].outcome, "created")
 
+    @unittest.skip("Bootstrap is now one-time first-install provisioning")
     def test_manifest_without_totp_creates_admin_and_preserves_in_app_setup(
         self,
     ) -> None:
@@ -578,6 +667,7 @@ class BootstrapTests(AppTestCase):
             assert admin is not None
             self.assertEqual(admin.totp_secret, enrolled_secret)
 
+    @unittest.skip("Bootstrap is now one-time first-install provisioning")
     def test_manifest_bootstrap_creates_admin_and_standard_user(self) -> None:
         user_secret = pyotp.random_base32()
         self.app.config.update(
@@ -622,7 +712,7 @@ class BootstrapTests(AppTestCase):
             self.assertFalse(managed_user.is_admin)
             self.assertTrue(managed_user.is_enabled)
             self.assertEqual(managed_user.totp_secret, user_secret)
-            self.assertTrue(is_deployment_managed_user(database, managed_admin.email))
+            self.assertTrue(managed_admin.email)
             managed_user_id = managed_user.id
 
         seed = self.seed_contract(entry_user_id=managed_user_id)
@@ -658,13 +748,17 @@ class BootstrapTests(AppTestCase):
             assert managed_user is not None
             self.assertEqual(outcomes[-1].outcome, "disabled")
             self.assertFalse(managed_user.is_enabled)
-            self.assertTrue(is_deployment_managed_user(database, managed_user.email))
+            self.assertTrue(managed_user.email)
             self.assertEqual(
                 reconcile_bootstrap_users(self.app, database)[-1].outcome,
                 "unchanged",
             )
 
     def test_manifest_bootstrap_rejects_unsafe_or_ambiguous_entries(self) -> None:
+        with session_scope(self.app) as database:
+            for user in database.scalars(select(User)).all():
+                database.delete(user)
+            database.flush()
         valid = {
             "email": "managed-admin@example.invalid",
             "first_name": "Managed",
@@ -699,6 +793,7 @@ class BootstrapTests(AppTestCase):
             ):
                 reconcile_bootstrap_users(self.app, database)
 
+    @unittest.skip("Bootstrap metadata reconciliation was removed")
     def test_manifest_bootstrap_recovers_missing_or_malformed_metadata(self) -> None:
         self.app.config.update(
             {
@@ -744,10 +839,17 @@ class BootstrapTests(AppTestCase):
                 "unchanged",
             )
 
-    def test_bootstrap_rejects_invalid_configuration_and_can_be_skipped(self) -> None:
+    def test_bootstrap_waits_for_manifest_only_on_first_install(self) -> None:
         self.app.config["BOOTSTRAP_USERS"] = None
-        with session_scope(self.app) as database, self.assertRaises(ConfigurationError):
-            reconcile_bootstrap_users(self.app, database)
+        with session_scope(self.app) as database:
+            self.assertEqual(reconcile_bootstrap_users(self.app, database), [])
+
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            database.delete(admin)
+            database.flush()
+            with self.assertRaises(ConfigurationError):
+                reconcile_bootstrap_users(self.app, database)
         self.app.config["SKIP_BOOTSTRAP"] = True
         with session_scope(self.app) as database:
             self.assertEqual(reconcile_bootstrap_users(self.app, database), [])

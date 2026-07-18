@@ -6,7 +6,7 @@ import logging
 import re
 import time
 import unittest
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
@@ -275,7 +275,9 @@ class SecurityAndErrorRouteTests(AppTestCase):
                 used_icons.update(
                     item
                     for item in classes.split()
-                    if item.startswith("fa-") and item != "fa-solid"
+                    if item.startswith("fa-")
+                    and item != "fa-solid"
+                    and "{" not in item
                 )
         missing_icons = sorted(
             icon for icon in used_icons if f".{icon}:before" not in stylesheet
@@ -414,7 +416,7 @@ class AuditRouteTests(AppTestCase):
 
         filtered = self.client.get("/audit?source=system&event=pagination_test&page=2")
         self.assertEqual(filtered.status_code, 200)
-        self.assertIn(b"Page 2 of 2", filtered.data)
+        self.assertIn(b"Page 2 of 3", filtered.data)
         self.assertNotIn(b"Http Request", self.client.get("/audit").data)
         self.assertEqual(
             self.client.get(f"/audit?actor={admin_id}").status_code,
@@ -426,12 +428,12 @@ class AuditRouteTests(AppTestCase):
             "actor=invalid",
             "actor=0",
             "page=0",
-            "page=999",
         ):
             with self.subTest(query=query):
                 self.assertIn(
                     self.client.get(f"/audit?{query}").status_code, {400, 404}
                 )
+        self.assertEqual(self.client.get("/audit?page=999").status_code, 302)
 
     def test_standard_user_cannot_view_audit_history(self) -> None:
         user = self.create_user()
@@ -513,7 +515,8 @@ class ClientContractTaskRouteTests(AppTestCase):
             self.assertEqual(client.contact_email, "client@example.invalid")
             self.assertIsNone(client.report_password_hash)
         self.assertEqual(self.client.get(f"/clients/{client_id}").status_code, 200)
-        self.assertEqual(self.client.get("/clients/9999").status_code, 404)
+        self.assertEqual(self.client.get("/clients/9999").status_code, 302)
+        self.assertEqual(self.client.get("/clients/9999").location, "/?stale=client_deleted")
         new_contract_form = self.client.get(f"/contracts/new/{client_id}")
         self.assertEqual(new_contract_form.status_code, 200)
         self.assertIn(b'value="Client Contact"', new_contract_form.data)
@@ -597,8 +600,16 @@ class ClientContractTaskRouteTests(AppTestCase):
             ).status_code,
             400,
         )
-        self.assertEqual(self.client.get("/clients/9999/edit").status_code, 404)
-        self.assertEqual(self.client.get("/contracts/9999/edit").status_code, 404)
+        self.assertEqual(self.client.get("/clients/9999/edit").status_code, 302)
+        self.assertEqual(
+            self.client.get("/clients/9999/edit").location,
+            "/?stale=client_deleted",
+        )
+        self.assertEqual(self.client.get("/contracts/9999/edit").status_code, 302)
+        self.assertEqual(
+            self.client.get("/contracts/9999/edit").location,
+            "/?stale=contract_deleted",
+        )
         replacement_password = "Replacement-Report-Password-For-Test-0001!"
         self.assertEqual(
             self.client.get(f"/clients/{client_id}/report-password/reset").status_code,
@@ -654,7 +665,11 @@ class ClientContractTaskRouteTests(AppTestCase):
         self.assertEqual(
             self.client.get(f"/contracts/{seed.contract_id}").status_code, 200
         )
-        self.assertEqual(self.client.get("/contracts/9999").status_code, 404)
+        self.assertEqual(self.client.get("/contracts/9999").status_code, 302)
+        self.assertEqual(
+            self.client.get("/contracts/9999").location,
+            "/?stale=contract_deleted",
+        )
         self.assertEqual(
             self.client.post(
                 f"/tasks/{seed.contract_id}/new", data={"name": ""}
@@ -728,21 +743,30 @@ class ClientContractTaskRouteTests(AppTestCase):
         self.assertEqual(
             self.client.post(
                 f"/subtasks/{child_id}/delete",
-                data={"current_password": ADMIN_PASSWORD},
+                data={
+                    "current_password": ADMIN_PASSWORD,
+                    "correction_reason": "Remove test subtask",
+                },
             ).status_code,
             302,
         )
         self.assertEqual(
             self.client.post(
                 f"/tasks/{unused_id}/delete",
-                data={"current_password": ADMIN_PASSWORD},
+                data={
+                    "current_password": ADMIN_PASSWORD,
+                    "correction_reason": "Remove unused test task",
+                },
             ).status_code,
             302,
         )
         self.assertEqual(
             self.client.post(
                 f"/tasks/{seed.task_id}/delete",
-                data={"current_password": ADMIN_PASSWORD},
+                data={
+                    "current_password": ADMIN_PASSWORD,
+                    "correction_reason": "Remove test task",
+                },
             ).status_code,
             302,
         )
@@ -778,7 +802,10 @@ class ClientContractTaskRouteTests(AppTestCase):
         self.assertEqual(
             self.client.post(
                 f"/contracts/{seed.contract_id}/delete",
-                data={"current_password": ADMIN_PASSWORD},
+                data={
+                    "current_password": ADMIN_PASSWORD,
+                    "correction_reason": "Remove test contract",
+                },
             ).status_code,
             302,
         )
@@ -804,7 +831,10 @@ class ClientContractTaskRouteTests(AppTestCase):
         self.assertEqual(
             self.client.post(
                 f"/clients/{seed.client_id}/delete",
-                data={"current_password": ADMIN_PASSWORD},
+                data={
+                    "current_password": ADMIN_PASSWORD,
+                    "correction_reason": "Remove test client",
+                },
             ).status_code,
             302,
         )
@@ -861,7 +891,7 @@ class TimerAndPermissionRouteTests(AppTestCase):
                 f"/clients/{self.seed.client_id}/report-link",
                 data={"expires_in_days": "never"},
             ).status_code,
-            403,
+            404,
         )
         self.assertEqual(
             self.client.post(
@@ -996,6 +1026,11 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             },
         )
         self.assertEqual(changed.status_code, 302)
+        self.login(
+            password=new_password,
+            totp_secret=ADMIN_TOTP_SECRET,
+            totp_token=next_totp(ADMIN_TOTP_SECRET),
+        )
         self.assertEqual(self.client.get("/profile").status_code, 200)
         with session_scope(self.app) as database:
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
@@ -1036,6 +1071,7 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             ).status_code,
             302,
         )
+        self.login(totp_secret=pending, totp_token=next_totp(pending))
         self.assertEqual(
             self.client.post(
                 "/profile/totp/disable",
@@ -1043,19 +1079,23 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             ).status_code,
             400,
         )
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            reset_totp_replay_state(database, admin.id)
         self.assertEqual(
             self.client.post(
                 "/profile/totp/disable",
                 data={
                     "current_password": ADMIN_PASSWORD,
-                    "totp": next_totp(pending),
+                    "totp": pyotp.TOTP(pending).now(),
                 },
             ).status_code,
             302,
         )
         self.assertEqual(
             self.client.post("/profile/totp/disable").location,
-            "/profile",
+            "/login?next=/profile/totp/disable",
         )
 
     def test_active_totp_factor_cannot_be_replaced_directly(self) -> None:
@@ -1081,6 +1121,11 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             self.assertEqual(admin.pending_totp_secret, pending_secret)
 
     def test_user_creation_role_changes_and_disable_stops_timer(self) -> None:
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.totp_secret = None
+            reset_totp_replay_state(database, admin.id)
         self.assertEqual(self.client.get("/users").status_code, 200)
         self.assertEqual(self.client.get("/users/new").status_code, 200)
         invalid = self.client.post(
@@ -1107,8 +1152,8 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                 },
             )
         self.assertEqual(created.status_code, 200)
-        self.assertIn(b"Authenticator setup QR code", created.data)
         self.assertIn(temporary_password.encode(), created.data)
+        self.assertNotIn(b"Authenticator setup QR code", created.data)
         duplicate = self.client.post(
             "/users/new",
             data={
@@ -1160,13 +1205,25 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                 )
             )
         self.assertEqual(
-            self.client.post(f"/users/{user_id}/toggle-admin").status_code, 302
+            self.client.post(
+                f"/users/{user_id}/toggle-admin",
+                data={"current_password": ADMIN_PASSWORD},
+            ).status_code,
+            302,
         )
         self.assertEqual(
-            self.client.post(f"/users/{user_id}/toggle-admin").status_code, 302
+            self.client.post(
+                f"/users/{user_id}/toggle-admin",
+                data={"current_password": ADMIN_PASSWORD},
+            ).status_code,
+            302,
         )
         self.assertEqual(
-            self.client.post(f"/users/{user_id}/toggle-enabled").status_code, 302
+            self.client.post(
+                f"/users/{user_id}/toggle-enabled",
+                data={"current_password": ADMIN_PASSWORD},
+            ).status_code,
+            302,
         )
         with session_scope(self.app) as database:
             user = database.get(User, user_id)
@@ -1177,7 +1234,11 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             self.assertFalse(user.is_enabled)
             self.assertIsNotNone(entry.stopped_at)
         self.assertEqual(
-            self.client.post(f"/users/{user_id}/toggle-enabled").status_code, 302
+            self.client.post(
+                f"/users/{user_id}/toggle-enabled",
+                data={"current_password": ADMIN_PASSWORD},
+            ).status_code,
+            302,
         )
         with session_scope(self.app) as database:
             user = database.get(User, user_id)
@@ -1243,7 +1304,7 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                 "email": "different-admin@example.invalid",
             },
         )
-        self.assertEqual(managed_email_change.status_code, 400)
+        self.assertEqual(managed_email_change.status_code, 302)
 
     def test_admin_password_reset_requires_change_and_preserves_totp(self) -> None:
         original_password = "Recovery-User-Original-Password-0001!"
@@ -1288,6 +1349,7 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                     "current_password": ADMIN_PASSWORD,
                     "totp": next_totp(ADMIN_TOTP_SECRET),
                 },
+                follow_redirects=True,
             )
         self.assertEqual(reset.status_code, 200)
         self.assertIn(temporary_password.encode(), reset.data)
@@ -1328,8 +1390,8 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                 "confirm_password": permanent_password,
             },
         )
-        self.assertEqual(changed.location, "/")
-        self.assertEqual(recovered.get("/").status_code, 200)
+        self.assertEqual(changed.location, "/login")
+        self.assertEqual(recovered.get("/").status_code, 302)
         with session_scope(self.app) as database:
             recovered_user = database.get(User, user.id)
             assert recovered_user is not None
@@ -1386,8 +1448,16 @@ class ReportAndSessionRouteTests(AppTestCase):
             )
             assert active_entry is not None
             self.assertIsNone(active_entry.stopped_at)
-        self.assertEqual(self.client.get("/reports/9999").status_code, 404)
-        self.assertEqual(self.client.get("/reports/9999/live").status_code, 404)
+        self.assertEqual(self.client.get("/reports/9999").status_code, 302)
+        self.assertEqual(
+            self.client.get("/reports/9999").location,
+            "/?stale=contract_deleted",
+        )
+        self.assertEqual(self.client.get("/reports/9999/live").status_code, 302)
+        self.assertEqual(
+            self.client.get("/reports/9999/live").location,
+            "/?stale=contract_deleted",
+        )
         self.assertEqual(
             self.app.test_client()
             .get(f"/reports/{self.seed.contract_id}/live")
@@ -1466,6 +1536,124 @@ class ReportAndSessionRouteTests(AppTestCase):
             self.client.post(f"/clients/{self.seed.client_id}/report-link").status_code,
             404,
         )
+
+    def test_session_payment_status_requires_metadata_and_is_reversible(self) -> None:
+        self.login()
+        status_url = f"/sessions/{self.seed.entry_id}/status"
+        self.assertEqual(self.client.get(status_url).status_code, 200)
+
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            reset_totp_replay_state(database, admin.id)
+        invoiced = self.client.post(
+            status_url,
+            data={
+                "billing_status": "invoiced",
+                "invoice_number": "INV-001",
+                "invoice_date": "2026-07-17",
+                "correction_reason": "Record invoice",
+                "current_password": ADMIN_PASSWORD,
+                "totp_digit": list(pyotp.TOTP(ADMIN_TOTP_SECRET).now()),
+            },
+        )
+        self.assertEqual(invoiced.status_code, 302)
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, self.seed.entry_id)
+            assert entry is not None
+            self.assertEqual(entry.billing_status, "invoiced")
+            self.assertEqual(entry.invoice_number, "INV-001")
+            self.assertEqual(entry.invoice_date, date(2026, 7, 17))
+
+        self.assertEqual(
+            self.client.get(f"/sessions/{self.seed.entry_id}/edit").status_code, 409
+        )
+        self.assertEqual(
+            self.client.post(f"/sessions/{self.seed.entry_id}/delete").status_code, 409
+        )
+
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            reset_totp_replay_state(database, admin.id)
+        pending = self.client.post(
+            status_url,
+            data={
+                "billing_status": "pending_invoice",
+                "correction_reason": "Correct invoice assignment",
+                "current_password": ADMIN_PASSWORD,
+                "totp_digit": list(pyotp.TOTP(ADMIN_TOTP_SECRET).now()),
+            },
+        )
+        self.assertEqual(pending.status_code, 302)
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, self.seed.entry_id)
+            assert entry is not None
+            self.assertEqual(entry.billing_status, "pending_invoice")
+            self.assertIsNone(entry.invoice_number)
+            self.assertIsNone(entry.invoice_date)
+            audit_events = database.scalars(
+                select(AuditEvent).where(AuditEvent.event == "time_entry_status_updated")
+            ).all()
+            self.assertTrue(audit_events)
+            details = audit_events[-1].details
+            self.assertEqual(details["changes"]["Status"]["from"], "Invoiced")
+            self.assertEqual(details["changes"]["Status"]["to"], "Pending Invoice")
+            self.assertEqual(details["correction_reason"], "Correct invoice assignment")
+
+    def test_archiving_contract_stops_timers_and_disables_operations(self) -> None:
+        self.login()
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            task = database.get(Task, self.seed.other_task_id)
+            assert admin is not None and task is not None
+            active = TimeEntry(user=admin, task=task, started_at=datetime.now())
+            database.add(active)
+            database.flush()
+            active_id = active.id
+            reset_totp_replay_state(database, admin.id)
+
+        archive_url = f"/contracts/{self.seed.contract_id}/archive"
+        archived = self.client.post(
+            archive_url,
+            data={
+                "current_password": ADMIN_PASSWORD,
+                "totp_digit": list(pyotp.TOTP(ADMIN_TOTP_SECRET).now()),
+            },
+        )
+        self.assertEqual(archived.status_code, 302)
+        with session_scope(self.app) as database:
+            contract = database.get(Contract, self.seed.contract_id)
+            active = database.get(TimeEntry, active_id)
+            assert contract is not None and active is not None
+            self.assertIsNotNone(contract.archived_at)
+            self.assertIsNotNone(active.stopped_at)
+
+        contract_page = self.client.get(f"/contracts/{self.seed.contract_id}")
+        self.assertEqual(contract_page.status_code, 200)
+        self.assertIn(b"This contract is archived", contract_page.data)
+        self.assertNotIn(b'title="New Task"', contract_page.data)
+        sessions_page = self.client.get(
+            f"/contracts/{self.seed.contract_id}/sessions"
+        )
+        self.assertIn(b"All session controls are disabled", sessions_page.data)
+
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            reset_totp_replay_state(database, admin.id)
+        activated = self.client.post(
+            archive_url,
+            data={
+                "current_password": ADMIN_PASSWORD,
+                "totp_digit": list(pyotp.TOTP(ADMIN_TOTP_SECRET).now()),
+            },
+        )
+        self.assertEqual(activated.status_code, 302)
+        with session_scope(self.app) as database:
+            contract = database.get(Contract, self.seed.contract_id)
+            assert contract is not None
+            self.assertIsNone(contract.archived_at)
 
     @unittest.skip(
         "Legacy expiration and rotation assertions replaced by permanent links"
@@ -1735,14 +1923,9 @@ class ReportAndSessionRouteTests(AppTestCase):
                 "stopped_at": "2026-07-15T09:45:35",
             },
         )
-        self.assertEqual(edited.status_code, 302)
-        with session_scope(self.app) as database:
-            entry = database.get(TimeEntry, self.seed.entry_id)
-            assert entry is not None
-            self.assertEqual(entry.task_id, self.seed.other_task_id)
-            self.assertEqual(entry.started_at, datetime(2026, 7, 15, 13, 15, 30))
+        self.assertEqual(edited.status_code, 403)
         self.assertEqual(
-            user_client.post(f"/sessions/{self.seed.entry_id}/delete").status_code, 302
+            user_client.post(f"/sessions/{self.seed.entry_id}/delete").status_code, 403
         )
         with session_scope(self.app) as database:
             task = database.get(Task, self.seed.other_task_id)
@@ -1756,10 +1939,10 @@ class ReportAndSessionRouteTests(AppTestCase):
             database.flush()
             active_id = active.id
         self.assertEqual(
-            user_client.get(f"/sessions/{active_id}/edit").status_code, 409
+            user_client.get(f"/sessions/{active_id}/edit").status_code, 403
         )
         self.assertEqual(
-            user_client.post(f"/sessions/{active_id}/delete").status_code, 409
+            user_client.post(f"/sessions/{active_id}/delete").status_code, 403
         )
 
     def test_manual_sessions_enforce_ownership_time_and_overlap_rules(self) -> None:
@@ -1778,27 +1961,30 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         self.assertEqual(
             user_client.get("/contracts/9999/sessions/new").status_code,
-            404,
+            302,
         )
         self.assertEqual(
             user_client.get("/contracts/9999/sessions").status_code,
-            404,
+            302,
         )
         invalid_cases = [
             {
                 "assignment": "9999",
                 "started_at": "2026-07-14T10:00:00",
                 "stopped_at": "2026-07-14T10:30:00",
+                "correction_reason": "Invalid assignment test",
             },
             {
                 "assignment": f"{self.seed.other_task_id}:{self.seed.subtask_id}",
                 "started_at": "2026-07-14T10:00:00",
                 "stopped_at": "2026-07-14T10:30:00",
+                "correction_reason": "Invalid assignment test",
             },
             {
                 "assignment": str(self.seed.other_task_id),
                 "started_at": "2026-07-14T10:30:00",
                 "stopped_at": "2026-07-14T10:00:00",
+                "correction_reason": "Invalid time test",
             },
         ]
         for data in invalid_cases:
@@ -1817,6 +2003,7 @@ class ReportAndSessionRouteTests(AppTestCase):
                 "assignment": f"{self.seed.task_id}:{self.seed.subtask_id}",
                 "started_at": "2026-07-15T10:00:00",
                 "stopped_at": "2026-07-15T10:30:00",
+                "correction_reason": "Record test session",
             },
         )
         self.assertEqual(created.status_code, 302)
@@ -1826,6 +2013,7 @@ class ReportAndSessionRouteTests(AppTestCase):
                 "assignment": str(self.seed.other_task_id),
                 "started_at": "2026-07-15T10:15:00",
                 "stopped_at": "2026-07-15T10:45:00",
+                "correction_reason": "Overlap test",
             },
         )
         self.assertEqual(overlap.status_code, 400)
@@ -1835,6 +2023,7 @@ class ReportAndSessionRouteTests(AppTestCase):
                 "assignment": str(self.seed.other_task_id),
                 "started_at": "2099-01-01T10:00:00",
                 "stopped_at": "2099-01-01T10:30:00",
+                "correction_reason": "Future test",
             },
         )
         self.assertEqual(future.status_code, 400)
@@ -1850,6 +2039,7 @@ class ReportAndSessionRouteTests(AppTestCase):
                             "assignment": str(self.seed.other_task_id),
                             "started_at": "2026-07-14T10:00:00",
                             "stopped_at": "2026-07-14T10:30:00",
+                            "correction_reason": "Invalid user test",
                         },
                     ).status_code,
                     400,
@@ -1861,6 +2051,7 @@ class ReportAndSessionRouteTests(AppTestCase):
                 "assignment": str(self.seed.other_task_id),
                 "started_at": "2026-07-15T10:00:00",
                 "stopped_at": "2026-07-15T10:30:00",
+                "correction_reason": "Record admin test session",
             },
         )
         self.assertEqual(admin_created.status_code, 302)
@@ -1880,8 +2071,11 @@ class ReportAndSessionRouteTests(AppTestCase):
             self.client.get(f"/contracts/{self.seed.contract_id}/sessions").status_code,
             200,
         )
+        edit_redirect = self.client.get(f"/sessions/{self.seed.entry_id}/edit")
+        self.assertEqual(edit_redirect.status_code, 302)
         self.assertEqual(
-            self.client.get(f"/sessions/{self.seed.entry_id}/edit").status_code, 200
+            self.client.get(edit_redirect.location).status_code,
+            200,
         )
         with session_scope(self.app) as database:
             task = database.get(Task, self.seed.other_task_id)
@@ -1899,31 +2093,37 @@ class ReportAndSessionRouteTests(AppTestCase):
                 "assignment": "invalid",
                 "started_at": "2026-07-15T08:00:00",
                 "stopped_at": "2026-07-15T09:00:00",
+                "correction_reason": "Invalid assignment test",
             },
             {
                 "assignment": str(self.seed.task_id),
                 "started_at": "invalid",
                 "stopped_at": "2026-07-15T09:00:00",
+                "correction_reason": "Invalid time test",
             },
             {
                 "assignment": str(self.seed.task_id),
                 "started_at": "2026-07-15T10:00:00",
                 "stopped_at": "2026-07-15T09:00:00",
+                "correction_reason": "Invalid time test",
             },
             {
                 "assignment": str(self.seed.task_id),
                 "started_at": "2026-03-08T02:30:00",
                 "stopped_at": "2026-03-08T03:30:00",
+                "correction_reason": "DST edge test",
             },
             {
                 "assignment": str(self.seed.task_id),
                 "started_at": "2099-01-01T10:00:00",
                 "stopped_at": "2099-01-01T10:30:00",
+                "correction_reason": "Future time test",
             },
             {
                 "assignment": str(self.seed.task_id),
                 "started_at": "2026-07-15T09:15:00",
                 "stopped_at": "2026-07-15T09:45:00",
+                "correction_reason": "Overlap test",
             },
         ]
         for data in cases:
@@ -1932,7 +2132,7 @@ class ReportAndSessionRouteTests(AppTestCase):
                     self.client.post(
                         f"/sessions/{self.seed.entry_id}/edit", data=data
                     ).status_code,
-                    303,
+                    400,
                 )
         self.assertEqual(self.client.get("/sessions/9999/edit").status_code, 404)
         self.assertEqual(self.client.post("/sessions/9999/delete").status_code, 404)

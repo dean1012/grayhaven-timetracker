@@ -17,7 +17,7 @@
     <p class="muted">Re-enter your password to continue.{% if totp_required %} Your authenticator code is also required.{% endif %}</p>
     <input type="password" name="current_password" maxlength="1024" required autocomplete="current-password" aria-label="Re-enter password">
     {% if totp_required %}{% include "_totp_bubbles.html" %}{% endif %}
-    <div class="form-actions"><a class="button button-secondary" href="{{ cancel_url }}">Cancel</a><button class="button button-primary" type="submit"><i class="fa-solid fa-file-invoice-dollar" aria-hidden="true"></i> Update Session Status</button></div>
+    <div class="form-actions"><a class="button button-secondary" href="{{ cancel_url }}">Cancel</a><button class="button button-primary" type="submit"><i class="fa-solid fa-file-signature" aria-hidden="true"></i> Update Session Status</button></div>
   </form>
 </div></section>
 {% endblock %}
