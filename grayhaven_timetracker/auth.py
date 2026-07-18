@@ -25,13 +25,14 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from .database import get_session
-from .models import User
+from .models import ApplicationMetadata, User
 
 PASSWORD_MIN_LENGTH = 32
 PASSWORD_MAX_LENGTH = 1024
 TEMPORARY_PASSWORD_LENGTH = 40
 TEMPORARY_PASSWORD_SPECIALS = "!#$%&*+-=?@^_"  # noqa: S105
 TOTP_REPLAY_KEY_PREFIX = "totp_last_counter:"
+SESSION_NOTICE_KEY_PREFIX = "session_invalidation_notice:"
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 password_hasher = PasswordHasher(
     time_cost=3,
@@ -209,6 +210,17 @@ def current_user() -> User | None:
     return cast(User | None, getattr(g, "current_user", None))
 
 
+def set_session_invalidation_notice(user: User, notice: str) -> None:
+    """Persist a safe reason for invalidating a user's current session."""
+    key = f"{SESSION_NOTICE_KEY_PREFIX}{user.id}:{user.session_version}"
+    database = get_session()
+    item = database.get(ApplicationMetadata, key)
+    if item is None:
+        database.add(ApplicationMetadata(key=key, value=notice))
+    else:
+        item.value = notice
+
+
 def load_current_user() -> None:
     if request.endpoint in {"main.shared_report", "main.shared_report_live"}:
         g.current_user = None
@@ -221,6 +233,13 @@ def load_current_user() -> None:
     now = now_utc_timestamp()
     maximum_age = current_app.permanent_session_lifetime.total_seconds()
     user = get_session().get(User, user_id)
+    invalidation_notice = None
+    if user is not None and session.get("session_version") != user.session_version:
+        notice = get_session().get(
+            ApplicationMetadata,
+            f"{SESSION_NOTICE_KEY_PREFIX}{user.id}:{user.session_version}",
+        )
+        invalidation_notice = notice.value if notice is not None else None
     privileges_updated = (
         user is not None
         and session.get("session_version") != user.session_version
@@ -236,10 +255,12 @@ def load_current_user() -> None:
         or session.get("session_version") != user.session_version
     ):
         session.clear()
-        if privileges_updated:
-            session["auth_notice"] = "privileges_updated"
-        elif account_disabled:
+        if account_disabled:
             session["auth_notice"] = "account_disabled"
+        elif invalidation_notice:
+            session["auth_notice"] = invalidation_notice
+        elif privileges_updated:
+            session["auth_notice"] = "privileges_updated"
         g.current_user = None
         return
     g.current_user = user

@@ -111,7 +111,12 @@ def permission_required(permission: str) -> Callable[[Callable[P, R]], Callable[
             if current_user() is None:
                 next_path = request.full_path.rstrip("?")
                 login_values = {"next": next_path}
-                if session.get("auth_notice") in {"privileges_updated", "account_disabled"}:
+                if session.get("auth_notice") in {
+                    "privileges_updated",
+                    "account_disabled",
+                    "password_reset",
+                    "totp_disabled",
+                }:
                     login_values["auth_notice"] = session["auth_notice"]
                 return cast(R, redirect(url_for("main.login", **login_values)))
             if not can(permission):

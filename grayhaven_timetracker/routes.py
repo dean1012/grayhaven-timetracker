@@ -57,6 +57,7 @@ from .auth import (
     required_text,
     reset_totp_replay_state,
     safe_next_url,
+    set_session_invalidation_notice,
     verify_password,
     verify_password_constant_time,
 )
@@ -377,7 +378,13 @@ def sensitive_action_credentials_valid(user: User) -> bool:
     )
     if not password_valid:
         return False
-    return not user.totp_secret or consume_totp(user, request.form.get("totp", ""))
+    return not user.totp_secret or consume_totp(user, submitted_totp_token())
+
+
+def submitted_totp_token() -> str:
+    """Return the six-bubble authenticator value submitted by a form."""
+    digits = request.form.getlist("totp_digit")
+    return "".join(digit.strip() for digit in digits) or request.form.get("totp", "")
 
 
 def sensitive_action_rate_key(user: User) -> str:
@@ -2524,9 +2531,7 @@ def confirm_totp() -> Any:
     if user.totp_secret:
         abort(409, "Disable the active two-factor method before setting up a new one.")
     secret = user.pending_totp_secret
-    if not secret or not consume_totp(
-        user, request.form.get("totp", ""), secret=secret
-    ):
+    if not secret or not consume_totp(user, submitted_totp_token(), secret=secret):
         audit(
             "totp_setup_rejected",
             user_id=user.id,
@@ -2539,15 +2544,15 @@ def confirm_totp() -> Any:
     user.pending_totp_secret = None
     user.session_version += 1
     get_session().commit()
-    session["session_version"] = user.session_version
     audit(
         "totp_enabled",
         user_id=user.id,
         source_ip=request.remote_addr,
         sessions_invalidated=True,
     )
-    flash("Two-factor authentication has been enabled.", "success")
-    return redirect(url_for("main.profile"))
+    session.clear()
+    flash("Two-factor authentication has been enabled. Please sign in again.", "success")
+    return redirect(url_for("main.login"))
 
 
 @main.post("/profile/totp/disable")
@@ -2558,7 +2563,7 @@ def disable_totp() -> Any:
         return redirect(url_for("main.profile"))
     if not verify_password(
         user.password_hash, request.form.get("current_password", "")
-    ) or not consume_totp(user, request.form.get("totp", "")):
+    ) or not consume_totp(user, submitted_totp_token()):
         audit(
             "totp_disable_rejected",
             user_id=user.id,
@@ -2572,15 +2577,15 @@ def disable_totp() -> Any:
     reset_totp_replay_state(get_session(), user.id)
     user.session_version += 1
     get_session().commit()
-    session["session_version"] = user.session_version
     audit(
         "totp_disabled",
         user_id=user.id,
         source_ip=request.remote_addr,
         sessions_invalidated=True,
     )
-    flash("Two-factor authentication has been disabled.", "success")
-    return redirect(url_for("main.profile"))
+    session.clear()
+    flash("Two-factor authentication has been disabled. Please sign in again.", "success")
+    return redirect(url_for("main.login"))
 
 
 @main.get("/users")
@@ -2882,6 +2887,7 @@ def reset_user_password(user_id: int) -> Any:
     user.password_hash = hash_password(temporary_password)
     user.password_change_required = True
     user.session_version += 1
+    set_session_invalidation_notice(user, "password_reset")
     get_session().commit()
     audit(
         "user_password_reset",
@@ -2971,6 +2977,7 @@ def disable_user_totp(user_id: int) -> Any:
     user.pending_totp_secret = None
     reset_totp_replay_state(database, user.id)
     user.session_version += 1
+    set_session_invalidation_notice(user, "totp_disabled")
     database.commit()
     audit(
         "totp_disabled",
