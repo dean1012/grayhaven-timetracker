@@ -22,7 +22,9 @@ def _contains_control(value: str) -> bool:
     return any(unicodedata.category(character).startswith("C") for character in value)
 
 
-def _read_secret(name: str, *, required: bool = True) -> str | None:
+def _read_secret(
+    name: str, *, required: bool = True, allow_missing_file: bool = False
+) -> str | None:
     """Read a secret from ``NAME_FILE`` or ``NAME`` without logging it."""
     file_value = os.environ.get(f"{name}_FILE")
     direct_value = os.environ.get(name)
@@ -32,6 +34,10 @@ def _read_secret(name: str, *, required: bool = True) -> str | None:
     if file_value:
         try:
             value = Path(file_value).read_text(encoding="utf-8").rstrip("\r\n")
+        except FileNotFoundError as exc:
+            if allow_missing_file:
+                return None
+            raise ConfigurationError(f"Unable to read {name}_FILE") from exc
         except OSError as exc:
             raise ConfigurationError(f"Unable to read {name}_FILE") from exc
     else:
@@ -100,7 +106,11 @@ def environment_config() -> dict[str, Any]:
 
     skip_bootstrap = _read_bool("SKIP_BOOTSTRAP", False)
     bootstrap_users = (
-        None if skip_bootstrap else _read_secret("BOOTSTRAP_USERS", required=False)
+        None
+        if skip_bootstrap
+        else _read_secret(
+            "BOOTSTRAP_USERS", required=False, allow_missing_file=True
+        )
     )
 
     return {

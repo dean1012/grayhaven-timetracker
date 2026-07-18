@@ -268,6 +268,12 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
     """Create or reconcile every deployment-managed user."""
     if app.config.get("SKIP_BOOTSTRAP"):
         return []
+    if app.config.get("BOOTSTRAP_USERS") is None:
+        if database.scalar(select(User.id).limit(1)) is not None:
+            return []
+        raise ConfigurationError(
+            "BOOTSTRAP_USERS or BOOTSTRAP_USERS_FILE is required for first install"
+        )
     specs = configured_bootstrap_users(app)
     records: list[tuple[BootstrapUser, User, bool, dict[str, str | bool]]] = []
     changed_by_email: dict[str, bool] = {}
