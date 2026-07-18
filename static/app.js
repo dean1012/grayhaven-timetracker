@@ -93,6 +93,40 @@ if (oneTimeConfirmation instanceof HTMLElement) {
   }
 }
 
+const totpSetup = document.querySelector("[data-totp-setup]");
+
+if (totpSetup instanceof HTMLElement) {
+  const expiresAt = Number(totpSetup.dataset.expireAtMs);
+  const redirectTarget = totpSetup.dataset.expireRedirect;
+  const countdown = totpSetup.querySelector("[data-totp-setup-countdown]");
+  if (Number.isFinite(expiresAt) && redirectTarget && countdown) {
+    const redirectUrl = new URL(redirectTarget, window.location.origin);
+    if (redirectUrl.origin === window.location.origin) {
+      let countdownInterval;
+      const updateCountdown = () => {
+        const remainingSeconds = Math.max(
+          0,
+          Math.ceil((expiresAt - Date.now()) / 1000),
+        );
+        const minutes = Math.floor(remainingSeconds / 60);
+        const seconds = String(remainingSeconds % 60).padStart(2, "0");
+        countdown.textContent = `${minutes}:${seconds}`;
+        if (remainingSeconds === 0) {
+          window.clearInterval(countdownInterval);
+          window.location.replace(redirectUrl.href);
+        }
+      };
+      updateCountdown();
+      countdownInterval = window.setInterval(updateCountdown, 1000);
+      window.addEventListener("pageshow", (event) => {
+        if (event.persisted) {
+          window.location.replace(redirectUrl.href);
+        }
+      });
+    }
+  }
+}
+
 function formatDuration(totalSeconds) {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);

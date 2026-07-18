@@ -252,7 +252,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .totp-bubbles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: clamp(.35rem, 1.5vw, .65rem); width: 100%; }
 .totp-bubbles input { min-width: 0; min-height: 0; aspect-ratio: 1; padding: 0; border-radius: var(--circle-radius); font-size: 1.35rem; font-weight: var(--font-weight-semibold); text-align: center; caret-color: var(--primary-accent); }
 .optional { color: var(--cool-grey); font-size: .75rem; font-weight: 400; }
-.totp-qr { width: 220px; margin: 1.5rem auto; padding: .6rem; background: var(--soft-white); border-radius: var(--border-radius); }
+.totp-qr { display: block; width: 220px; margin: 1.5rem auto; padding: .6rem; background: var(--soft-white); border-radius: var(--border-radius); }
 .flash-stack { display: grid; gap: .65rem; margin-bottom: 1.5rem; }
 .flash { padding: .8rem 1rem; color: var(--soft-white); border: 1px solid; border-radius: var(--border-radius); opacity: 1; transform: translateY(0); transition: opacity 300ms ease, transform 300ms ease; }
 .flash.is-dismissing { opacity: 0; transform: translateY(-.5rem); }

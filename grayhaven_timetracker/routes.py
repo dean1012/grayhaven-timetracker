@@ -122,6 +122,7 @@ login_ip_limiter = LoginLimiter(limit=50)
 shared_report_limiter = LoginLimiter()
 sensitive_action_limiter = LoginLimiter()
 REPORT_PASSWORD_CONFIRMATION_TTL_SECONDS = 120
+TOTP_SETUP_TTL_SECONDS = 300
 AUDIT_SOURCES = frozenset({"admin", "user", "public", "system"})
 AUDIT_PAGE_SIZE = 25
 USER_PAGE_SIZE = 25
@@ -147,6 +148,7 @@ USER_PASSWORD_CONFIRMATION_SESSION_KEYS = (
     "user_password_confirmation_user_id",
     "user_password_confirmation_token",
 )
+TOTP_SETUP_EXPIRES_AT_SESSION_KEY = "totp_setup_expires_at"
 
 
 @dataclass(frozen=True)
@@ -2512,15 +2514,25 @@ def setup_totp() -> str:
     user = cast(User, current_user())
     if user.totp_secret:
         abort(409, "Disable the active two-factor method before setting up a new one.")
-    user.pending_totp_secret = pyotp.random_base32()
-    get_session().commit()
-    audit("totp_setup_started", user_id=user.id, source_ip=request.remote_addr)
+    now = now_utc_timestamp()
+    expires_at = session.get(TOTP_SETUP_EXPIRES_AT_SESSION_KEY)
+    if (
+        not isinstance(expires_at, (int, float))
+        or expires_at <= now
+        or not user.pending_totp_secret
+    ):
+        user.pending_totp_secret = pyotp.random_base32()
+        expires_at = now + TOTP_SETUP_TTL_SECONDS
+        session[TOTP_SETUP_EXPIRES_AT_SESSION_KEY] = expires_at
+        get_session().commit()
+        audit("totp_setup_started", user_id=user.id, source_ip=request.remote_addr)
     uri = provisioning_uri(user, user.pending_totp_secret)
     return render_template(
         "totp_setup.html",
         user=user,
         secret=user.pending_totp_secret,
         qr_code=qr_data_uri(uri),
+        setup_expires_at_ms=int(expires_at * 1000),
     )
 
 
@@ -2530,6 +2542,13 @@ def confirm_totp() -> Any:
     user = cast(User, current_user())
     if user.totp_secret:
         abort(409, "Disable the active two-factor method before setting up a new one.")
+    expires_at = session.get(TOTP_SETUP_EXPIRES_AT_SESSION_KEY)
+    if not isinstance(expires_at, (int, float)) or expires_at <= now_utc_timestamp():
+        session.pop(TOTP_SETUP_EXPIRES_AT_SESSION_KEY, None)
+        user.pending_totp_secret = None
+        get_session().commit()
+        flash("Authenticator setup expired. Please start setup again.", "warning")
+        return redirect(url_for("main.profile"))
     secret = user.pending_totp_secret
     if not secret or not consume_totp(user, submitted_totp_token(), secret=secret):
         audit(
@@ -2542,6 +2561,7 @@ def confirm_totp() -> Any:
         return redirect(url_for("main.profile")), 400
     user.totp_secret = secret
     user.pending_totp_secret = None
+    session.pop(TOTP_SETUP_EXPIRES_AT_SESSION_KEY, None)
     user.session_version += 1
     get_session().commit()
     audit(
