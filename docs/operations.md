@@ -37,7 +37,7 @@ allowing local monitoring to query it.
 Before promoting a release:
 
 1. Confirm CI and unit tests pass for the exact signed revision.
-2. Build or select the versioned image and record its immutable digest.
+2. Build or select the versioned image from GHCR and record its immutable digest.
 3. Confirm the target uses a clean database when the release schema is not
    compatible with an earlier deployment.
 4. Render new environment-specific secret files and the initial bootstrap-user
