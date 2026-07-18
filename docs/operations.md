@@ -1,36 +1,54 @@
 # Operations
 
-[Return to README.md](../README.md)
+[Return to README](../README.md)
+
+This runbook covers application-specific operations. The Grayhaven deployment
+repository owns host provisioning, proxy configuration, secret distribution,
+image promotion, scheduled backups, and observability integration.
 
 ## Table of Contents
 
 - [Service Health](#service-health)
-- [Production Origin and Proxy](#production-origin-and-proxy)
+- [Deployment](#deployment)
 - [Backups](#backups)
-- [Restore](#restore)
+- [Staging Restore Exercise](#staging-restore-exercise)
+- [Production Restore](#production-restore)
 - [SQLCipher Key Rotation](#sqlcipher-key-rotation)
-- [Deployment-Managed User Reconciliation](#deployment-managed-user-reconciliation)
-- [No-Email User Recovery](#no-email-user-recovery)
-- [Live Client Reports](#live-client-reports)
+- [User Provisioning and Recovery](#user-provisioning-and-recovery)
+- [Contract and Billing Corrections](#contract-and-billing-corrections)
+- [Shared Client Reports](#shared-client-reports)
 - [Timezone Changes](#timezone-changes)
 - [Logs and Monitoring](#logs-and-monitoring)
 
 ## Service Health
 
-The application exposes `/health`. It verifies that the keyed database can
-answer a minimal query and returns HTTP 200 with `{"status":"ok"}`. Database
-failure returns HTTP 503 without diagnostic details.
+`GET /health` verifies that the keyed database can answer a minimal query. A
+healthy service returns HTTP 200 and `{"status":"ok"}`. A database failure
+returns HTTP 503 without internal diagnostic details.
 
-Compose publishes the application only on `127.0.0.1:8000`. Production Nginx
-must deny external access to `/health` while allowing the host's monitoring
-agent to query the loopback listener. The health endpoint must not be placed on
-a public load-balancer route.
+The supplied Compose service exposes the application only on
+`127.0.0.1:8000`. The managed reverse proxy should keep `/health` private while
+allowing local monitoring to query it.
 
 [Back to top](#operations)
 
-## Production Origin and Proxy
+## Deployment
 
-Set the external origin and browser trust boundary explicitly in production:
+Before promoting a release:
+
+1. Confirm CI and unit tests pass for the exact signed revision.
+2. Build or select the versioned image and record its immutable digest.
+3. Confirm the target uses a clean database when the release schema is not
+   compatible with an earlier deployment.
+4. Render new environment-specific secret files and the initial bootstrap-user
+   manifest from the approved vault.
+5. Verify persistent volume ownership, runtime branding, trusted hosts, public
+   origin, proxy count, timezone, and secure-cookie settings.
+6. Start the service and check `/health` through the host monitoring path.
+7. Verify administrator login and TOTP, a timer cycle, one representative
+   report, shared-report access, and an audit entry.
+
+For an external deployment, set an exact HTTPS origin and trust boundary:
 
 ```text
 PUBLIC_BASE_URL=https://timetracker.example.invalid
@@ -39,26 +57,18 @@ TRUSTED_HOSTS=timetracker.example.invalid
 TRUSTED_PROXY_COUNT=1
 ```
 
-Replace the example origin and proxy count with each deployment target's
-values. Confirm the proxy count against the final staging request path. The
-application refuses an external `PUBLIC_BASE_URL` unless Secure cookies are
-enabled and its hostname matches `TRUSTED_HOSTS`. Configure Nginx to preserve
-the original Host and send the expected forwarded address and scheme headers.
-Do not increase `TRUSTED_PROXY_COUNT` beyond the exact number of trusted proxy
-hops. Leave the cookie domain unset so authentication cookies remain host-only
-to the selected deployment origin and are not shared with sibling subdomains.
-
-The application redacts live report tokens from its own logs. Configure the
-reverse proxy to redact `/shared/reports/<token>` paths as well, because proxy
-access logs are outside the application logger.
+Match the proxy count to the actual controlled hops. Preserve the original
+Host and expected forwarded address and scheme headers. Configure proxy access
+logs to redact `/shared/reports/<token>` paths because the application cannot
+control logs written by the proxy.
 
 [Back to top](#operations)
 
 ## Backups
 
-Do not have restic copy the live database file by itself. WAL activity can make
-an uncoordinated file copy inconsistent. Create an encrypted online backup
-first, then include that artifact in the host's restic source set:
+Do not have restic copy the live database file directly. WAL activity can make
+an uncoordinated file copy inconsistent. First create an encrypted online
+artifact with the application utility:
 
 ```bash
 mkdir -p data/backups
@@ -70,12 +80,11 @@ docker compose exec timetracker \
 ```
 
 The command uses SQLite's online backup API, verifies SQLCipher and SQLite
-integrity, writes mode `0600`, and refuses to overwrite an existing file. The
-backup includes the append-only audit history.
-Configure restic automation to run this command successfully before taking the
-filesystem snapshot. Apply retention to old local staging copies separately.
+integrity, writes mode `0600`, and refuses to overwrite an existing path. The
+artifact includes application data and the audit history.
 
-Verify an artifact with the current key:
+Backup orchestration should require this command to succeed before restic
+captures the artifact. Verify a retained artifact with its matching key:
 
 ```bash
 docker compose exec timetracker \
@@ -84,34 +93,72 @@ docker compose exec timetracker \
   /run/secrets/sqlcipher_passphrase
 ```
 
+Restic repository configuration, schedules, retention, off-host replication,
+and alerting remain deployment responsibilities.
+
 [Back to top](#operations)
 
-## Restore
+## Staging Restore Exercise
 
-1. Stop the application.
-2. Retain the current database and any `-wal` or `-shm` sidecars for forensic
-   recovery.
-3. Restore the selected encrypted artifact as `data/timetracker.sqlite3`.
-4. Ensure the file is owned by the configured container UID and has mode
-   `0600` on a Linux filesystem.
-5. Verify the restored database with the matching SQLCipher key.
-6. Start the application and confirm `/health`, login, active timers, and a
-   representative report.
+Complete this exercise before production use and after material changes to the
+database, backup job, secret paths, or deployment role:
 
-Never test a restored database with a guessed key. SQLCipher authentication
-errors are expected when the key is wrong and do not identify the correct key.
+1. Add representative staging records, including users, clients, contracts,
+   time in multiple billing states, a shared report, and audit events.
+2. Run the online backup command and require the restic job to capture that
+   exact artifact.
+3. Record the restic snapshot ID, artifact checksum, application version,
+   schema version, and key version.
+4. Restore the artifact from restic into an isolated path; do not use the local
+   pre-snapshot copy.
+5. Verify the isolated artifact with
+   `scripts/database_maintenance.py verify` and the matching staging key.
+6. Stop the staging application and retain its current database and sidecars.
+7. Install the restored artifact as `data/timetracker.sqlite3`, set the correct
+   owner and mode `0600`, and remove stale `-wal` and `-shm` files.
+8. Start the application and verify health, login, TOTP, representative records,
+   billing metadata, shared-report access, and audit history.
+9. Create and stop a timer to prove the restored database remains writable.
+10. Record the result and either retain or securely remove exercise artifacts
+    according to the staging data policy.
+
+This validates the application database path through the complete chain:
+consistent SQLCipher artifact, restic capture, restic restore, integrity check,
+and application recovery.
+
+[Back to top](#operations)
+
+## Production Restore
+
+1. Identify the approved restic snapshot, backup artifact, application build,
+   schema version, and SQLCipher key version.
+2. Stop the application and prevent automatic restart.
+3. Retain the current database and its `-wal` and `-shm` sidecars for controlled
+   rollback and investigation.
+4. Restore the encrypted artifact into an isolated path and verify it with the
+   matching key.
+5. Install it as `data/timetracker.sqlite3`, set the runtime owner and mode
+   `0600`, and remove stale sidecars.
+6. Start the matching application build.
+7. Confirm `/health`, administrator login, TOTP, current records, reports,
+   shared-report access, audit history, and one controlled write.
+8. Record the recovery point, recovery time, validation, and disposition of the
+   replaced database.
+
+Never probe a restored database with guessed keys. A wrong-key error does not
+identify the correct key.
 
 [Back to top](#operations)
 
 ## SQLCipher Key Rotation
 
-Treat key rotation as an offline maintenance operation:
+Treat key rotation as offline maintenance:
 
 1. Create and verify a current backup.
-2. Stop the application with `docker compose stop timetracker`.
-3. Place the proposed key in `secrets/sqlcipher_passphrase.new` with mode
-   `0600`.
-4. Run the rekey command in a one-off container:
+2. Stop the service with `docker compose stop timetracker`.
+3. Install the proposed key as
+   `secrets/sqlcipher_passphrase.new` with mode `0600`.
+4. Run:
 
    ```bash
    docker compose run --rm --no-deps timetracker \
@@ -122,151 +169,94 @@ Treat key rotation as an offline maintenance operation:
    ```
 
 5. Verify the database with the new key.
-6. Atomically replace the old secret file through the approved vault-driven
-   deployment procedure.
-7. Start the application and validate health, login, and report generation.
-8. Retain the pre-rotation backup with the old key under the approved retention
-   policy, then securely remove both when the rollback window closes.
+6. Atomically promote the new secret through the approved deployment process.
+7. Start the service and validate health, login, writes, and reports.
+8. Retain the pre-rotation backup and old key only for the approved rollback
+   window, then dispose of both through the controlled process.
 
 The utility attempts to restore and verify its pre-rotation backup if rekeying
-fails. Keep the service stopped until the database and deployed secret are
-confirmed to match.
+fails. Keep the service stopped until the database and deployed key are known
+to match.
 
 [Back to top](#operations)
 
-## Deployment-Managed User Reconciliation
+## User Provisioning and Recovery
 
-`BOOTSTRAP_USERS_FILE` is the deployment interface. Ansible should
-render a JSON list from encrypted Grayhaven vault data, validate it before
-deployment, install it as a permission-restricted secret file with `no_log`,
-and point the container at the installed path. This mirrors the existing
-vault-to-htpasswd workflow while allowing structured application attributes.
-Each entry requires email, first name, last name, Argon2id password hash, and
-an `admin` or `user` role. The enabled flag defaults to true, and TOTP is
-optional per account.
+`BOOTSTRAP_USERS_FILE` is a first-install interface. The deployment process
+renders its JSON from protected configuration and installs it as a restricted
+secret. The application reads it only when the user table is empty; it does not
+continuously reconcile existing accounts.
 
-On startup:
+After installation, administrators manage accounts in the application. A
+password reset generates a strong temporary password, displays it once,
+invalidates the user's existing sessions, and requires a replacement at the
+next sign-in. Existing TOTP enrollment is retained.
 
-- missing accounts are created as administrators or standard users;
-- names, roles, and enabled states are reconciled every time;
-- changed configured password or TOTP fingerprints update authentication and
-  invalidate existing sessions;
-- unchanged credential fingerprints preserve in-application password and TOTP
-  changes;
-- omitted TOTP values never remove an authenticator enrolled from **Profile**;
-- disabling an account stops its active timer; and
-- each account reconciliation is recorded as a system audit event without
-  credential material.
-
-At least one configured account must be an enabled administrator. To retire an
-account, retain its manifest entry with `enabled: false`; this preserves time
-and audit history. Removing an entry only stops deployment management and does
-not delete or disable the database account. The database independently refuses
-to remove the last enabled administrator.
+If a user also loses TOTP access, an administrator can disable that enrollment
+after password and TOTP reauthentication. Deliver temporary passwords and new
+TOTP provisioning information through separate approved channels. The
+application has no email recovery flow.
 
 [Back to top](#operations)
 
-## No-Email User Recovery
+## Contract and Billing Corrections
 
-The application sends no email. An administrator can open **Users**, select
-**Reset password**, and re-enter their own current password and TOTP code. A
-successful reset:
+Archiving a contract stops active timers and removes the contract from normal
+selection and client reports. Activation restores it. Both actions require an
+administrator and recent reauthentication.
 
-- generates a strong temporary password and displays it once;
-- stores only its Argon2id hash;
-- invalidates the user's existing application sessions;
-- requires the user to replace it immediately after sign-in; and
-- preserves the user's existing TOTP secret.
+Completed time can be edited or moved only while pending invoice. For a
+correction after invoicing, client payment, or disbursement, reverse the session
+to the required earlier state, make the correction, then advance it through the
+billing lifecycle again with accurate metadata. The audit log records each
+step.
 
-TOTP codes are single-use. If the administrator just used the current code to
-sign in, wait for the authenticator to display its next code before confirming
-a password reset or other credential rotation.
-
-Deliver the temporary password through an approved channel separate from any
-TOTP provisioning information. If the user has also lost the configured TOTP
-method, password reset alone cannot restore access. Recovery then requires the
-authorized offline procedure; there is no email fallback or administrator TOTP
-override in the application.
+Before deleting clients, contracts, or work definitions, return affected
+finalized sessions to pending invoice and confirm that deletion is the intended
+business action. Audit records remain even when eligible operational data is
+removed.
 
 [Back to top](#operations)
 
-## Live Client Reports
+## Shared Client Reports
 
-Client reports do not require account registration. Client creation generates a
-permanent report URL automatically, even before any contracts exist. Only
-administrators can view or share that URL from the client page. Until a password
-is generated, the URL cannot grant report access. The page provides copy and
-mailto sharing controls. The link-sharing mailto includes the URL and states
-that the password will arrive separately.
+Each client receives a permanent report URL at creation. Until an administrator
+generates a report password, that URL cannot grant access. The password is
+displayed once and cannot be recovered later.
 
-An administrator can select **Generate Password** from the client page. After
-password and TOTP reauthentication, the confirmation page displays the new
-password once with copy and Proton Mail actions inside the password field. The
-password mailto includes the reset password but not the permanent report URL.
-The administrator must enable Proton Mail **External encryption** for that
-draft and set the encrypted message to expire in 48 hours. The email reminds
-the client to save the report password before that expiration. Generate a
-second, temporary external-encryption password and deliver it through a
-separate approved channel. That password is distinct from the client report
-password and is not generated or stored by the application. The report
-password cannot be recovered after leaving the confirmation page.
-
-The confirmation URL is one-time. Refreshing it or requesting it again returns
-to the client page without generating another password. A visible countdown
-shows the remaining display time, and the page automatically returns to the
-client after two minutes. If the confirmation is not opened within two minutes
-of generation, its pending server-side value expires and the administrator must
-reset the report password again.
-
-Resetting the client report password requires administrator password and TOTP
-reauthentication. It displays a new password once and invalidates existing
-report browser sessions for every contract under that client. Stored report
-passwords cannot be viewed or recovered.
-
-The shared page is the same live dashboard available to administrators. Active
-contract sections are shown newest first. Active session duration and allocated
-cost advance every second. A same-origin
-background check discovers new, stopped, edited, or deleted timers within a
-few seconds and updates the report without a page reload. Password replacement
-or session expiry ends synchronization and freezes the visible values.
-
-PDF reports are static. Generation includes active timers through the exact
-generation instant but does not stop or otherwise modify those timers.
+Share the report URL and password through separate approved channels. Rotating
+the password invalidates existing shared-report sessions. The report is live:
+running time advances in the browser, and changed eligible work appears without
+a full page reload. Invoiced, paid, disbursed, and archived-contract time is not
+shown.
 
 [Back to top](#operations)
 
 ## Timezone Changes
 
-Set `TZ` to an IANA timezone name and recreate the container. Stored timestamps
-remain UTC, so changing the display timezone does not rewrite or damage data.
-The same sessions will be rendered in the new local timezone.
+Set `TZ` to an IANA timezone and recreate the container. Timestamps remain
+stored in UTC, so this changes display and entry interpretation without
+rewriting stored instants. Validate a representative report after a timezone
+change.
 
 [Back to top](#operations)
 
 ## Logs and Monitoring
 
-Logs are emitted as one JSON object per line. Access events include HTTP method,
-redacted path, status, elapsed microseconds, source address, user agent, and
-authenticated user identifier where available. Authentication events include
-accepted password stages, successful logins, expired challenges, and rejected
-or rate-limited attempts without passwords or TOTP values. Unchanged live
-report conditional checks return HTTP 304 and are omitted from access and
-persistent audit records; the initial view, changed report responses, access
-failures, and underlying timer actions remain recorded.
+The application emits one JSON object per line to standard error. Request,
+authentication, shared-report, and state-change events include safe operational
+context without passwords, TOTP values, or report tokens. The encrypted
+database also contains the append-only audit history available to
+administrators.
 
-The encrypted database also contains an append-only audit history available to
-administrators under **Audit**. It records authenticated requests, protected
-public-report activity, semantic state changes, administrator recovery actions,
-and application startup or bootstrap events. There is no application delete or
-edit operation for audit events, and database triggers reject either change.
-Monitor persistent-volume capacity because audit history grows with use.
+The managed environment owns collection, retention, dashboards, alerts, and
+access controls. When Grayhaven's Grafana stack is enabled, its integration
+should consume the existing structured stream rather than require an
+application-specific logging mode. Validate production log collection and
+alerts before the service receives real data when that stack is unavailable in
+staging.
 
-Future Alloy and Loki configuration should collect container standard output
-and error and select the `grayhaven_timetracker.audit` logger for canonical
-audit events. Those JSON records already contain source, actor, request, status,
-and safe structured details. Fail2ban can match repeated `login_rejected`,
-`login_rate_limited`, shared-report rejection, and sensitive-action
-rate-limited events once production log paths and the reverse-proxy address
-model are finalized.
+Monitor persistent-volume growth because the audit history is intentionally not
+editable or deletable through the application.
 
 [Back to top](#operations)

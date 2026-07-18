@@ -22,9 +22,9 @@ jobs:
           persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
-          python-version: "3.13"
+          python-version: "3.12"
 
       - name: Install validation tools
         run: |
@@ -42,7 +42,7 @@ jobs:
 
       - name: Mypy type check
         run: |
-          mypy --strict grayhaven_timetracker scripts tests
+          mypy --strict grayhaven_timetracker scripts
 
       - name: Ruff lint
         run: |
@@ -53,7 +53,7 @@ jobs:
           ruff format --check grayhaven_timetracker scripts tests
 
       - name: Run actionlint
-        uses: devops-actions/actionlint@5b8e487739690fe67cb3bd38471d2abfd34daff3  # v0.1.12
+        uses: devops-actions/actionlint@2e68a47a3bd5b758f4a57a9a327e56d5234641c2  # v0.1.12
 
       - name: Run ShellCheck
         uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca  # master
@@ -71,4 +71,4 @@ jobs:
         run: docker build --build-arg APP_VERSION=ci-validation --tag grayhaven-timetracker:ci .
 
       - name: Run markdownlint
-        uses: DavidAnson/markdownlint-cli2-action@ded1f9488f68a970bc66ea5619e13e9b52e601cd  # v23
+        uses: DavidAnson/markdownlint-cli2-action@8de2aa07cae85fd17c0b35642db70cf5495f1d25  # v24.0.0

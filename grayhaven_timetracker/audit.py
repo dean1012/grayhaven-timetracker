@@ -57,7 +57,10 @@ def _safe_detail_value(value: Any, *, depth: int = 0) -> Any:
         details: dict[str, Any] = {}
         for key, item in value.items():
             normalized_key = safe_audit_text(str(key), maximum=100)
-            if any(fragment in normalized_key.lower() for fragment in SENSITIVE_KEY_FRAGMENTS):
+            if any(
+                fragment in normalized_key.lower()
+                for fragment in SENSITIVE_KEY_FRAGMENTS
+            ):
                 continue
             details[normalized_key] = _safe_detail_value(item, depth=depth + 1)
         return details

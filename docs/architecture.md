@@ -1,160 +1,199 @@
 # Application Architecture
 
-[Return to README.md](../README.md)
+[Return to README](../README.md)
+
+This document describes the application boundaries and behavior of the
+Grayhaven Time Tracker. Host provisioning, reverse-proxy configuration, secret
+delivery, and backup scheduling belong to the managed deployment environment.
 
 ## Table of Contents
 
-- [Runtime Components](#runtime-components)
-- [Request and Data Flow](#request-and-data-flow)
-- [Authorization Model](#authorization-model)
-- [Live Report Access](#live-report-access)
-- [Audit Event Model](#audit-event-model)
-- [Time and Cost Model](#time-and-cost-model)
-- [Persistence and Growth](#persistence-and-growth)
+- [System Context](#system-context)
+- [Application Structure](#application-structure)
+- [Identity and Permissions](#identity-and-permissions)
+- [Work Hierarchy](#work-hierarchy)
+- [Time Tracking](#time-tracking)
+- [Billing Lifecycle](#billing-lifecycle)
+- [Reporting](#reporting)
+- [Audit and Logging](#audit-and-logging)
+- [Persistence](#persistence)
+- [Deployment Boundaries](#deployment-boundaries)
 
-## Runtime Components
+## System Context
 
-- Nginx terminates TLS and proxies application requests in production.
-- Gunicorn runs one `gthread` worker with four threads.
-- Flask renders HTML, handles authenticated workflows, and generates PDFs.
-- SQLAlchemy manages domain models and transaction boundaries.
-- SQLCipher stores all application and authentication data in one encrypted
-  SQLite file.
-- Runtime-mounted assets supply Grayhaven logos, favicons, and Inter fonts.
-- Standard output and error carry structured JSON logs for container
-  collection.
+The application is a server-rendered Flask service for Grayhaven personnel. It
+stores operational state in one encrypted SQLCipher database and is designed to
+run as a single Gunicorn instance behind a trusted TLS reverse proxy.
 
-The application image has one non-root process and no separate database
-service. The low-resource model is intentional for initial deployment.
-
-[Back to top](#application-architecture)
-
-## Request and Data Flow
-
-The reverse proxy sends an HTTPS request to Gunicorn. Flask opens a
-request-scoped database session, loads and validates the authenticated user,
-checks the route's concrete permission, executes the transaction, renders the
-response, and closes the database session.
-
-State-changing browser requests use POST and Flask-WTF CSRF protection. The
-application emits structured access events for each non-health request. It
-also persists authenticated and security-relevant public requests plus
-semantic authentication and state-change events in the encrypted audit table.
-
-Sign-in validates email and password before deciding whether a second factor is
-needed. Accounts with TOTP enabled receive a separate five-minute authenticator
-challenge bound to the user ID and current session version. Only successful
-completion promotes that pending state into an authenticated application
-session. Accepted TOTP counters are atomically recorded and cannot be replayed.
-Restarting the password stage does not clear prior TOTP failures. Accounts
-without TOTP proceed directly after password validation. Authenticated and
-client-report sessions have a fixed 12-hour lifetime that is not extended by
-ordinary requests or live-report synchronization.
+Browser requests pass through the reverse proxy to Gunicorn and Flask. Flask
+performs authentication, authorization, validation, and database transactions,
+then returns HTML. Shared client reports use separate password-protected links
+and expose only the report selected by an administrator.
 
 [Back to top](#application-architecture)
 
-## Authorization Model
+## Application Structure
 
-The interface exposes only administrator promotion and demotion. Internally,
-roles map to stable permission identifiers such as `report:generate`,
-`audit:view`, `client:add`, and `time_entry:edit_own`.
+The primary modules are:
 
-Administrators manage users, clients, contracts, reports, and all sessions.
-Users can view shared client and contract structures, manage tasks and
-subtasks, control their own timer, and correct their own completed sessions.
-All users can access all current clients and contracts, including their hourly
-rates.
+- `grayhaven_timetracker/__init__.py`: application factory, request lifecycle,
+  security headers, schema initialization, and health endpoint.
+- `config.py`: environment, secret, branding, hostname, proxy, and public-origin
+  validation.
+- `auth.py`: password, session, TOTP, reauthentication, and rate-limit helpers.
+- `permissions.py`: centralized role and object-state checks.
+- `routes.py`: authenticated workflows and shared-report endpoints.
+- `reports.py`: report queries and summaries.
+- `models.py`: SQLAlchemy entities and database constraints.
+- `database.py`: SQLCipher connection policy and schema compatibility checks.
+- `audit.py` and `logging_config.py`: audit persistence and structured logging.
+- `scripts/database_maintenance.py`: encrypted backup, verification, restore
+  support, and key rotation.
 
-Database guards preserve at least one enabled administrator, prevent a subtask
-from being assigned to an unrelated task, prevent overlapping time intervals
-for one user, enforce one active timer per user, and reject audit-event updates
-or deletion.
-
-[Back to top](#application-architecture)
-
-## Live Report Access
-
-Each client stores one permanent, high-entropy report-link token in the
-encrypted SQLCipher database so the URL can be displayed and reused. Each
-client has one Argon2id report-password hash and a
-monotonically increasing password version. The linked report contains every
-contract for that client, newest first, with contract-specific rates and totals.
-
-A client follows the client URL and enters the administrator-delivered report
-password. Before a password exists, the URL remains inaccessible. Successful
-verification stores only the client identifier, password version, and
-authentication timestamp in the signed browser session. Password replacement
-increments the version, invalidating every existing client report session. The
-permanent token, password version, and absolute session age are checked on each
-live synchronization request.
-
-The plaintext generated password is held only in bounded process memory for a
-maximum of two minutes while the application redirects to its confirmation
-page. A random nonce in the signed administrator session identifies the pending
-confirmation without placing the password in the cookie or URL. The first page
-view consumes the server-side value; refreshes and later requests return to the
-client page.
-
-The administrator and client HTML reports use the same server-rendered report
-fragment. JavaScript advances active sessions and exactly reconciled group and
-overall billing totals once per second. Every three seconds a same-origin
-conditional request checks a structural report fingerprint. An unchanged
-report returns HTTP 304 without markup or an audit-table write. Timer starts,
-stops, edits, deletions, and report-label or rate changes return replacement
-markup that is installed without reloading the page. Access loss freezes the
-display and marks the report ended.
-
-Shared reports exclude client and contract contact details. The application
-redacts report tokens from access, exception, and persistent audit paths.
+HTML templates and application CSS are maintained in `templates/` and
+`static/`. Runtime identity assets are supplied separately through `branding/`.
 
 [Back to top](#application-architecture)
 
-## Audit Event Model
+## Identity and Permissions
 
-The audit table is append-only at the database layer. Each event records its
-UTC timestamp, stable event name, source classification, actor snapshot,
-request context, response status when available, and bounded structured
-details. User-controlled controls and credential-like detail fields are
-removed before persistence or structured log emission.
+The application has two roles:
 
-Administrators can filter the read-only view by source, action, and actor.
-Every canonical event is also emitted through the
-`grayhaven_timetracker.audit` JSON logger, preserving the fields required for a
-later Alloy or Loki pipeline without making Loki part of the application
-transaction path.
+| Capability | User | Administrator |
+| --- | --- | --- |
+| Track and edit own pending time | Yes | Yes |
+| View own time and timer state | Yes | Yes |
+| Manage clients, contracts, tasks, and subtasks | No | Yes |
+| Move another user's pending time | No | Yes |
+| Advance or reverse billing state | No | Yes |
+| Manage users and TOTP recovery | No | Yes |
+| Create internal and shared reports | No | Yes |
+| Review the audit log | No | Yes |
 
-[Back to top](#application-architecture)
-
-## Time and Cost Model
-
-Timestamps are stored as naive UTC values and converted through the configured
-IANA timezone at the presentation boundary. Ambiguous and nonexistent local
-times are rejected when sessions are corrected.
-
-Duration is measured to the second. Cost uses integer contract-rate cents and
-decimal arithmetic. Per-session cent allocation is reconciled to each grouped
-summary so detailed and summary totals remain equal.
-
-An active timer is represented by a null stop timestamp. HTML reports start
-from an authoritative server snapshot and advance from browser receipt time,
-so a client clock mismatch cannot distort elapsed time. Background
-synchronization remains authoritative for timer state. PDF reports substitute
-their generation timestamp for display and calculations without changing the
-stored timer.
+Sessions carry a server-side account version so password resets, role changes,
+and account changes can invalidate existing browser sessions. Passwords use
+Argon2id. Accounts can enroll TOTP, and configured TOTP is required at login.
+Bootstrap provisioning may supply an initial TOTP secret, and administrators
+have an assisted recovery path. Sensitive administrator actions require recent
+password and TOTP reauthentication.
 
 [Back to top](#application-architecture)
 
-## Persistence and Growth
+## Work Hierarchy
 
-SQLCipher SQLite is appropriate for the initial single-host, low-write
-workload. The current alpha schema includes account recovery state, client-wide
-live report access, and the audit trail. Until the 1.0 production release,
-incompatible schema changes require resetting alpha data rather than a
-compatibility path.
+Time is assigned through this hierarchy:
 
-The encrypted database must reside on persistent storage. Branding and secret
-mounts are separately managed and are not part of the application image. Audit
-events intentionally accumulate with application activity, so capacity
-monitoring and backup sizing must include that growth.
+```text
+Client
+└── Contract
+    └── Task
+        └── Subtask (optional)
+```
+
+A contract owns its billing rate and operational state. The rate is fixed after
+creation so historical value cannot be silently re-priced. Archiving a contract
+stops its active timers and removes its work from operational selection and
+reporting. Activation restores normal availability.
+
+Deletion is intentionally constrained. Finalized time must first be returned to
+the pending-invoice state. Deleting eligible work records removes associated
+operational data while retaining the append-only audit history.
+
+[Back to top](#application-architecture)
+
+## Time Tracking
+
+The database enforces at most one active timer per user. A timer records its
+user, client, contract, task, optional subtask, start time, and description.
+Stopping it creates a time session using the configured display timezone.
+
+Users can create manual entries and edit or delete their own sessions while
+those sessions remain pending invoice. Administrators can move pending sessions
+between users and work assignments. Corrections and destructive actions are
+recorded with reasons and audit context.
+
+Once a session advances beyond pending invoice, ordinary edits are blocked. An
+administrator must reverse its billing state before correcting the underlying
+time.
+
+[Back to top](#application-architecture)
+
+## Billing Lifecycle
+
+Each time session moves through an explicit lifecycle:
+
+```text
+Pending invoice → Invoiced → Client paid → Disbursed
+```
+
+The transitions capture the applicable invoice number, invoice date, client
+payment date, disbursement date, and transaction number. Administrators can
+reverse a transition when correcting operational mistakes. Reversal clears
+metadata that no longer applies to the resulting state.
+
+This lifecycle records the state of external billing work. The application does
+not generate or send invoices, transfer money, or synchronize with an
+accounting platform.
+
+[Back to top](#application-architecture)
+
+## Reporting
+
+Administrators can view live client-wide reports. The report query includes
+running timers and completed sessions that are still pending invoice under
+active contracts. Invoiced, paid, disbursed, and archived-contract sessions are
+intentionally excluded from the operational report.
+
+A client has a permanent shared-report link protected by a separate password.
+The report remains live and reflects current eligible work. Administrators can
+rotate its password to invalidate existing shared-report sessions. Shared
+reports do not grant access to the authenticated application.
+
+[Back to top](#application-architecture)
+
+## Audit and Logging
+
+Security-sensitive and business-state changes append an audit record containing
+the actor, action, target, time, result, and structured details. Audit records
+are retained independently from operational objects so deletions do not erase
+the history of administrative actions.
+
+The application emits structured JSON logs to standard error. Logs provide
+runtime and request diagnostics but deliberately exclude secret values. The
+managed environment is responsible for collection, retention, alerting, and
+access control.
+
+[Back to top](#application-architecture)
+
+## Persistence
+
+SQLAlchemy maps the domain model to one SQLCipher-encrypted SQLite database.
+Connections enforce encryption and defensive SQLite settings. The application
+stores a schema version and refuses to open an incompatible database rather
+than attempting an implicit migration.
+
+This project does not maintain legacy schema migrations. A deployment that
+changes to an incompatible schema starts with a clean database after preserving
+any records required by the business through an explicitly reviewed process.
+
+The single-instance design is deliberate. SQLite and the process-local security
+controls are not intended for horizontally scaled application workers.
+
+[Back to top](#application-architecture)
+
+## Deployment Boundaries
+
+This repository owns application code, its container definition, and the
+runtime interface. The managed environment owns:
+
+- TLS termination and reverse-proxy policy.
+- Host and container hardening beyond the supplied image defaults.
+- Secret generation, delivery, rotation, and recovery.
+- Persistent storage, backup schedules, retention, and restore exercises.
+- Log collection, dashboards, metrics, and alerts.
+- Image promotion and deployment orchestration.
+
+These boundaries are intentional. Copying this repository alone does not
+reproduce Grayhaven's production environment.
 
 [Back to top](#application-architecture)

@@ -4,101 +4,76 @@
 [![Unit Tests](https://github.com/dean1012/grayhaven-timetracker/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/dean1012/grayhaven-timetracker/actions/workflows/unit-tests.yml)
 [![codecov](https://codecov.io/gh/dean1012/grayhaven-timetracker/graph/badge.svg)](https://codecov.io/gh/dean1012/grayhaven-timetracker)
 
-Internal contract time tracking and reporting software for Grayhaven Systems
-LLC.
+Contract time tracking, billing lifecycle management, and client reporting for
+Grayhaven Systems LLC.
 
-This repository is public for transparency and operational demonstration. It
-contains the application source, but it excludes Grayhaven Systems LLC logos,
-wordmarks, font files, secrets, and deployment-specific configuration. It is
-not a generic turnkey time-tracking product. Another organization would need
-to adapt the runtime branding, deployment, and operating procedures.
+This is a real internal tool published for transparency and as an operational
+example. The repository contains the application source but excludes Grayhaven
+branding, secrets, private data, and deployment-specific configuration. It is
+not a turnkey time-tracking platform. Another organization would need to adapt
+the branding, deployment integration, security model, and operating procedures
+for its own environment.
 
 ## Table of Contents
 
 - [Scope](#scope)
-- [Architecture](#architecture)
-- [Requirements](#requirements)
-- [Local UAT Deployment](#local-uat-deployment)
-- [Runtime Configuration](#runtime-configuration)
-- [Reporting](#reporting)
-- [Security](#security)
+- [Managed Environment](#managed-environment)
+- [Local UAT](#local-uat)
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 - [License](#license)
 
 ## Scope
 
-- Administrator-provisioned accounts with generated temporary credentials,
-  hidden admin and user role mappings, and no email dependency.
-- Argon2id passwords, a separate short-lived TOTP challenge when enabled,
-  self-service profile changes, and administrator-assisted password recovery
-  that preserves TOTP.
-- Editable client and contract records with an immutable hourly rate per
-  contract.
-- Shared tasks and one optional layer of subtasks.
-- One active timer per user, enforced by the database.
-- Manual completed-session entry, correction, and deletion by the owner or an
-  administrator, with per-user overlap prevention.
-- Administrator-only internal reports and one-click branded PDF reports.
-- Live client reports without account registration, protected by one
-  high-entropy client link and an administrator-delivered client password. The
-  report includes all contracts newest first. Each client receives a permanent
-  report URL when created; administrators explicitly generate or replace the
-  client password when access is needed.
-- Live browser-report timers and grouped totals that advance every second and
-  discover timer changes without reloading the page.
-- Report summaries grouped by task and subtask, including duration and cost.
-- Detailed report sessions with user, start time, end time, duration, and cost.
-- SQLCipher encryption at rest and UTC timestamp storage.
-- An administrator-only, append-only audit log for user, public-report, and
-  system activity, with matching structured JSON events for future Loki use.
-- Responsive layouts at the documented Grayhaven web breakpoints.
+The application provides:
 
-All recorded time is billable. The application intentionally does not include
-invoicing, payment processing, estimates, client accounts, or email delivery.
+- Role-based administration and user access with TOTP multi-factor
+  authentication.
+- Clients, contracts, tasks, and optional subtasks.
+- One active timer per user, manual time entries, and administrative time
+  reassignment.
+- Contract archiving and activation with safeguards for active timers.
+- A billing lifecycle from pending invoice through invoiced, client paid, and
+  disbursed.
+- Internal reports and permanent password-protected client report links.
+- Append-only audit records and structured JSON application logs.
+- An encrypted SQLCipher database with verification, online backup, and key
+  rotation utilities.
+
+The application tracks billing state and related metadata. It does not create
+or send invoices, process payments, perform payroll, or replace an accounting
+system.
 
 [Back to top](#grayhaven-systems-llc-time-tracker)
 
-## Architecture
+## Managed Environment
 
-The application is a server-rendered Flask service backed by SQLAlchemy and a
-single SQLCipher-encrypted SQLite datastore. Gunicorn runs one threaded worker
-to keep the deployment suitable for a small host while preserving the
-database's single-writer operating model.
+Grayhaven runs this application as a single-instance container behind a managed
+TLS reverse proxy. Deployment configuration, host hardening, secret delivery,
+monitoring, and scheduled backup orchestration belong in the Grayhaven Ansible
+and operations repositories rather than this application repository.
 
-The Docker image contains application code and public interface assets.
-Grayhaven branding and all secret values are mounted at runtime. See
-[Application Architecture](docs/architecture.md) for component and data-flow
-details.
+The runtime contract requires:
 
-[Back to top](#grayhaven-systems-llc-time-tracker)
+- Python 3.12 or newer, or the supplied container image.
+- A writable persistent data directory.
+- private Flask and SQLCipher secret files.
+- Runtime branding assets.
+- An explicit public origin, trusted hosts, proxy count, and secure cookies for
+  an externally reachable deployment.
 
-## Requirements
-
-- Docker Engine or Docker Desktop
-- Docker Compose plugin
-- Git
-- Runtime branding assets listed in
-  [Runtime Configuration](#runtime-configuration)
-
-Python 3.13 is used in the container and CI. A local Python environment is only
-required for development and direct maintenance-script use.
+The supplied Compose definition is intentionally loopback-only and suitable for
+local UAT. It is not a complete production deployment.
 
 [Back to top](#grayhaven-systems-llc-time-tracker)
 
-## Local UAT Deployment
+## Local UAT
 
-Create local runtime directories:
+Create the required local directories and secret files:
 
 ```bash
-mkdir -p branding data secrets
+mkdir -p data secrets
 chmod 700 data secrets
-```
-
-Populate `branding/` from the private Grayhaven branding deployment source.
-Create local-only test secrets:
-
-```bash
 python3 -c 'import secrets; print(secrets.token_urlsafe(48))' \
   > secrets/flask_secret_key
 python3 -c 'import secrets; print(secrets.token_urlsafe(48))' \
@@ -106,193 +81,46 @@ python3 -c 'import secrets; print(secrets.token_urlsafe(48))' \
 chmod 600 secrets/*
 ```
 
-The hash command requires the runtime dependencies to be installed locally.
-The cleartext password is read without terminal echo and is not written to a
-file.
-
-Build a traceable image and start the local service:
+Provide a bootstrap-user manifest at `secrets/bootstrap_users`, supply the
+required files under `branding/`, then start the application:
 
 ```bash
-./scripts/build-image
-docker compose up --detach --wait
+docker compose up --build -d
+curl --fail http://127.0.0.1:8000/health
 ```
 
-The build script requires a clean worktree and embeds the version as
-`<major>.<minor>.<build-revision>-<short-commit>`, ensuring the footer and
-static-asset cache keys identify the exact build and source commit. `VERSION`
-contains the deliberately selected `major.minor` series. Each successful build
-increments the revision from signed Git tags named `build/<major>.<minor>.<rev>`;
-the first build in a new series is revision 1. Preserve and fetch these tags
-wherever release images are built. Direct image builds without an explicit
-`APP_VERSION` fail instead of falling back to a development label.
+Open `http://127.0.0.1:8000`. For the complete runtime interface and bootstrap
+manifest format, see [Configuration](docs/configuration.md).
 
-Open <http://127.0.0.1:8000>. The default local administrator email is
-`admin@example.invalid`; override it and the display name through environment
-variables before starting the Compose project.
-
-Stop the application without deleting its data:
-
-```bash
-docker compose down
-```
-
-[Back to top](#grayhaven-systems-llc-time-tracker)
-
-## Runtime Configuration
-
-Secret values support either a direct variable or the corresponding
-`_FILE` variable. Production automation should use files populated from the
-private Grayhaven vault and should not place secrets in the image or repository.
-
-Required settings are:
-
-- `SECRET_KEY` or `SECRET_KEY_FILE`
-- `SQLCIPHER_PASSPHRASE` or `SQLCIPHER_PASSPHRASE_FILE`
-- `BOOTSTRAP_USERS` or `BOOTSTRAP_USERS_FILE` with at least one enabled
-  administrator
-
-Deployment automation supplies `BOOTSTRAP_USERS_FILE` containing a
-JSON list rendered from encrypted Grayhaven vault data. This follows the
-existing per-domain htpasswd pattern: the vault owns complete credential
-entries, Ansible validates and writes a permission-restricted generated file,
-and the service reads that file without logging it. The direct
-`BOOTSTRAP_USERS` variable is suitable only for local development.
-Use [examples/bootstrap_users.sample.json](examples/bootstrap_users.sample.json)
-as the non-secret local-development shape; replace every placeholder hash
-before mounting it as `secrets/bootstrap_users`.
-
-```json
-[
-  {
-    "email": "administrator@example.invalid",
-    "first_name": "Example",
-    "last_name": "Administrator",
-    "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$...",
-    "role": "admin",
-    "enabled": true
-  },
-  {
-    "email": "user@example.invalid",
-    "first_name": "Example",
-    "last_name": "User",
-    "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$...",
-    "role": "user",
-    "enabled": true,
-    "totp_secret": "OPTIONALBASE32VALUE"
-  }
-]
-```
-
-Email, first name, last name, password hash, and role are required for each
-entry. Role must be `admin` or `user`; `enabled` defaults to `true`; and
-`totp_secret` is optional. At least one configured account must be an enabled
-administrator. Set `enabled` to `false` to retain history while blocking an
-account. Removing an entry stops managing it but does not delete or disable the
-database account automatically.
-
-Operational settings include `TZ`, `DATABASE_PATH`, `BRANDING_PATH`,
-`CONTACT_URL`, `SESSION_COOKIE_SECURE`, `TRUSTED_PROXY_COUNT`, `TRUSTED_HOSTS`,
-and `PUBLIC_BASE_URL`.
-
-`TRUSTED_HOSTS` is a comma-separated browser Host allowlist and defaults to
-`localhost,127.0.0.1` for local UAT. Set `PUBLIC_BASE_URL` to the canonical
-external HTTPS origin when live report links are generated behind a reverse
-proxy. Configuring an external origin requires Secure cookies and a matching
-trusted host; the application refuses to start otherwise.
-
-For one-off alpha UAT restarts that retain an already initialized database,
-`SKIP_BOOTSTRAP=true` bypasses bootstrap-user reconciliation. Do not set it for
-a fresh deployment: that deployment must provide `BOOTSTRAP_USERS_FILE`.
-
-The application does not hard-code a deployment hostname. Each environment
-must set its own exact `PUBLIC_BASE_URL` and `TRUSTED_HOSTS`, enable Secure
-cookies for HTTPS, retain host-only cookie scope, and set the trusted proxy
-count from its validated request topology.
-
-The branding path must contain:
-
-```text
-grayhaven-logo-wordmark-dark.svg
-grayhaven-logo-wordmark-light.png
-favicon.ico
-favicon-16.png
-favicon-32.png
-apple-touch-icon.png
-fonts/inter-400.ttf
-fonts/inter-500.ttf
-fonts/inter-600.ttf
-fonts/inter-700.ttf
-```
-
-Deployment-managed names, roles, and enabled states are reconciled every
-startup. Password and explicitly supplied TOTP values are reapplied only when
-their configured fingerprints change, so in-application password recovery and
-TOTP enrollment are preserved across ordinary restarts. Omitting TOTP never
-removes an authenticator enrolled through the application. Disabling a managed
-account stops its active timer, and every reconciled account produces a safe
-system audit event.
-
-[Back to top](#grayhaven-systems-llc-time-tracker)
-
-## Reporting
-
-Administrators can open a client report from any of its contracts in a new
-browser tab or download a branded PDF with one click. The browser report is a
-live dashboard: active
-session rows, grouped totals, overall duration, cost, and distribution advance
-every second. Background conditional requests discover newly started, stopped,
-edited, or deleted timers without a page reload.
-
-PDF generation is intentionally different. Each PDF is an immutable snapshot
-that calculates active timers as though they stopped at the generation instant
-without actually stopping or modifying those timers.
-
-Each client has one permanent live report URL, generated automatically when the
-client is created. The URL is shared only by administrators. Until an
-administrator generates a password, it cannot grant report access. A client
-does not create an account: they open the URL and enter the administrator-
-delivered client report password. Password replacement immediately invalidates
-existing client report browser sessions.
-
-The report contains only the client and contract names. Client and contract
-contact details remain internal. Currency is USD, timestamps are displayed in
-the configured IANA timezone, and stored timestamps remain UTC.
-
-[Back to top](#grayhaven-systems-llc-time-tracker)
-
-## Security
-
-The initial design includes SQLCipher encryption, Argon2id password hashing,
-TOTP, CSRF protection, concrete route permissions, secure response headers,
-request-size limits, abuse throttling, administrator reauthentication for
-credential rotation, single-use TOTP counters, fixed session lifetimes, session
-invalidation, trusted-host validation, and database-level integrity guards.
-TLS and reverse-proxy access controls remain deployment boundaries.
-
-See [Security Model](docs/security.md) for assumptions, controls, and known
-limitations. See [Operations](docs/operations.md) before backing up, restoring,
-or rotating the SQLCipher key.
+Local UAT defaults must not be reused for staging or production. Generate new
+secrets and start with a clean database when establishing a managed deployment.
 
 [Back to top](#grayhaven-systems-llc-time-tracker)
 
 ## Documentation
 
-- [Application Architecture](docs/architecture.md)
-- [Operations](docs/operations.md)
-- [Security Model](docs/security.md)
-- [Third-Party Notices](THIRD_PARTY_NOTICES.md)
+- [Application Architecture](docs/architecture.md): components, permissions,
+  time tracking, billing, reporting, and persistence.
+- [Configuration](docs/configuration.md): runtime settings, secrets, branding,
+  bootstrap users, and proxy integration.
+- [Operations](docs/operations.md): health checks, deployment, database
+  maintenance, backup and restore validation, and recovery procedures.
+- [Security](docs/security.md): trust boundaries, controls, and deployment
+  responsibilities.
 
 [Back to top](#grayhaven-systems-llc-time-tracker)
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, validation
-commands, and contribution guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, validation, and
+pull request requirements.
 
 [Back to top](#grayhaven-systems-llc-time-tracker)
 
 ## License
 
-[MIT](LICENSE)
+Copyright 2026 Grayhaven Systems LLC.
+
+Licensed under the [MIT License](LICENSE).
 
 [Back to top](#grayhaven-systems-llc-time-tracker)

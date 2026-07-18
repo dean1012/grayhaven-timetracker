@@ -42,7 +42,7 @@ password_hasher = PasswordHasher(
     salt_len=16,
     type=Type.ID,
 )
-dummy_password_hash = password_hasher.hash("Grayhaven-Dummy-Password-Hash-Only-000000!")
+dummy_password_hash = password_hasher.hash(secrets.token_urlsafe(48))
 
 P = ParamSpec("P")
 R = TypeVar("R")

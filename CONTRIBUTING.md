@@ -1,23 +1,21 @@
 # Contributing
 
-This document is intended for Grayhaven Systems LLC employees and assumes that
-the repository and local runtime branding have been configured appropriately.
+Thank you for your interest in improving `grayhaven-timetracker`.
 
-If you are not a Grayhaven Systems LLC employee, support and contributions are
-still welcome. The application remains organization-specific and may require
-adaptation outside Grayhaven's environment.
+The application is organization-specific. Development and local UI testing
+require separately supplied runtime branding, and deployment outside Grayhaven
+requires adaptation to the target environment.
 
 ## Table of Contents
 
 - [Development Setup](#development-setup)
-- [Workflow](#workflow)
-- [Local Validation](#local-validation)
+- [Validation](#validation)
 - [Pull Requests](#pull-requests)
 - [Documentation Guidelines](#documentation-guidelines)
 
 ## Development Setup
 
-Create and activate a Python 3.13 virtual environment:
+Create and activate a Python 3.12 or newer virtual environment:
 
 ```bash
 python3 -m venv .venv
@@ -38,24 +36,14 @@ locally.
 
 [Back to top](#contributing)
 
-## Workflow
-
-1. Create a GitHub issue.
-2. Create a focused feature branch for the issue.
-3. Sign all commits and reference the issue number.
-4. Validate changes locally.
-5. Create a pull request to the `main` branch for code review.
-
-[Back to top](#contributing)
-
-## Local Validation
+## Validation
 
 Run the same application checks used by CI:
 
 ```bash
 python3 -m pip_audit --progress-spinner off -r requirements.txt
 python3 -m compileall -q grayhaven_timetracker scripts tests
-mypy --strict grayhaven_timetracker scripts tests
+mypy --strict grayhaven_timetracker scripts
 ruff check grayhaven_timetracker scripts tests
 ruff format --check grayhaven_timetracker scripts tests
 python3 -m coverage run -m unittest discover -s tests -v
@@ -77,17 +65,17 @@ git diff --check
 ```
 
 Coverage includes line and branch measurement and fails below the 90% threshold
-in `pyproject.toml`, matching the established `jobright-export` policy. The
-engineering goal is to exercise every practical line, branch, error boundary,
-and permission path; new work should keep coverage near 99% rather than treating
-90% as the target. CI uploads `coverage.xml` to Codecov through GitHub Actions
-OIDC; no Codecov token is required.
+configured in `pyproject.toml`.
+
+CI generates `coverage.xml` and uploads it to Codecov using GitHub Actions OIDC
+authentication. No `CODECOV_TOKEN` repository secret is required. Project
+coverage checks and pull request comments are configured in `codecov.yml`.
 
 [Back to top](#contributing)
 
 ## Pull Requests
 
-Pull requests must:
+Create a focused feature branch for each change. Pull requests must:
 
 - Reference or close a GitHub issue as appropriate.
 - Contain signed commits.
@@ -96,13 +84,27 @@ Pull requests must:
 - Include tests for changed behavior and security boundaries.
 - Document operational or user-visible changes.
 
+Sign each commit so GitHub can verify its authorship:
+
+```bash
+git commit -S -m "<message> (Refs #<issue-number>)"
+```
+
+Dependabot checks Python packages, the container base image, and GitHub Actions
+weekly.
+
 [Back to top](#contributing)
 
 ## Documentation Guidelines
 
-Keep user-visible behavior in [README.md](README.md), architecture decisions in
-[Application Architecture](docs/architecture.md), and deployment procedures in
-[Operations](docs/operations.md). Add comments for non-obvious security
-boundaries and assumptions without restating routine code.
+Keep the project overview in [README.md](README.md), application structure in
+[Application Architecture](docs/architecture.md), runtime settings in
+[Configuration](docs/configuration.md), deployment procedures in
+[Operations](docs/operations.md), and trust boundaries in
+[Security](docs/security.md).
+
+Use Python docstrings for module, class, and function responsibilities. Add
+comments for non-obvious implementation decisions, security boundaries, and
+assumptions without restating routine code.
 
 [Back to top](#contributing)

@@ -180,11 +180,13 @@ class TimeEntry(Base):
             name="ck_time_entry_order",
         ),
         CheckConstraint(
-            "billing_status IN ('pending_invoice', 'invoiced', 'client_paid', 'disbursed')",
+            "billing_status IN "
+            "('pending_invoice', 'invoiced', 'client_paid', 'disbursed')",
             name="ck_time_entry_billing_status",
         ),
         CheckConstraint(
-            "stopped_at IS NULL OR billing_status = 'pending_invoice' OR invoice_number IS NOT NULL",
+            "stopped_at IS NULL OR billing_status = 'pending_invoice' "
+            "OR invoice_number IS NOT NULL",
             name="ck_time_entry_invoice_metadata",
         ),
         Index(

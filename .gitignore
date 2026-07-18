@@ -1,32 +1,57 @@
+# Local environment
+.env
+.env.*
+
+# VS Code
+.vscode/
+
+# Runtime data and private deployment inputs
+branding/
+data/
+instance/
+output/
+secrets/
+tmp/
+
+# Database and generated reports
+*.db
+*.db-*
+*.pdf
+*.sqlite3
+*.sqlite3-*
+
+# Logs
+*.log
+
+# Coverage data
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Ruff cache
+.ruff_cache/
+
+# Mypy cache
+.mypy_cache/
+
+# Pytest cache
+.pytest_cache/
+
+# Python bytecode and packaging
 __pycache__/
-*.py[cod]
 *.egg-info/
+*.pyc
+*.pyo
+*.pyd
+build/
+dist/
+
+# Python virtual environments
 .venv/
 venv/
 env/
 ENV/
-.env
-.env.*
-.vscode/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-instance/
-output/
-tmp/
-data/
-branding/
-secrets/
-coverage.xml
-.coverage.*
-*.sqlite3
-*.sqlite3-*
-*.db
-*.db-*
-*.pdf
-*.log
-.coverage
-htmlcov/
-dist/
-build/
+
+# Operating system metadata
 .DS_Store

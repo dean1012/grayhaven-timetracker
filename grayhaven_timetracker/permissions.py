@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import wraps
-from typing import ParamSpec, TypeVar, cast
+from typing import Any, ParamSpec, TypeVar, cast
 
 from flask import abort, redirect, request, session, url_for
 
@@ -110,7 +110,7 @@ def permission_required(permission: str) -> Callable[[Callable[P, R]], Callable[
         def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
             if current_user() is None:
                 next_path = request.full_path.rstrip("?")
-                login_values = {"next": next_path}
+                login_values: dict[str, Any] = {"next": next_path}
                 if session.get("auth_notice") in {
                     "privileges_updated",
                     "account_disabled",

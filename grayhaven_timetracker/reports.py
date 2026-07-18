@@ -172,7 +172,10 @@ def build_contract_report(
         .join(TimeEntry.task)
         .where(
             Task.contract_id == contract.id,
-            or_(TimeEntry.stopped_at.is_(None), TimeEntry.billing_status == "pending_invoice"),
+            or_(
+                TimeEntry.stopped_at.is_(None),
+                TimeEntry.billing_status == "pending_invoice",
+            ),
         )
         .options(
             joinedload(TimeEntry.user),
@@ -293,4 +296,3 @@ def build_client_report(
         total_seconds=sum(section.total_seconds for section in sections),
         total_cost=sum((section.total_cost for section in sections), Decimal(0)),
     )
-

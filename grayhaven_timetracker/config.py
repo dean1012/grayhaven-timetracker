@@ -108,9 +108,7 @@ def environment_config() -> dict[str, Any]:
     bootstrap_users = (
         None
         if skip_bootstrap
-        else _read_secret(
-            "BOOTSTRAP_USERS", required=False, allow_missing_file=True
-        )
+        else _read_secret("BOOTSTRAP_USERS", required=False, allow_missing_file=True)
     )
 
     return {

@@ -1,4 +1,4 @@
-"""SQLAlchemy and SQLCipher database lifecycle management for alpha builds."""
+"""SQLAlchemy and SQLCipher database lifecycle management."""
 
 from __future__ import annotations
 
@@ -85,11 +85,7 @@ def build_engine(path: Path, passphrase: str) -> Engine:
 
 
 def initialize_database(engine: Engine) -> None:
-    """Create the current alpha schema and install database integrity guards.
-
-    Before the 1.0 production release, reset alpha data before applying an
-    incompatible schema change.
-    """
+    """Create the current schema and install database integrity guards."""
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
         version = connection.execute(
@@ -102,8 +98,8 @@ def initialize_database(engine: Engine) -> None:
             )
         elif int(version) != CURRENT_SCHEMA_VERSION:
             raise DatabaseError(
-                "Unsupported database schema version; reset the alpha database "
-                "before starting this build"
+                "Unsupported database schema version; recreate the database "
+                "for this application build"
             )
         triggers = (
             """

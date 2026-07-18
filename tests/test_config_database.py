@@ -47,8 +47,8 @@ from grayhaven_timetracker.database import (
 from grayhaven_timetracker.models import (
     ApplicationMetadata,
     AuditEvent,
-    Subtask,
     SchemaVersion,
+    Subtask,
     Task,
     TimeEntry,
     User,
@@ -196,7 +196,9 @@ class ConfigurationTests(unittest.TestCase):
         with (
             patch.dict(os.environ, values, clear=True),
             patch("grayhaven_timetracker.config.Path.read_text", side_effect=OSError),
-            self.assertRaisesRegex(ConfigurationError, "Unable to read SECRET_KEY_FILE"),
+            self.assertRaisesRegex(
+                ConfigurationError, "Unable to read SECRET_KEY_FILE"
+            ),
         ):
             environment_config()
 
@@ -333,7 +335,9 @@ class ConfigurationTests(unittest.TestCase):
 
 class DatabaseAndModelTests(AppTestCase):
     def test_report_duration_and_empty_cost_allocation_boundaries(self) -> None:
-        self.assertEqual(duration_seconds(datetime(2026, 7, 15, 1), datetime(2026, 7, 15, 0)), 0)
+        self.assertEqual(
+            duration_seconds(datetime(2026, 7, 15, 1), datetime(2026, 7, 15, 0)), 0
+        )
         self.assertEqual(allocate_session_costs([], 5_500), ())
 
     def test_database_schema_version_is_recorded(self) -> None:
@@ -351,7 +355,9 @@ class DatabaseAndModelTests(AppTestCase):
                 text("UPDATE schema_version SET version = :version WHERE id = 1"),
                 {"version": CURRENT_SCHEMA_VERSION - 1},
             )
-        with self.assertRaisesRegex(DatabaseError, "Unsupported database schema version"):
+        with self.assertRaisesRegex(
+            DatabaseError, "Unsupported database schema version"
+        ):
             initialize_database(self.app.extensions["database_engine"])
 
     def test_sql_literal_escapes_quotes_and_rejects_nul(self) -> None:
@@ -576,7 +582,9 @@ class BootstrapTests(AppTestCase):
             database.delete(admin)
             database.flush()
             outcomes = reconcile_bootstrap_users(self.app, database)
-            self.assertEqual([item.outcome for item in outcomes], ["created", "created"])
+            self.assertEqual(
+                [item.outcome for item in outcomes], ["created", "created"]
+            )
 
         manifest[0]["first_name"] = "Changed"
         manifest.append(
@@ -597,7 +605,9 @@ class BootstrapTests(AppTestCase):
             assert first_admin is not None
             self.assertEqual(first_admin.first_name, "First")
             self.assertIsNone(
-                database.scalar(select(User).where(User.email == "ignored@example.invalid"))
+                database.scalar(
+                    select(User).where(User.email == "ignored@example.invalid")
+                )
             )
 
             first_admin.password_hash = hash_password(
@@ -617,7 +627,9 @@ class BootstrapTests(AppTestCase):
             self.assertEqual(first_admin.password_hash, changed_hash)
             self.assertEqual(first_admin.totp_secret, changed_totp)
 
-    def test_bootstrap_validation_rejects_invalid_password_hash_parameters(self) -> None:
+    def test_bootstrap_validation_rejects_invalid_password_hash_parameters(
+        self,
+    ) -> None:
         with self.assertRaisesRegex(ConfigurationError, "valid Argon2 hash"):
             _validate_password_hash("not-a-hash", "password_hash")
         weak_hash = PasswordHasher(time_cost=1, memory_cost=1024, parallelism=1).hash(
