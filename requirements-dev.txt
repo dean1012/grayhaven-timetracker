@@ -1,5 +1,5 @@
 coverage==7.15.2
-mypy==2.2.0
+mypy==2.3.0
 pip-audit==2.10.1
 ruff==0.15.21
 yamllint==1.38.0
