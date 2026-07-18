@@ -15,6 +15,7 @@ from sqlcipher3 import dbapi2 as sqlcipher
 from .models import Base
 
 SQLITE_HEADER = b"SQLite format 3\x00"
+CURRENT_SCHEMA_VERSION = 1
 
 
 class DatabaseError(RuntimeError):
@@ -91,6 +92,19 @@ def initialize_database(engine: Engine) -> None:
     """
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
+        version = connection.execute(
+            text("SELECT version FROM schema_version WHERE id = 1")
+        ).scalar_one_or_none()
+        if version is None:
+            connection.execute(
+                text("INSERT INTO schema_version (id, version) VALUES (1, :version)"),
+                {"version": CURRENT_SCHEMA_VERSION},
+            )
+        elif int(version) != CURRENT_SCHEMA_VERSION:
+            raise DatabaseError(
+                "Unsupported database schema version; reset the alpha database "
+                "before starting this build"
+            )
         triggers = (
             """
             CREATE TRIGGER IF NOT EXISTS time_entry_subtask_insert_guard

@@ -625,6 +625,14 @@ def require_active_contract(contract: Contract) -> None:
         abort(409, "Activate the contract before changing its work data.")
 
 
+def require_pending_sessions_for_deletion(statement: Any) -> None:
+    """Prevent destructive parent deletes from bypassing session immutability."""
+    if get_session().scalar(
+        statement.where(TimeEntry.billing_status != "pending_invoice")
+    ):
+        abort(409, "Return all finalized sessions to Pending Invoice before deleting this data.")
+
+
 def get_or_404(model: type[Any], identifier: int) -> Any:
     item = get_session().get(model, identifier)
     if item is None:
@@ -1232,6 +1240,12 @@ def delete_client(client_id: int) -> Any:
     """Delete a client and dependent work data after administrator reauthentication."""
     database = get_session()
     item = cast(Client, get_or_404(Client, client_id))
+    require_pending_sessions_for_deletion(
+        select(TimeEntry.id)
+        .join(TimeEntry.task)
+        .join(Task.contract)
+        .where(Contract.client_id == item.id)
+    )
     actor = cast(User, current_user())
     confirmation = {
         "eyebrow": "DELETE CLIENT",
@@ -1500,6 +1514,9 @@ def delete_contract(contract_id: int) -> Any:
     database = get_session()
     item = cast(Contract, get_or_404(Contract, contract_id))
     require_active_contract(item)
+    require_pending_sessions_for_deletion(
+        select(TimeEntry.id).join(TimeEntry.task).where(Task.contract_id == item.id)
+    )
     actor = cast(User, current_user())
     client_id = item.client_id
     client_name = item.client.name
@@ -1811,6 +1828,9 @@ def delete_task(task_id: int) -> Any:
     database = get_session()
     task = cast(Task, get_or_404(Task, task_id))
     require_active_contract(task.contract)
+    require_pending_sessions_for_deletion(
+        select(TimeEntry.id).where(TimeEntry.task_id == task.id)
+    )
     actor = cast(User, current_user())
     if not actor.is_admin:
         abort(403)
@@ -1874,6 +1894,9 @@ def delete_subtask(subtask_id: int) -> Any:
     database = get_session()
     subtask = cast(Subtask, get_or_404(Subtask, subtask_id))
     require_active_contract(subtask.task.contract)
+    require_pending_sessions_for_deletion(
+        select(TimeEntry.id).where(TimeEntry.subtask_id == subtask.id)
+    )
     actor = cast(User, current_user())
     if not actor.is_admin:
         abort(403)

@@ -232,6 +232,16 @@ class ApplicationMetadata(Base):
     value: Mapped[str] = mapped_column(Text)
 
 
+class SchemaVersion(Base):
+    """Singleton marker for the database schema used by this application build."""
+
+    __tablename__ = "schema_version"
+    __table_args__ = (CheckConstraint("id = 1", name="ck_schema_version_singleton"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class AuditEvent(Base):
     """Immutable, display-safe record of a user, public, or system action."""
 
