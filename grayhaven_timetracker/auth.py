@@ -194,7 +194,7 @@ def reset_totp_replay_state(database: Session, user_id: int) -> None:
 
 def provisioning_uri(user: User, secret: str) -> str:
     return pyotp.TOTP(secret).provisioning_uri(
-        name=user.email, issuer_name="Grayhaven Systems LLC Time Tracker"
+        name="Grayhaven Systems LLC Time Tracker", issuer_name="Grayhaven Systems LLC"
     )
 
 
