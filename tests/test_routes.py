@@ -12,6 +12,7 @@ from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 import pyotp
+from flask import g
 from argon2 import PasswordHasher
 from sqlalchemy import func, select, text
 
@@ -312,6 +313,16 @@ class SecurityAndErrorRouteTests(AppTestCase):
         health = self.client.get("/health")
         self.assertEqual(health.json, {"status": "ok"})
         self.assertEqual(health.headers["Cache-Control"], "no-store")
+        live = self.client.get("/login", headers={"X-Grayhaven-Live-Refresh": "1"})
+        self.assertIsNotNone(live.headers.get("ETag"))
+        unchanged = self.client.get(
+            "/login",
+            headers={
+                "X-Grayhaven-Live-Refresh": "1",
+                "If-None-Match": live.headers["ETag"],
+            },
+        )
+        self.assertEqual(unchanged.status_code, 304)
         self.assertEqual(self.client.get("/missing").status_code, 404)
         self.assertEqual(self.client.post("/health").status_code, 405)
         self.app.config["TRUSTED_HOSTS"] = ["example.invalid"]
@@ -374,6 +385,86 @@ class AuditRouteTests(AppTestCase):
             side_effect=RuntimeError("simulated audit storage failure"),
         ):
             self.assertEqual(self.client.get("/").status_code, 200)
+
+    def test_audit_details_include_readable_labels_and_ignore_empty_changes(self) -> None:
+        self.login()
+        seed = self.seed_contract()
+        with self.app.test_request_context("/"):
+            with session_scope(self.app) as database:
+                g.database_session = database
+                routes.audit("empty_change", actor_id=1, changes={})
+                routes.audit(
+                    "label_detail_test",
+                    actor_id=1,
+                    client_id=seed.client_id,
+                    contract_id=9999,
+                    task_id=seed.task_id,
+                    time_entry_id=seed.entry_id,
+                    source_ip="192.0.2.10",
+                )
+        with session_scope(self.app) as database:
+            event = database.scalar(
+                select(AuditEvent)
+                .where(AuditEvent.event == "label_detail_test")
+                .order_by(AuditEvent.id.desc())
+            )
+            assert event is not None
+            self.assertEqual(event.details["client"], f"Pellera (ID: {seed.client_id})")
+            self.assertEqual(event.details["contract"], "Deleted record (ID: 9999)")
+            self.assertEqual(event.details["time_entry"], f"Time entry (ID: {seed.entry_id})")
+            self.assertEqual(event.ip_address, "192.0.2.10")
+
+    def test_stale_parent_helpers_resolve_matching_audit_details(self) -> None:
+        self.login()
+        seed = self.seed_contract()
+        with self.app.test_request_context("/"):
+            with session_scope(self.app) as database:
+                g.database_session = database
+                record_audit_event(
+                    database,
+                    "contract_deleted",
+                    source="admin",
+                    details={"contract": "Missing Parent (ID: 699)"},
+                )
+                record_audit_event(
+                    database,
+                    "contract_deleted",
+                    source="admin",
+                    details={
+                        "contract": f"Deleted Contract (ID: 700)",
+                        "client": f"Pellera (ID: {seed.client_id})",
+                    },
+                )
+                record_audit_event(
+                    database,
+                    "time_entry_created",
+                    source="admin",
+                    details={"time entry": "Missing Parent (ID: 700)"},
+                )
+                record_audit_event(
+                    database,
+                    "time_entry_created",
+                    source="admin",
+                    details={
+                        "time entry": "Time entry (ID: 701)",
+                        "contract": f"Hamilton Beach (ID: {seed.contract_id})",
+                    },
+                )
+                self.assertEqual(
+                    routes.deleted_resource_parent_id(
+                        ("contract_deleted",), "contract", 700, "client"
+                    ),
+                    seed.client_id,
+                )
+                self.assertEqual(
+                    routes.created_resource_parent_id("time entry", 701, "contract"),
+                    seed.contract_id,
+                )
+                self.assertIsNone(
+                    routes.deleted_resource_parent_id(
+                        ("contract_deleted",), "contract", 999, "client"
+                    )
+                )
 
     def test_admin_can_filter_and_paginate_append_only_audit_history(self) -> None:
         self.login()
@@ -465,6 +556,10 @@ class ClientContractTaskRouteTests(AppTestCase):
         self.login()
 
     def test_report_password_confirmation_is_one_time_and_expires(self) -> None:
+        with self.assertRaises(ValueError):
+            routes.ReportPasswordConfirmationStore(ttl_seconds=0)
+        with self.assertRaises(ValueError):
+            routes.ReportPasswordConfirmationStore(maximum_items=0)
         store = routes.ReportPasswordConfirmationStore(ttl_seconds=120)
         token = store.issue(
             actor_user_id=1,
@@ -479,6 +574,15 @@ class ClientContractTaskRouteTests(AppTestCase):
             "Temporary-Report-Password-For-Test-0001!",
         )
         self.assertIsNone(store.consume(token, actor_user_id=1, client_id=2, now=1_119))
+        mismatch_token = store.issue(
+            actor_user_id=1,
+            client_id=2,
+            report_password="Mismatch-Report-Password-For-Test-0001!",
+            now=1_200,
+        )
+        self.assertIsNone(
+            store.consume(mismatch_token, actor_user_id=9, client_id=2, now=1_201)
+        )
 
         expired_token = store.issue(
             actor_user_id=1,
@@ -489,6 +593,93 @@ class ClientContractTaskRouteTests(AppTestCase):
         self.assertIsNone(
             store.consume(expired_token, actor_user_id=1, client_id=2, now=2_120)
         )
+
+        bounded = routes.ReportPasswordConfirmationStore(ttl_seconds=120, maximum_items=1)
+        first = bounded.issue(
+            actor_user_id=1,
+            client_id=1,
+            report_password="First-Report-Password-For-Test-0001!",
+            now=3_000,
+        )
+        second = bounded.issue(
+            actor_user_id=1,
+            client_id=1,
+            report_password="Second-Report-Password-For-Test-0001!",
+            now=3_001,
+        )
+        self.assertIsNone(bounded.consume(first, actor_user_id=1, client_id=1, now=3_002))
+        self.assertIsNotNone(
+            bounded.consume(second, actor_user_id=1, client_id=1, now=3_002)
+        )
+        discarded = bounded.issue(
+            actor_user_id=1,
+            client_id=1,
+            report_password="Discarded-Report-Password-For-Test-0001!",
+            now=3_100,
+        )
+        bounded._discard(discarded)
+        self.assertIsNone(
+            bounded.consume(discarded, actor_user_id=1, client_id=1, now=3_101)
+        )
+        collision_store = routes.ReportPasswordConfirmationStore()
+        with patch(
+            "grayhaven_timetracker.routes.secrets.token_urlsafe",
+            side_effect=["collision", "collision", "replacement"],
+        ):
+            collision_store.issue(
+                actor_user_id=1,
+                client_id=1,
+                report_password="Collision-Report-Password-For-Test-0001!",
+                now=4_000,
+            )
+            replacement = collision_store.issue(
+                actor_user_id=1,
+                client_id=1,
+                report_password="Replacement-Report-Password-For-Test-0001!",
+                now=4_001,
+            )
+        self.assertEqual(replacement, "replacement")
+
+    def test_assignment_and_overlap_helpers_accept_good_and_reject_bad_values(self) -> None:
+        seed = self.seed_contract()
+        with self.app.test_request_context("/"):
+            with session_scope(self.app) as database:
+                g.database_session = database
+                task, subtask = routes.parse_assignment(
+                    f"{seed.task_id}:{seed.subtask_id}", seed.contract_id
+                )
+                self.assertEqual(task.id, seed.task_id)
+                assert subtask is not None
+                self.assertEqual(subtask.id, seed.subtask_id)
+                for value in ("bad", "9999", f"{seed.task_id}:9999"):
+                    with self.subTest(value=value), self.assertRaises(ValueError):
+                        routes.parse_assignment(value, seed.contract_id)
+                self.assertTrue(
+                    routes.time_entry_overlaps(
+                        1,
+                        datetime(2026, 7, 15, 1, 45),
+                        datetime(2026, 7, 15, 2, 0),
+                    )
+                )
+                self.assertFalse(
+                    routes.time_entry_overlaps(
+                        1,
+                        datetime(2026, 7, 15, 1, 30),
+                        datetime(2026, 7, 15, 2, 37),
+                        exclude_entry_id=seed.entry_id,
+                    )
+                )
+                user = database.get(User, 1)
+                assert user is not None
+                g.current_user = user
+                entry = database.get(TimeEntry, seed.entry_id)
+                assert entry is not None
+                self.assertTrue(
+                    routes.time_entry_allowed(
+                        entry, "time_entry:view_own", "time_entry:view_any"
+                    )
+                )
+                self.assertIsNone(routes.active_time_entry_for_current_user())
 
     def test_client_and_contract_creation_validation_and_display(self) -> None:
         self.assertEqual(self.client.get("/").status_code, 200)
@@ -508,6 +699,21 @@ class ClientContractTaskRouteTests(AppTestCase):
         )
         self.assertEqual(created.status_code, 302)
         self.assertIn(b"/clients/", created.headers["Location"].encode())
+        duplicate = self.client.post(
+            "/clients/new",
+            data={
+                "name": "client one",
+                "contact_name": "Another Contact",
+                "contact_email": "another@example.invalid",
+            },
+        )
+        self.assertEqual(duplicate.status_code, 400)
+        anonymous = self.app.test_client()
+        self.assertEqual(anonymous.get("/shared/reports/short").status_code, 404)
+        self.assertEqual(
+            anonymous.get(f"/shared/reports/{'A' * 32}").status_code,
+            404,
+        )
         with session_scope(self.app) as database:
             client = database.scalar(select(Client).where(Client.name == "Client One"))
             assert client is not None
@@ -750,6 +956,9 @@ class ClientContractTaskRouteTests(AppTestCase):
             ).status_code,
             302,
         )
+        stale_subtask = self.client.get(f"/subtasks/{child_id}/delete")
+        self.assertEqual(stale_subtask.status_code, 302)
+        self.assertIn(f"/contracts/{seed.contract_id}", stale_subtask.location)
         self.assertEqual(
             self.client.post(
                 f"/tasks/{unused_id}/delete",
@@ -760,6 +969,9 @@ class ClientContractTaskRouteTests(AppTestCase):
             ).status_code,
             302,
         )
+        stale_task = self.client.get(f"/tasks/{unused_id}/delete")
+        self.assertEqual(stale_task.status_code, 302)
+        self.assertIn(f"/contracts/{seed.contract_id}", stale_task.location)
         self.assertEqual(
             self.client.post(
                 f"/tasks/{seed.task_id}/delete",
@@ -770,6 +982,9 @@ class ClientContractTaskRouteTests(AppTestCase):
             ).status_code,
             302,
         )
+        stale_task = self.client.get(f"/tasks/{seed.task_id}/delete")
+        self.assertEqual(stale_task.status_code, 302)
+        self.assertIn(f"/contracts/{seed.contract_id}", stale_task.location)
         with session_scope(self.app) as database:
             self.assertIsNone(database.get(Task, seed.task_id))
             self.assertIsNone(database.get(Subtask, seed.subtask_id))
@@ -809,6 +1024,9 @@ class ClientContractTaskRouteTests(AppTestCase):
             ).status_code,
             302,
         )
+        stale_contract = self.client.get(f"/contracts/{seed.contract_id}/delete")
+        self.assertEqual(stale_contract.status_code, 302)
+        self.assertIn(f"/clients/{seed.client_id}", stale_contract.location)
         with session_scope(self.app) as database:
             self.assertIsNone(database.get(Contract, seed.contract_id))
             self.assertIsNone(database.get(TimeEntry, seed.entry_id))
@@ -1233,6 +1451,22 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             assert user and entry
             self.assertFalse(user.is_enabled)
             self.assertIsNotNone(entry.stopped_at)
+        self.assertEqual(self.client.get(f"/users/{user_id}/toggle-enabled").status_code, 200)
+        self.assertEqual(self.client.get(f"/users/{user_id}/toggle-admin").status_code, 200)
+        self.assertEqual(
+            self.client.post(
+                f"/users/{user_id}/toggle-enabled",
+                data={"current_password": "wrong"},
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.post(
+                f"/users/{user_id}/toggle-admin",
+                data={"current_password": "wrong"},
+            ).status_code,
+            400,
+        )
         self.assertEqual(
             self.client.post(
                 f"/users/{user_id}/toggle-enabled",
@@ -1305,6 +1539,39 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             },
         )
         self.assertEqual(managed_email_change.status_code, 302)
+
+    def test_admin_can_disable_another_users_totp_with_reauthentication(self) -> None:
+        target = self.create_user(
+            email="totp-target@example.invalid",
+            first_name="TOTP",
+            last_name="Target",
+            totp_secret="KRSXG5DSNFXGOIDB",
+        )
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.totp_secret = None
+            reset_totp_replay_state(database, admin.id)
+        disable_url = f"/users/{target.id}/disable-totp"
+        self.assertEqual(self.client.post("/users/1/disable-totp").status_code, 409)
+        self.assertEqual(self.client.get(disable_url).status_code, 200)
+        self.assertEqual(
+            self.client.post(
+                disable_url,
+                data={"current_password": "wrong"},
+            ).status_code,
+            400,
+        )
+        disabled = self.client.post(
+            disable_url,
+            data={"current_password": ADMIN_PASSWORD},
+        )
+        self.assertEqual(disabled.status_code, 302)
+        with session_scope(self.app) as database:
+            user = database.get(User, target.id)
+            assert user is not None
+            self.assertIsNone(user.totp_secret)
+        self.assertEqual(self.client.get(disable_url).status_code, 302)
 
     def test_admin_password_reset_requires_change_and_preserves_totp(self) -> None:
         original_password = "Recovery-User-Original-Password-0001!"
@@ -1526,11 +1793,39 @@ class ReportAndSessionRouteTests(AppTestCase):
             assert client is not None
             client.report_password_hash = routes.hash_password(report_password)
             client.report_password_version += 1
+        bad_client = self.app.test_client()
+        routes.shared_report_limiter = LoginLimiter(limit=1)
+        self.assertEqual(
+            bad_client.post(
+                f"/shared/reports/{token}", data={"report_password": "wrong"}
+            ).status_code,
+            401,
+        )
+        self.assertEqual(
+            bad_client.post(
+                f"/shared/reports/{token}", data={"report_password": "wrong"}
+            ).status_code,
+            429,
+        )
+        routes.shared_report_limiter = LoginLimiter()
         self.assertEqual(
             anonymous.post(
                 f"/shared/reports/{token}", data={"report_password": report_password}
             ).status_code,
             302,
+        )
+        shared = anonymous.get(f"/shared/reports/{token}")
+        self.assertEqual(shared.status_code, 200)
+        self.assertIn(b"Live Client Report", shared.data)
+        live = anonymous.get(f"/shared/reports/{token}/live")
+        self.assertEqual(live.status_code, 200)
+        live_etag = live.headers["ETag"]
+        self.assertEqual(
+            anonymous.get(
+                f"/shared/reports/{token}/live",
+                headers={"If-None-Match": live_etag},
+            ).status_code,
+            304,
         )
         self.assertEqual(
             self.client.post(f"/clients/{self.seed.client_id}/report-link").status_code,
@@ -1542,6 +1837,20 @@ class ReportAndSessionRouteTests(AppTestCase):
         status_url = f"/sessions/{self.seed.entry_id}/status"
         self.assertEqual(self.client.get(status_url).status_code, 200)
 
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            reset_totp_replay_state(database, admin.id)
+        invalid_status = self.client.post(
+            status_url,
+            data={
+                "billing_status": "invalid",
+                "correction_reason": "Reject invalid status",
+                "current_password": ADMIN_PASSWORD,
+                "totp_digit": list(pyotp.TOTP(ADMIN_TOTP_SECRET).now()),
+            },
+        )
+        self.assertEqual(invalid_status.status_code, 400)
         with session_scope(self.app) as database:
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
             assert admin is not None
@@ -1570,6 +1879,9 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         self.assertEqual(
             self.client.post(f"/sessions/{self.seed.entry_id}/delete").status_code, 409
+        )
+        self.assertEqual(
+            self.client.get(f"/tasks/{self.seed.task_id}/delete").status_code, 409
         )
 
         with session_scope(self.app) as database:
@@ -1601,6 +1913,198 @@ class ReportAndSessionRouteTests(AppTestCase):
             self.assertEqual(details["changes"]["Status"]["to"], "Pending Invoice")
             self.assertEqual(details["correction_reason"], "Correct invoice assignment")
 
+    def test_admin_can_update_and_delete_a_pending_session_with_reason(self) -> None:
+        self.login()
+        edit_url = f"/sessions/{self.seed.entry_id}/edit"
+        redirected = self.client.get(edit_url)
+        self.assertEqual(redirected.status_code, 302)
+        self.assertIn("original_contract_id", redirected.location)
+        self.assertEqual(
+            self.client.get(f"{edit_url}?original_contract_id=invalid").status_code,
+            404,
+        )
+        moved = self.client.get(f"{edit_url}?original_contract_id=9999")
+        self.assertEqual(moved.status_code, 302)
+        self.assertIn("stale=time_entry_moved", moved.location)
+        with session_scope(self.app) as database:
+            task = database.get(Task, self.seed.other_task_id)
+            assert task is not None
+            active = TimeEntry(
+                user_id=self.user.id,
+                task=task,
+                started_at=datetime.now(),
+            )
+            database.add(active)
+            database.flush()
+            active_id = active.id
+        self.assertEqual(self.client.get(f"/sessions/{active_id}/edit").status_code, 409)
+        self.assertEqual(
+            self.client.get(f"/sessions/{active_id}/delete").status_code,
+            409,
+        )
+        with session_scope(self.app) as database:
+            database.delete(database.get(TimeEntry, active_id))
+        invalid_update = self.client.post(
+            f"{edit_url}?original_contract_id={self.seed.contract_id}",
+            data={
+                "user_id": "9999",
+                "client_id": str(self.seed.client_id),
+                "contract_id": str(self.seed.contract_id),
+                "assignment": str(self.seed.task_id),
+                "started_at": "2026-07-15T08:00:00",
+                "stopped_at": "2026-07-15T09:00:00",
+                "correction_reason": "Reject invalid reassignment",
+            },
+        )
+        self.assertEqual(invalid_update.status_code, 400)
+        update = self.client.post(
+            f"{edit_url}?original_contract_id={self.seed.contract_id}",
+            data={
+                "user_id": "1",
+                "client_id": str(self.seed.client_id),
+                "contract_id": str(self.seed.contract_id),
+                "assignment": str(self.seed.task_id),
+                "started_at": "2026-07-15T08:00:00",
+                "stopped_at": "2026-07-15T09:00:00",
+                "correction_reason": "Correct pending session timing",
+            },
+        )
+        self.assertEqual(update.status_code, 302)
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.totp_secret = None
+        delete_url = f"/sessions/{self.seed.entry_id}/delete"
+        self.assertEqual(self.client.get(delete_url).status_code, 200)
+        self.assertEqual(
+            self.client.post(
+                delete_url,
+                data={"current_password": ADMIN_PASSWORD},
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.post(
+                delete_url,
+                data={
+                    "current_password": "wrong",
+                    "correction_reason": "Reject invalid delete",
+                },
+            ).status_code,
+            400,
+        )
+        deleted = self.client.post(
+            delete_url,
+            data={
+                "current_password": ADMIN_PASSWORD,
+                "correction_reason": "Remove corrected test session",
+            },
+        )
+        self.assertEqual(deleted.status_code, 302)
+        with session_scope(self.app) as database:
+            self.assertIsNone(database.get(TimeEntry, self.seed.entry_id))
+
+    def test_my_sessions_lists_pending_and_finalized_rows_with_pagination(self) -> None:
+        self.login()
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            task = database.get(Task, self.seed.other_task_id)
+            assert admin is not None and task is not None
+            database.add_all(
+                [
+                    TimeEntry(
+                        user=admin,
+                        task=task,
+                        started_at=datetime(2026, 7, 10, 8, 0),
+                        stopped_at=datetime(2026, 7, 10, 9, 0),
+                    ),
+                    TimeEntry(
+                        user=admin,
+                        task=task,
+                        started_at=datetime(2026, 7, 11, 8, 0),
+                        stopped_at=datetime(2026, 7, 11, 9, 0),
+                        billing_status="invoiced",
+                        invoice_number="INV-100",
+                        invoice_date=date(2026, 7, 11),
+                    ),
+                    TimeEntry(
+                        user=admin,
+                        task=task,
+                        started_at=datetime(2026, 7, 12, 8, 0),
+                        stopped_at=datetime(2026, 7, 12, 9, 0),
+                        billing_status="client_paid",
+                        invoice_number="INV-101",
+                        invoice_date=date(2026, 7, 12),
+                        client_paid_date=date(2026, 7, 13),
+                    ),
+                    TimeEntry(
+                        user=admin,
+                        task=task,
+                        started_at=datetime(2026, 7, 13, 8, 0),
+                        billing_status="disbursed",
+                        invoice_number="INV-102",
+                        invoice_date=date(2026, 7, 13),
+                        client_paid_date=date(2026, 7, 14),
+                        disbursement_date=date(2026, 7, 15),
+                        transaction_number="TX-102",
+                    ),
+                ]
+            )
+        page = self.client.get("/sessions")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"My Sessions", page.data)
+        self.assertIn(b"Pending Invoice", page.data)
+        self.assertIn(b"Invoiced", page.data)
+        self.assertIn(b"Client Paid", page.data)
+        self.assertIn(b"Disbursed", page.data)
+        for query in ("page=invalid", "finalized_page=invalid", "page=0"):
+            with self.subTest(query=query):
+                self.assertEqual(self.client.get(f"/sessions?{query}").status_code, 400)
+        redirected = self.client.get("/sessions?page=99&finalized_page=99")
+        self.assertEqual(redirected.status_code, 302)
+        self.assertIn("/sessions?page=1", redirected.location)
+
+    def test_session_assignment_apis_reject_missing_or_archived_resources(self) -> None:
+        self.login()
+        contracts = self.client.get(f"/api/clients/{self.seed.client_id}/contracts")
+        self.assertEqual(contracts.status_code, 200)
+        self.assertEqual(contracts.json[0]["id"], self.seed.contract_id)
+        assignments = self.client.get(
+            f"/api/contracts/{self.seed.contract_id}/assignments"
+        )
+        self.assertEqual(assignments.status_code, 200)
+        self.assertEqual(assignments.json[0]["name"], "Discovery")
+        self.assertEqual(self.client.get("/api/contracts/9999/assignments").status_code, 404)
+        with session_scope(self.app) as database:
+            contract = database.get(Contract, self.seed.contract_id)
+            assert contract is not None
+            contract.archived_at = datetime.now()
+        self.assertEqual(
+            self.client.get(
+                f"/api/contracts/{self.seed.contract_id}/assignments"
+            ).status_code,
+            409,
+        )
+
+    def test_shared_report_cookie_rejects_tampering_and_version_changes(self) -> None:
+        seed = self.seed
+        with session_scope(self.app) as database:
+            client = database.get(Client, seed.client_id)
+            assert client is not None
+        with self.app.test_request_context("/"):
+            response = self.app.response_class()
+            routes.set_shared_report_cookie(response, client)
+            cookie = response.headers["Set-Cookie"].split(";", 1)[0]
+        with self.app.test_request_context("/", headers={"Cookie": cookie}):
+            self.assertTrue(routes.shared_report_cookie_allowed(client))
+        with self.app.test_request_context(
+            "/", headers={"Cookie": f"{cookie}tampered"}
+        ):
+            self.assertFalse(routes.shared_report_cookie_allowed(client))
+        client.report_password_version += 1
+        with self.app.test_request_context("/", headers={"Cookie": cookie}):
+            self.assertFalse(routes.shared_report_cookie_allowed(client))
+
     def test_archiving_contract_stops_timers_and_disables_operations(self) -> None:
         self.login()
         with session_scope(self.app) as database:
@@ -1614,6 +2118,20 @@ class ReportAndSessionRouteTests(AppTestCase):
             reset_totp_replay_state(database, admin.id)
 
         archive_url = f"/contracts/{self.seed.contract_id}/archive"
+        routes.sensitive_action_limiter = LoginLimiter(limit=1)
+        rejected = self.client.post(
+            archive_url,
+            data={"current_password": "wrong-password", "totp": "000000"},
+        )
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(
+            self.client.post(
+                archive_url,
+                data={"current_password": "wrong-password", "totp": "000000"},
+            ).status_code,
+            429,
+        )
+        routes.sensitive_action_limiter = LoginLimiter()
         archived = self.client.post(
             archive_url,
             data={
@@ -1658,7 +2176,7 @@ class ReportAndSessionRouteTests(AppTestCase):
     @unittest.skip(
         "Legacy expiration and rotation assertions replaced by permanent links"
     )
-    def test_live_client_report_links_are_private_rotatable_and_revocable(
+    def _obsolete_legacy_report_expiration_and_rotation_test(
         self,
     ) -> None:
         self.login()
@@ -2029,6 +2547,22 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertEqual(future.status_code, 400)
 
         self.login()
+        self.assertEqual(
+            self.client.get(
+                f"/contracts/{self.seed.contract_id}/sessions?page=invalid"
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.get(f"/contracts/{self.seed.contract_id}/sessions?page=0").status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.get(
+                f"/contracts/{self.seed.contract_id}/sessions?page=99"
+            ).status_code,
+            302,
+        )
         for invalid_user_id in ("invalid", "9999"):
             with self.subTest(invalid_user_id=invalid_user_id):
                 self.assertEqual(

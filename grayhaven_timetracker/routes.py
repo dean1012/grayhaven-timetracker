@@ -177,11 +177,11 @@ class ReportPasswordConfirmationStore:
         self._items: OrderedDict[str, ReportPasswordConfirmation] = OrderedDict()
         self._lock = Lock()
 
-    def _prune(self, current: float) -> None:
+    def _prune(self, current: float, *, enforce_limit: bool = False) -> None:
         for token, item in list(self._items.items()):
             if item.expires_at <= current:
                 del self._items[token]
-        while len(self._items) >= self.maximum_items:
+        while enforce_limit and len(self._items) >= self.maximum_items:
             self._items.popitem(last=False)
 
     def _discard(self, token: str) -> None:
@@ -200,7 +200,7 @@ class ReportPasswordConfirmationStore:
         """Store a password briefly and return an unrelated session nonce."""
         current = now if now is not None else now_utc_timestamp()
         with self._lock:
-            self._prune(current)
+            self._prune(current, enforce_limit=True)
             token = secrets.token_urlsafe(32)
             while token in self._items:
                 token = secrets.token_urlsafe(32)

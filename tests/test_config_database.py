@@ -571,7 +571,7 @@ class BootstrapTests(AppTestCase):
             self.assertEqual(first_admin.totp_secret, changed_totp)
 
     @unittest.skip("Bootstrap is now one-time first-install provisioning")
-    def test_unchanged_bootstrap_preserves_in_app_authentication_changes(self) -> None:
+    def _obsolete_bootstrap_reconciliation_test(self) -> None:
         replacement = hash_password("Replacement-In-App-Password-0001!")
         with session_scope(self.app) as database:
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
@@ -587,7 +587,7 @@ class BootstrapTests(AppTestCase):
             self.assertEqual(result[0].outcome, "unchanged")
 
     @unittest.skip("Bootstrap is now one-time first-install provisioning")
-    def test_changed_bootstrap_totp_updates_but_password_hash_is_initial_only(
+    def _obsolete_bootstrap_totp_reconciliation_test(
         self,
     ) -> None:
         new_password = "Updated-Bootstrap-Password-0001!"
@@ -610,7 +610,7 @@ class BootstrapTests(AppTestCase):
             self.assertEqual(result[0].outcome, "updated")
 
     @unittest.skip("Bootstrap is now one-time first-install provisioning")
-    def test_manifest_creates_another_administrator(self) -> None:
+    def _obsolete_bootstrap_additional_user_test(self) -> None:
         manifest = self.bootstrap_manifest()
         manifest.append(
             {
@@ -630,7 +630,7 @@ class BootstrapTests(AppTestCase):
             self.assertEqual(result[1].outcome, "created")
 
     @unittest.skip("Bootstrap is now one-time first-install provisioning")
-    def test_manifest_without_totp_creates_admin_and_preserves_in_app_setup(
+    def _obsolete_bootstrap_totp_setup_test(
         self,
     ) -> None:
         manifest = self.bootstrap_manifest()
@@ -668,7 +668,7 @@ class BootstrapTests(AppTestCase):
             self.assertEqual(admin.totp_secret, enrolled_secret)
 
     @unittest.skip("Bootstrap is now one-time first-install provisioning")
-    def test_manifest_bootstrap_creates_admin_and_standard_user(self) -> None:
+    def _obsolete_bootstrap_managed_user_test(self) -> None:
         user_secret = pyotp.random_base32()
         self.app.config.update(
             {
@@ -794,7 +794,7 @@ class BootstrapTests(AppTestCase):
                 reconcile_bootstrap_users(self.app, database)
 
     @unittest.skip("Bootstrap metadata reconciliation was removed")
-    def test_manifest_bootstrap_recovers_missing_or_malformed_metadata(self) -> None:
+    def _obsolete_bootstrap_metadata_test(self) -> None:
         self.app.config.update(
             {
                 "BOOTSTRAP_USERS": json.dumps(
