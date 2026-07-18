@@ -291,12 +291,15 @@ small { color: var(--cool-grey); font-weight: 400; }
 .share-controls, .share-form { display: flex; align-items: end; gap: .65rem; }
 .share-controls form { margin: 0; }
 .share-form label { min-width: 145px; }
-.table-scroll { overflow-x: auto; }
-.session-table { min-width: 1040px; }
-.my-session-table { min-width: 1240px; }
-.user-table { min-width: 1180px; }
+.table-scroll { max-width: 100%; overflow: visible; }
 .user-table .status-pill { display: inline-flex; align-items: center; justify-content: flex-start; width: 9rem; text-align: left; }
-.audit-table { min-width: 1320px; }
+.audit-table { table-layout: fixed; }
+.audit-table th:nth-child(1) { width: 14%; }
+.audit-table th:nth-child(2) { width: 11%; }
+.audit-table th:nth-child(3) { width: 16%; }
+.audit-table th:nth-child(4) { width: 18%; }
+.audit-table th:nth-child(5) { width: 41%; }
+.audit-table td { overflow-wrap: anywhere; }
 .audit-table code { color: var(--cool-grey); overflow-wrap: anywhere; }
 .audit-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; align-items: end; gap: 1rem; margin-bottom: 1.25rem; }
 .audit-filters .select-control i { right: 1.5rem; }
@@ -316,7 +319,6 @@ small { color: var(--cool-grey); font-weight: 400; }
 .audit-details dt { color: var(--cool-grey); }
 .audit-details dd { margin: 0; overflow-wrap: anywhere; }
 .table-note { display: block; margin-top: .15rem; }
-.report-detail .data-table { min-width: 1020px; }
 .error-state { max-width: 720px; margin: 7rem auto; padding: 3rem; text-align: center; }
 .error-state .button { margin-top: 1rem; }
 .report-body { display: flex; flex-direction: column; min-width: 0; height: 100vh; height: 100dvh; overflow: hidden; }
@@ -357,6 +359,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .data-table { width: 100%; border-collapse: collapse; font-size: .86rem; }
 .data-table th, .data-table td { padding: .85rem .7rem; text-align: left; vertical-align: top; border-bottom: 1px solid color-mix(in srgb, var(--charcoal-border) 65%, transparent); }
 .data-table th { color: var(--primary-accent); font-size: .73rem; letter-spacing: .1em; text-transform: uppercase; }
+.data-table td { min-width: 0; overflow-wrap: anywhere; }
 .report-page .data-table td, .report-page .data-table th { text-align: left; }
 .report-page .data-table.report-task-summary-table td:nth-child(3), .report-page .data-table.report-task-summary-table th:nth-child(3), .report-page .report-detail .data-table td:nth-child(7), .report-page .report-detail .data-table th:nth-child(7) { text-align: right; }
 .session-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin-bottom: 1.5rem; overflow: hidden; }
@@ -381,6 +384,28 @@ small { color: var(--cool-grey); font-weight: 400; }
   .contract-contact-identity i { grid-column: 1; grid-row: 1; align-self: center; }
   .contract-contact-identity strong { grid-column: 2; grid-row: 1; }
   .contract-contact-email { grid-column: 2; grid-row: 2; }
+}
+
+@media (width <1440px) {
+  .responsive-table { display: block; }
+  .responsive-table thead { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+  .responsive-table tbody { display: grid; gap: 1rem; }
+  .responsive-table tbody > tr { display: grid; min-width: 0; padding: .3rem .9rem; background: color-mix(in srgb, var(--deep-graphite) 38%, transparent); border: 1px solid color-mix(in srgb, var(--charcoal-border) 75%, transparent); border-radius: var(--border-radius); }
+  .responsive-table tbody > tr > td { display: grid; grid-template-columns: minmax(6.5rem, 30%) minmax(0, 1fr); gap: .75rem; width: 100%; min-width: 0; padding: .65rem 0; align-items: start; }
+  .responsive-table tbody > tr > td::before { content: attr(data-label); color: var(--primary-accent); font-size: .68rem; font-weight: var(--font-weight-semibold); letter-spacing: .08em; text-transform: uppercase; }
+  .responsive-table tbody > tr > .cell-primary { order: -2; }
+  .responsive-table tbody > tr > .cell-status { order: -1; }
+  .responsive-table .cell-actions .row-actions { justify-content: flex-start; flex-wrap: wrap; }
+  .responsive-table .truncate-text { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+  .responsive-table .empty-table-row { display: block; padding: 0; }
+  .responsive-table .empty-table-row > td { display: block; padding: 1rem; border: 0; }
+  .responsive-table .empty-table-row > td::before { content: none; }
+  .responsive-table.user-table .status-pill { width: auto; max-width: 100%; }
+  .responsive-table .audit-details div { grid-template-columns: minmax(0, 1fr); gap: .1rem; }
+  .report-page .responsive-table td,
+  .report-page .responsive-table th { text-align: left; }
+  .report-page .data-table.report-task-summary-table td:nth-child(3),
+  .report-page .report-detail .data-table td:nth-child(7) { text-align: left; }
 }
 
 @media (width <1096px) {
@@ -438,7 +463,12 @@ small { color: var(--cool-grey); font-weight: 400; }
   .heading-actions .button { flex: 1 1 100%; }
   .form-actions { align-items: stretch; flex-direction: column-reverse; }
   .form-actions .button { width: 100%; }
-  .active-timer-actions .button, .active-timer-actions form, .active-timer-actions form .button { width: 100%; }
+  .active-timer-actions { display: flex; width: 100%; gap: .5rem; }
+  .active-timer-actions .timer-elapsed { flex: 1 0 100%; width: 100%; min-width: 0; }
+  .active-timer-actions .timer-action,
+  .active-timer-actions .timer-stop-form { width: auto; min-width: 44px; height: 44px; flex: 1 1 0; }
+  .active-timer-actions .timer-stop-form .icon-button { width: 100%; min-width: 44px; height: 44px; }
+  .active-timer-actions .timer-stop-form .icon-button { display: inline-flex; }
   .share-controls, .share-controls form, .share-controls .button { width: 100%; }
   .share-form { align-items: stretch; flex-direction: column; }
   .report-header { align-items: flex-start; }
@@ -477,15 +507,6 @@ small { color: var(--cool-grey); font-weight: 400; }
 
 @media (width >=1120px) {
   :root { --container-padding: 2.5rem; }
-}
-
-@media (width <1180px) {
-  .report-page-public .report-detail { display: none; }
-}
-
-@media (width <720px) {
-  .report-page-public .report-task-summary-table th:nth-child(3),
-  .report-page-public .report-task-summary-table td:nth-child(3) { display: none; }
 }
 
 @media (width >=1721px) {

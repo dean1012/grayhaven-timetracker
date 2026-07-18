@@ -20,23 +20,24 @@
 <section class="panel session-directory" data-live-region="contract-sessions">
   <div class="table-summary"><span>{{ total }} session{{ '' if total == 1 else 's' }}</span><span>Page {{ page }} of {{ page_count }}</span></div>
   <div class="table-scroll">
-    <table class="data-table session-table">
-      <thead><tr>{% if show_users %}<th>User</th>{% endif %}<th>Task / Subtask</th><th>Start</th><th>End</th><th>Status</th><th>Duration</th><th>Rate</th><th>Cost</th>{% if show_actions %}<th>Actions</th>{% endif %}</tr></thead>
+    <table class="data-table responsive-table session-table">
+      <caption class="visually-hidden">Time sessions for {{ contract.name }}</caption>
+      <thead><tr>{% if show_users %}<th scope="col">User</th>{% endif %}<th scope="col">Task / Subtask</th><th scope="col">Start</th><th scope="col">End</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Rate</th><th scope="col">Cost</th>{% if show_actions %}<th scope="col">Actions</th>{% endif %}</tr></thead>
       <tbody>
       {% for row in session_rows %}
         {% set entry = row.entry %}
         <tr>
-          {% if show_users %}<td><span class="user-contact-identity"><i class="fa-solid fa-address-card" aria-hidden="true"></i><strong class="truncate-text" title="{{ entry.user.full_name }}">{{ entry.user.full_name }}</strong></span></td>{% endif %}
-          <td>{{ entry.task.name }}{% if entry.subtask %} → {{ entry.subtask.name }}{% endif %}</td>
-          <td>{{ format_datetime(entry.started_at, timezone_info) }}</td>
-          <td>{% if entry.stopped_at %}{{ format_datetime(row.ended_at, timezone_info) }}{% else %}<span class="status-pill status-running"><i class="fa-solid fa-circle" aria-hidden="true"></i> Running</span>{% endif %}</td>
-          <td>{% if entry.stopped_at %}<span class="status-pill status-neutral">{{ entry.billing_status|replace('_', ' ')|title }}</span>{% else %}<span class="status-pill status-running">Running</span>{% endif %}</td>
-          <td{% if not entry.stopped_at %} data-session-start="{{ entry.started_at.isoformat() }}Z"{% endif %}>{{ format_duration(row.seconds) }}</td>
-          <td>{{ format_money(entry.task.contract.hourly_rate) }}/hr</td><td>{{ format_money(row.cost) }}</td>
-          {% if show_actions %}<td><div class="row-actions">{% if not entry.stopped_at and contract.archived_at is none %}<form method="post" action="{{ url_for('main.stop_timer', entry_id=entry.id) }}" autocomplete="off" data-protonpass-ignore="true"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button class="icon-button danger" type="submit" title="Stop Timer" aria-label="Stop Timer"><i class="fa-solid fa-stop" aria-hidden="true"></i></button></form>{% elif entry.stopped_at and contract.archived_at is none %}<a class="icon-button" href="{{ url_for('main.edit_time_entry_status', entry_id=entry.id) }}" title="Update Payment Status" aria-label="Update Payment Status"><i class="fa-solid fa-file-signature" aria-hidden="true"></i></a>{% endif %}{% if row.can_edit %}<a class="icon-button" href="{{ url_for('main.edit_time_entry', entry_id=entry.id) }}" title="Update Session" aria-label="Update Session"><i class="fa-solid fa-pen" aria-hidden="true"></i></a>{% endif %}{% if row.can_delete %}<a class="icon-button danger" href="{{ url_for('main.delete_time_entry', entry_id=entry.id) }}" title="Delete Session" aria-label="Delete Session"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>{% endif %}{% if contract.archived_at is not none %}<span class="muted">Archived</span>{% endif %}</div></td>{% endif %}
+          {% if show_users %}<td class="cell-user" data-label="User"><span class="user-contact-identity"><i class="fa-solid fa-address-card" aria-hidden="true"></i><strong class="truncate-text" title="{{ entry.user.full_name }}">{{ entry.user.full_name }}</strong></span></td>{% endif %}
+          <td class="cell-primary" data-label="Task / Subtask">{{ entry.task.name }}{% if entry.subtask %} → {{ entry.subtask.name }}{% endif %}</td>
+          <td data-label="Start">{{ format_datetime(entry.started_at, timezone_info) }}</td>
+          <td data-label="End">{% if entry.stopped_at %}{{ format_datetime(row.ended_at, timezone_info) }}{% else %}<span class="status-pill status-running"><i class="fa-solid fa-circle" aria-hidden="true"></i> Running</span>{% endif %}</td>
+          <td class="cell-status" data-label="Status">{% if entry.stopped_at %}<span class="status-pill status-neutral">{{ entry.billing_status|replace('_', ' ')|title }}</span>{% else %}<span class="status-pill status-running">Running</span>{% endif %}</td>
+          <td data-label="Duration"{% if not entry.stopped_at %} data-session-start="{{ entry.started_at.isoformat() }}Z"{% endif %}>{{ format_duration(row.seconds) }}</td>
+          <td data-label="Rate">{{ format_money(entry.task.contract.hourly_rate) }}/hr</td><td data-label="Cost">{{ format_money(row.cost) }}</td>
+          {% if show_actions %}<td class="cell-actions" data-label="Actions"><div class="row-actions">{% if not entry.stopped_at and contract.archived_at is none %}<form method="post" action="{{ url_for('main.stop_timer', entry_id=entry.id) }}" autocomplete="off" data-protonpass-ignore="true"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button class="icon-button danger" type="submit" title="Stop Timer" aria-label="Stop Timer"><i class="fa-solid fa-stop" aria-hidden="true"></i></button></form>{% elif entry.stopped_at and contract.archived_at is none %}<a class="icon-button" href="{{ url_for('main.edit_time_entry_status', entry_id=entry.id) }}" title="Update Payment Status" aria-label="Update Payment Status"><i class="fa-solid fa-file-signature" aria-hidden="true"></i></a>{% endif %}{% if row.can_edit %}<a class="icon-button" href="{{ url_for('main.edit_time_entry', entry_id=entry.id) }}" title="Update Session" aria-label="Update Session"><i class="fa-solid fa-pen" aria-hidden="true"></i></a>{% endif %}{% if row.can_delete %}<a class="icon-button danger" href="{{ url_for('main.delete_time_entry', entry_id=entry.id) }}" title="Delete Session" aria-label="Delete Session"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>{% endif %}{% if contract.archived_at is not none %}<span class="muted">Archived</span>{% endif %}</div></td>{% endif %}
         </tr>
       {% else %}
-        <tr><td colspan="{{ (10 if show_users else 9) if show_actions else (9 if show_users else 8) }}">No time sessions have been recorded.</td></tr>
+        <tr class="empty-table-row"><td colspan="{{ (10 if show_users else 9) if show_actions else (9 if show_users else 8) }}">No time sessions have been recorded.</td></tr>
       {% endfor %}
       </tbody>
     </table>

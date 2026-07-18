@@ -340,6 +340,7 @@ class SecurityAndErrorRouteTests(AppTestCase):
         for media_query in (
             "@media (width <=400px)",
             "@media (width <=575px)",
+            "@media (width <1440px)",
             "@media (width >=640px)",
             "@media (width >=768px)",
             "@media (width >=1120px)",
@@ -352,6 +353,56 @@ class SecurityAndErrorRouteTests(AppTestCase):
             r"\.desktop-nav \{ display: flex; \}.*?"
             r"\.mobile-nav \{ display: none; \}",
         )
+        self.assertIn(
+            ".responsive-table tbody > tr > td::before", app_stylesheet
+        )
+        self.assertIn(
+            ".active-timer-actions .timer-stop-form",
+            app_stylesheet,
+        )
+        self.assertIn("flex: 1 1 0", app_stylesheet)
+        self.assertNotIn("overflow-x: auto", app_stylesheet)
+        self.assertNotRegex(
+            app_stylesheet,
+            r"\.(?:session-table|my-session-table|user-table|audit-table)\s*\{[^}]*min-width",
+        )
+        self.assertNotIn(
+            ".report-page-public .report-detail { display: none; }",
+            app_stylesheet,
+        )
+
+        responsive_templates = {
+            "sessions.html": (
+                "responsive-table session-table",
+                'data-label="Actions"',
+            ),
+            "my_sessions.html": (
+                "responsive-table my-session-table",
+                'data-label="Invoice"',
+            ),
+            "users.html": ("responsive-table user-table", 'data-label="TOTP"'),
+            "audit_log.html": (
+                "responsive-table audit-table",
+                'data-label="Details"',
+            ),
+            "_report_content.html": (
+                "responsive-table report-session-table",
+                'data-label="Cost"',
+            ),
+        }
+        for filename, markers in responsive_templates.items():
+            template = (project_root / "templates" / filename).read_text(
+                encoding="utf-8"
+            )
+            with self.subTest(template=filename):
+                for marker in markers:
+                    self.assertIn(marker, template)
+
+        active_timer_template = (
+            project_root / "templates" / "active_timer.html"
+        ).read_text(encoding="utf-8")
+        self.assertIn('class="icon-button timer-action"', active_timer_template)
+        self.assertIn('class="timer-stop-form"', active_timer_template)
 
     def test_security_headers_cache_policy_health_and_errors(self) -> None:
         response = self.client.get("/login", base_url="https://example.invalid")
@@ -526,6 +577,8 @@ class AuditRouteTests(AppTestCase):
         self.assertIn(b"Application Started", response.data)
         self.assertIn(b"Login Succeeded", response.data)
         self.assertNotIn(b">Request<", response.data)
+        self.assertIn(b"responsive-table audit-table", response.data)
+        self.assertIn(b'data-label="Details"', response.data)
 
         with session_scope(self.app) as database:
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
@@ -1702,7 +1755,10 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             assert admin is not None
             admin.totp_secret = None
             reset_totp_replay_state(database, admin.id)
-        self.assertEqual(self.client.get("/users").status_code, 200)
+        users_page = self.client.get("/users")
+        self.assertEqual(users_page.status_code, 200)
+        self.assertIn(b"responsive-table user-table", users_page.data)
+        self.assertIn(b'data-label="TOTP"', users_page.data)
         self.assertEqual(self.client.get("/users?page=invalid").status_code, 400)
         self.assertEqual(self.client.get("/users?page=0").status_code, 400)
         self.assertEqual(self.client.get("/users?page=99").status_code, 302)
@@ -2123,6 +2179,9 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertEqual(html.status_code, 200)
         self.assertIn(b"Client Time Report", html.data)
         self.assertIn(b"data-live-report", html.data)
+        self.assertIn(b"responsive-table report-task-summary-table", html.data)
+        self.assertIn(b"responsive-table report-session-table", html.data)
+        self.assertIn(b'data-label="Cost" data-report-session-cost', html.data)
         self.assertIn(
             f'data-live-url="/reports/{self.seed.contract_id}/live"'.encode(),
             html.data,
@@ -2616,6 +2675,8 @@ class ReportAndSessionRouteTests(AppTestCase):
         page = self.client.get("/sessions")
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"My Sessions", page.data)
+        self.assertIn(b"responsive-table my-session-table", page.data)
+        self.assertIn(b'data-label="Invoice"', page.data)
         self.assertIn(b"Pending Invoice", page.data)
         self.assertIn(b"Invoiced", page.data)
         self.assertIn(b"Client Paid", page.data)
@@ -2681,6 +2742,9 @@ class ReportAndSessionRouteTests(AppTestCase):
             reset_totp_replay_state(database, admin.id)
 
         archive_url = f"/contracts/{self.seed.contract_id}/archive"
+        active_contract_page = self.client.get(f"/contracts/{self.seed.contract_id}")
+        self.assertIn(b'class="icon-button timer-action"', active_contract_page.data)
+        self.assertIn(b'class="timer-stop-form"', active_contract_page.data)
         self.assertEqual(self.client.get(archive_url).status_code, 200)
         routes.sensitive_action_limiter = LoginLimiter(limit=1)
         rejected = self.client.post(
@@ -2719,6 +2783,13 @@ class ReportAndSessionRouteTests(AppTestCase):
             f"/contracts/{self.seed.contract_id}/sessions"
         )
         self.assertIn(b"All session controls are disabled", sessions_page.data)
+        self.assertIn(b"responsive-table session-table", sessions_page.data)
+        self.assertIn(b'data-label="Actions"', sessions_page.data)
+        archived_report = self.client.get(f"/reports/{self.seed.client_id}")
+        self.assertIn(
+            b"No active contracts are currently available for this client.",
+            archived_report.data,
+        )
 
         with session_scope(self.app) as database:
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))

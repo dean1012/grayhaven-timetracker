@@ -42,17 +42,18 @@
     <section class="panel report-panel">
       <div class="panel-heading"><div><p class="eyebrow">SUMMARY</p><h3>Time by Task and Subtask</h3></div></div>
       <div data-report-pagination="summary">
-        <table class="data-table report-task-summary-table">
-          <thead><tr><th>Task / Subtask</th><th>Duration</th><th>Cost</th></tr></thead>
+        <table class="data-table responsive-table report-task-summary-table">
+          <caption class="visually-hidden">Time by task and subtask for {{ contract_report.contract.name }}</caption>
+          <thead><tr><th scope="col">Task / Subtask</th><th scope="col">Duration</th><th scope="col">Cost</th></tr></thead>
           <tbody>
             {% for group in contract_report.groups %}
             <tr data-report-group="{{ group.label }}">
-              <td>{{ group.label }}</td>
-              <td data-report-group-duration>{{ format_duration(group.seconds) }}</td>
-              <td data-report-group-cost>{{ format_money(group.cost) }}</td>
+              <td class="cell-primary" data-label="Task / Subtask">{{ group.label }}</td>
+              <td data-label="Duration" data-report-group-duration>{{ format_duration(group.seconds) }}</td>
+              <td data-label="Cost" data-report-group-cost>{{ format_money(group.cost) }}</td>
             </tr>
             {% else %}
-            <tr><td colspan="3">No time has been recorded.</td></tr>
+            <tr class="empty-table-row"><td colspan="3">No time has been recorded.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -61,21 +62,22 @@
     <section class="panel report-detail report-panel">
       <div class="panel-heading"><div><p class="eyebrow">DETAIL</p><h3>Session Log</h3></div></div>
       <div data-report-pagination="sessions">
-        <div class="table-scroll"><table class="data-table">
-          <thead><tr><th>User</th><th>Task / Subtask</th><th>Start</th><th>End</th><th>Status</th><th>Duration</th><th>Cost</th></tr></thead>
+        <div class="table-scroll"><table class="data-table responsive-table report-session-table">
+          <caption class="visually-hidden">Session log for {{ contract_report.contract.name }}</caption>
+          <thead><tr><th scope="col">User</th><th scope="col">Task / Subtask</th><th scope="col">Start</th><th scope="col">End</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Cost</th></tr></thead>
           <tbody>
             {% for entry in contract_report.sessions %}
             <tr data-report-session data-report-group="{{ entry.label }}" data-base-seconds="{{ entry.seconds }}" data-active="{{ 'true' if entry.active else 'false' }}">
-              <td>{{ entry.user_name }}</td>
-              <td>{{ entry.label }}</td>
-              <td>{{ format_datetime(entry.started_at, report.timezone) }}</td>
-              <td>{% if entry.active %}<span class="live-label">active now</span>{% else %}{{ format_datetime(entry.ended_at, report.timezone) }}{% endif %}</td>
-              <td>{% if entry.active %}<span class="status-pill status-running"><i class="fa-solid fa-circle" aria-hidden="true"></i> Running</span>{% else %}<span class="status-pill status-neutral">Pending Invoice</span>{% endif %}</td>
-              <td data-report-session-duration>{{ format_duration(entry.seconds) }}</td>
-              <td data-report-session-cost>{{ format_money(entry.cost) }}</td>
+              <td data-label="User">{{ entry.user_name }}</td>
+              <td class="cell-primary" data-label="Task / Subtask">{{ entry.label }}</td>
+              <td data-label="Start">{{ format_datetime(entry.started_at, report.timezone) }}</td>
+              <td data-label="End">{% if entry.active %}<span class="live-label">active now</span>{% else %}{{ format_datetime(entry.ended_at, report.timezone) }}{% endif %}</td>
+              <td class="cell-status" data-label="Status">{% if entry.active %}<span class="status-pill status-running"><i class="fa-solid fa-circle" aria-hidden="true"></i> Running</span>{% else %}<span class="status-pill status-neutral">Pending Invoice</span>{% endif %}</td>
+              <td data-label="Duration" data-report-session-duration>{{ format_duration(entry.seconds) }}</td>
+              <td data-label="Cost" data-report-session-cost>{{ format_money(entry.cost) }}</td>
             </tr>
             {% else %}
-            <tr><td colspan="7">No sessions have been recorded.</td></tr>
+            <tr class="empty-table-row"><td colspan="7">No sessions have been recorded.</td></tr>
             {% endfor %}
           </tbody>
         </table></div>
@@ -83,7 +85,7 @@
     </section>
   </section>
   {% else %}
-  <section class="panel empty-state"><p>No contracts have been created for this client.</p></section>
+  <section class="panel empty-state"><p>No active contracts are currently available for this client.</p></section>
   {% endfor %}
   </div>
   </div>

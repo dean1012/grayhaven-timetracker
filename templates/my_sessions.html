@@ -13,31 +13,33 @@
 </section>
 <section class="panel session-directory" data-live-region="my-sessions">
   <div class="panel-heading"><div><p class="eyebrow">CURRENT</p><h2>Pending Invoice Sessions</h2></div><span class="muted">{{ pending_total }} session{{ '' if pending_total == 1 else 's' }}</span></div>
-  <div class="table-scroll"><table class="data-table my-session-table">
-    <thead><tr><th>Client</th><th>Contract</th><th>Task / Subtask</th><th>Start</th><th>End</th><th>Status</th><th>Duration</th><th>Rate</th><th>Cost</th></tr></thead>
+  <div class="table-scroll"><table class="data-table responsive-table my-session-table">
+    <caption class="visually-hidden">Pending invoice sessions</caption>
+    <thead><tr><th scope="col">Client</th><th scope="col">Contract</th><th scope="col">Task / Subtask</th><th scope="col">Start</th><th scope="col">End</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Rate</th><th scope="col">Cost</th></tr></thead>
     <tbody>{% for row in session_rows %}{% set entry = row.entry %}<tr>
-      <td><a class="external-link truncate-text" href="{{ url_for('main.client', client_id=entry.task.contract.client.id) }}" title="{{ entry.task.contract.client.name }}">{{ entry.task.contract.client.name }}</a></td>
-      <td><a class="external-link truncate-text" href="{{ url_for('main.contract', contract_id=entry.task.contract.id) }}" title="{{ entry.task.contract.name }}">{{ entry.task.contract.name }}</a></td>
-      <td>{{ entry.task.name }}{% if entry.subtask %} → {{ entry.subtask.name }}{% endif %}</td>
-      <td>{{ format_datetime(entry.started_at, timezone_info) }}</td>
-      <td>{% if entry.stopped_at %}{{ format_datetime(row.ended_at, timezone_info) }}{% else %}<span class="status-pill status-running"><i class="fa-solid fa-circle" aria-hidden="true"></i> Running</span>{% endif %}</td>
-      <td>{% if entry.stopped_at %}<span class="status-pill status-neutral">Pending Invoice</span>{% else %}<span class="status-pill status-running">Running</span>{% endif %}</td>
-      <td{% if not entry.stopped_at %} data-session-start="{{ entry.started_at.isoformat() }}Z"{% endif %}>{{ format_duration(row.seconds) }}</td><td>{{ format_money(entry.task.contract.hourly_rate) }}/hr</td><td>{{ format_money(row.cost) }}</td>
-    </tr>{% else %}<tr><td colspan="9">No pending invoice sessions have been recorded.</td></tr>{% endfor %}</tbody>
+      <td class="cell-primary" data-label="Client"><a class="external-link truncate-text" href="{{ url_for('main.client', client_id=entry.task.contract.client.id) }}" title="{{ entry.task.contract.client.name }}">{{ entry.task.contract.client.name }}</a></td>
+      <td data-label="Contract"><a class="external-link truncate-text" href="{{ url_for('main.contract', contract_id=entry.task.contract.id) }}" title="{{ entry.task.contract.name }}">{{ entry.task.contract.name }}</a></td>
+      <td data-label="Task / Subtask">{{ entry.task.name }}{% if entry.subtask %} → {{ entry.subtask.name }}{% endif %}</td>
+      <td data-label="Start">{{ format_datetime(entry.started_at, timezone_info) }}</td>
+      <td data-label="End">{% if entry.stopped_at %}{{ format_datetime(row.ended_at, timezone_info) }}{% else %}<span class="status-pill status-running"><i class="fa-solid fa-circle" aria-hidden="true"></i> Running</span>{% endif %}</td>
+      <td class="cell-status" data-label="Status">{% if entry.stopped_at %}<span class="status-pill status-neutral">Pending Invoice</span>{% else %}<span class="status-pill status-running">Running</span>{% endif %}</td>
+      <td data-label="Duration"{% if not entry.stopped_at %} data-session-start="{{ entry.started_at.isoformat() }}Z"{% endif %}>{{ format_duration(row.seconds) }}</td><td data-label="Rate">{{ format_money(entry.task.contract.hourly_rate) }}/hr</td><td data-label="Cost">{{ format_money(row.cost) }}</td>
+    </tr>{% else %}<tr class="empty-table-row"><td colspan="9">No pending invoice sessions have been recorded.</td></tr>{% endfor %}</tbody>
   </table></div>
   {% if previous_url or next_url %}<nav class="pagination" aria-label="Pending invoice session pages">{% if previous_url %}<a class="button button-secondary" href="{{ previous_url }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ page }} of {{ page_count }}</span>{% if next_url %}<a class="button button-secondary" href="{{ next_url }}">Next <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></a>{% else %}<span></span>{% endif %}</nav>{% endif %}
 </section>
 <section class="panel session-directory" data-live-region="my-finalized-sessions">
   <div class="panel-heading"><div><p class="eyebrow">HISTORY</p><h2>Finalized Sessions</h2></div><span class="muted">{{ finalized_total }} session{{ '' if finalized_total == 1 else 's' }}</span></div>
-  <div class="table-scroll"><table class="data-table my-session-table">
-    <thead><tr><th>Client</th><th>Contract</th><th>Task / Subtask</th><th>Start</th><th>End</th><th>Status</th><th>Duration</th><th>Rate</th><th>Cost</th><th>Invoice</th><th>Client Paid</th><th>Disbursement</th></tr></thead>
+  <div class="table-scroll"><table class="data-table responsive-table my-session-table">
+    <caption class="visually-hidden">Finalized sessions</caption>
+    <thead><tr><th scope="col">Client</th><th scope="col">Contract</th><th scope="col">Task / Subtask</th><th scope="col">Start</th><th scope="col">End</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Rate</th><th scope="col">Cost</th><th scope="col">Invoice</th><th scope="col">Client Paid</th><th scope="col">Disbursement</th></tr></thead>
     <tbody>{% for row in finalized_rows %}{% set entry = row.entry %}<tr>
-      <td><a class="external-link truncate-text" href="{{ url_for('main.client', client_id=entry.task.contract.client.id) }}" title="{{ entry.task.contract.client.name }}">{{ entry.task.contract.client.name }}</a></td>
-      <td><a class="external-link truncate-text" href="{{ url_for('main.contract', contract_id=entry.task.contract.id) }}" title="{{ entry.task.contract.name }}">{{ entry.task.contract.name }}</a></td>
-      <td>{{ entry.task.name }}{% if entry.subtask %} → {{ entry.subtask.name }}{% endif %}</td><td>{{ format_datetime(entry.started_at, timezone_info) }}</td><td>{{ format_datetime(row.ended_at, timezone_info) }}</td>
-      <td><span class="status-pill status-neutral">{{ entry.billing_status|replace('_', ' ')|title }}</span></td><td>{{ format_duration(row.seconds) }}</td><td>{{ format_money(entry.task.contract.hourly_rate) }}/hr</td><td>{{ format_money(row.cost) }}</td>
-      <td>{% if entry.invoice_number %}{{ entry.invoice_number }}<br><small>{{ entry.invoice_date }}</small>{% else %}—{% endif %}</td><td>{% if entry.client_paid_date %}{{ entry.client_paid_date }}{% else %}—{% endif %}</td><td>{% if entry.disbursement_date %}{{ entry.disbursement_date }}{% if entry.transaction_number %}<br><small>{{ entry.transaction_number }}</small>{% endif %}{% else %}—{% endif %}</td>
-    </tr>{% else %}<tr><td colspan="12">No finalized sessions have been recorded.</td></tr>{% endfor %}</tbody>
+      <td class="cell-primary" data-label="Client"><a class="external-link truncate-text" href="{{ url_for('main.client', client_id=entry.task.contract.client.id) }}" title="{{ entry.task.contract.client.name }}">{{ entry.task.contract.client.name }}</a></td>
+      <td data-label="Contract"><a class="external-link truncate-text" href="{{ url_for('main.contract', contract_id=entry.task.contract.id) }}" title="{{ entry.task.contract.name }}">{{ entry.task.contract.name }}</a></td>
+      <td data-label="Task / Subtask">{{ entry.task.name }}{% if entry.subtask %} → {{ entry.subtask.name }}{% endif %}</td><td data-label="Start">{{ format_datetime(entry.started_at, timezone_info) }}</td><td data-label="End">{{ format_datetime(row.ended_at, timezone_info) }}</td>
+      <td class="cell-status" data-label="Status"><span class="status-pill status-neutral">{{ entry.billing_status|replace('_', ' ')|title }}</span></td><td data-label="Duration">{{ format_duration(row.seconds) }}</td><td data-label="Rate">{{ format_money(entry.task.contract.hourly_rate) }}/hr</td><td data-label="Cost">{{ format_money(row.cost) }}</td>
+      <td data-label="Invoice">{% if entry.invoice_number %}{{ entry.invoice_number }}<br><small>{{ entry.invoice_date }}</small>{% else %}—{% endif %}</td><td data-label="Client Paid">{% if entry.client_paid_date %}{{ entry.client_paid_date }}{% else %}—{% endif %}</td><td data-label="Disbursement">{% if entry.disbursement_date %}{{ entry.disbursement_date }}{% if entry.transaction_number %}<br><small>{{ entry.transaction_number }}</small>{% endif %}{% else %}—{% endif %}</td>
+    </tr>{% else %}<tr class="empty-table-row"><td colspan="12">No finalized sessions have been recorded.</td></tr>{% endfor %}</tbody>
   </table></div>
   {% if finalized_previous_url or finalized_next_url %}<nav class="pagination" aria-label="Finalized session pages">{% if finalized_previous_url %}<a class="button button-secondary" href="{{ finalized_previous_url }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ finalized_page }} of {{ finalized_page_count }}</span>{% if finalized_next_url %}<a class="button button-secondary" href="{{ finalized_next_url }}">Next <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></a>{% else %}<span></span>{% endif %}</nav>{% endif %}
 </section>
