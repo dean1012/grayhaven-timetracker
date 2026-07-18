@@ -556,9 +556,15 @@ def report_password_mailto(client: Client, report_password: str) -> str:
     )
 
 
-def user_setup_mailto(user: User, temporary_password: str) -> str:
-    """Build the configured-URL access email for a newly created user."""
-    subject = "Your access to the Grayhaven Systems LLC Time Tracker has been setup"
+def user_setup_mailto(
+    user: User, temporary_password: str, *, password_reset: bool = False
+) -> str:
+    """Build the configured-URL access email for a user credential display."""
+    subject = (
+        "Your password for the Grayhaven Systems LLC Time Tracker has been reset"
+        if password_reset
+        else "Your access to the Grayhaven Systems LLC Time Tracker has been setup"
+    )
     public_base_url = current_app.config.get("PUBLIC_BASE_URL")
     login_path = url_for("main.login")
     application_url = (
@@ -2920,6 +2926,9 @@ def reset_user_password_confirmation(user_id: int) -> Any:
         temporary_password=confirmation.report_password,
         confirmation_ttl_seconds=REPORT_PASSWORD_CONFIRMATION_TTL_SECONDS,
         next_url=next_url,
+        mailto=user_setup_mailto(
+            user, confirmation.report_password, password_reset=True
+        ),
     )
 
 
