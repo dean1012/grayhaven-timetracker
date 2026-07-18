@@ -467,7 +467,7 @@ let livePageEtag = "";
 
 async function reconcileLivePage() {
   const page = document.querySelector("[data-live-page]");
-  if (!page || livePageRequestActive) {
+  if (!page || page.querySelector("[data-one-time-confirmation], [data-totp-setup]") || livePageRequestActive) {
     return;
   }
   livePageRequestActive = true;
