@@ -9,8 +9,10 @@ requires adaptation to the target environment.
 ## Table of Contents
 
 - [Development Setup](#development-setup)
+- [Development Workflow](#development-workflow)
 - [Validation](#validation)
 - [Pull Requests](#pull-requests)
+- [Container Releases](#container-releases)
 - [Documentation Guidelines](#documentation-guidelines)
 
 ## Development Setup
@@ -33,6 +35,22 @@ python3 -m pip install -r requirements-dev.txt
 Docker is required for container-image and Compose validation. ShellCheck,
 actionlint, yamllint, and markdownlint-cli2 are required to run every CI check
 locally.
+
+[Back to top](#contributing)
+
+## Development Workflow
+
+1. Create a GitHub issue for the change.
+2. Create a focused feature branch from the current `main` branch.
+3. Make signed commits that reference the issue.
+4. Run the relevant local validation.
+5. Push the feature branch and open a pull request against `main`.
+6. Resolve every review conversation and wait for all required checks to pass.
+7. Squash merge the pull request and delete the feature branch.
+
+Direct pushes to `main` are not part of the normal contribution workflow. The
+protected branch accepts only squash merges, requires signed commits, and
+requires the pull request branch to be current before merging.
 
 [Back to top](#contributing)
 
@@ -92,6 +110,41 @@ git commit -S -m "<message> (Refs #<issue-number>)"
 
 Dependabot checks Python packages, the container base image, and GitHub Actions
 weekly.
+
+[Back to top](#contributing)
+
+## Container Releases
+
+Container releases are created only from a clean, synchronized `main` branch
+after CI succeeds for the exact commit. The public image is intentionally
+unbranded; deployment automation supplies separately licensed branding at
+runtime.
+
+To prepare a release:
+
+1. Fast-forward the local `main` branch from `origin/main` and confirm the
+   worktree is clean.
+2. Confirm CI and unit tests passed for the current commit.
+3. Run `scripts/build-image`. The script builds the image locally and creates
+   the next signed annotated `build/<version>` tag only after the build
+   succeeds.
+4. Verify the new tag with `git tag --verify build/<version>`.
+5. Push only that tag with
+   `git push origin refs/tags/build/<version>`.
+6. Review the publishing workflow results and approve its
+   `container-publish` environment gate.
+7. Record the published GHCR digest and verify that the public image can be
+   pulled without authentication.
+
+The publishing workflow validates the signed tag and tagged revision before it
+publishes the immutable version tag to
+`ghcr.io/dean1012/grayhaven-timetracker`. It does not publish `latest`.
+Deployment automation must select the reviewed image by digest.
+
+Do not move, replace, reuse, or delete a published build tag. A correction
+requires a new signed build tag and a new immutable image digest. GitHub Actions
+does not create release tags or hold application, deployment, or branding
+secrets.
 
 [Back to top](#contributing)
 
