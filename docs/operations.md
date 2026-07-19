@@ -32,12 +32,36 @@ allowing local monitoring to query it.
 
 [Back to top](#operations)
 
+## Releases
+
+The project uses GitHub Actions to publish versioned images to GHCR
+automatically. To publish a new image:
+
+1. Create a signed tag following the `build/<major>.<minor>.<build>` format
+   locally (e.g., `build/0.4.5`).
+2. Push the specific tag to GitHub.
+3. The `Publish Release Image` workflow automatically triggers, verifies the tag
+   signature against the committed release-signing key, and builds the verified
+   revision.
+4. The workflow pauses at the `container-publish` environment gate. An
+   authorized operator must approve the release.
+5. Once approved, the image is built and pushed with OCI metadata, an artifact
+   attestation, and the immutable digest is logged.
+
+In case of a failure during the automated run, the `Publish Release Image`
+workflow supports manual execution via `workflow_dispatch`. Supply the name of
+an existing signed build tag (e.g., `build/0.4.5`). Dispatches targeting
+branches or unsigned tags will be rejected.
+
+[Back to top](#operations)
+
 ## Deployment
 
 Before promoting a release:
 
 1. Confirm CI and unit tests pass for the exact signed revision.
-2. Build or select the versioned image from GHCR and record its immutable digest.
+2. Select the published versioned image from GHCR and record its immutable
+   digest. Never use `latest`.
 3. Confirm the target uses a clean database when the release schema is not
    compatible with an earlier deployment.
 4. Render new environment-specific secret files and the initial bootstrap-user
