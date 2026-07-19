@@ -1,44 +1,116 @@
 ---
 name: Publish Release Image
 
-on:
+"on":
   push:
     tags:
       - "build/**"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "The build tag to publish (e.g., build/0.4.5)"
+        required: true
+        type: string
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
-  attestations: write
 
 jobs:
-  publish:
-    name: Publish Release Image
+  validate:
+    name: Validate Release Candidate
     runs-on: ubuntu-latest
-    environment: container-publish
+    outputs:
+      target_tag: ${{ steps.verify-tag.outputs.target_tag }}
+      version: ${{ steps.verify-tag.outputs.version }}
+      sha: ${{ steps.verify-commit.outputs.sha }}
+      short_sha: ${{ steps.verify-commit.outputs.short_sha }}
 
     steps:
-      - name: Verify build tag
+      - name: Resolve target tag
+        id: verify-tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          if [[ ! "${{ github.ref_name }}" =~ ^build\/[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Refusing to publish a non-build tag."
+          set -euo pipefail
+
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            TARGET_TAG="${INPUT_TAG}"
+          else
+            if [[ "${REF_TYPE}" != "tag" ]]; then
+              echo "Error: Publishing requires a tag, not a branch."
+              exit 1
+            fi
+            TARGET_TAG="${REF_NAME}"
+          fi
+
+          if [[ ! "${TARGET_TAG}" =~ ^build/[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Error: Refusing to publish tag ${TARGET_TAG}. Must match build/X.Y.Z"
             exit 1
           fi
 
+          VERSION="${TARGET_TAG#build/}"
+
+          {
+            echo "target_tag=${TARGET_TAG}"
+            echo "target_ref=refs/tags/${TARGET_TAG}"
+            echo "version=${VERSION}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Checkout repository
-        uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 # v4.1.7
+        uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29  # v4.1.7
         with:
           persist-credentials: false
+          ref: ${{ steps.verify-tag.outputs.target_ref }}
+          fetch-depth: 0
 
-      - name: Verify tag signature
+      - name: Verify GPG signature and commit
+        id: verify-commit
+        env:
+          TARGET_TAG: ${{ steps.verify-tag.outputs.target_tag }}
+          EXPECTED_FINGERPRINT: "D919B0102C4B7313845B25898CEEEE3C816C5619"
         run: |
-          git fetch --tags
-          git tag -v ${{ github.ref_name }}
+          set -euo pipefail
+
+          # Import the public key
+          gpg --import .github/release-signing-key.asc
+
+          # Verify the imported key fingerprint
+          IMPORTED_FINGERPRINT=$(gpg --with-colons --fingerprint "${EXPECTED_FINGERPRINT}" \
+            | grep "^fpr:" | head -n 1 | cut -d: -f10)
+          if [[ "${IMPORTED_FINGERPRINT}" != "${EXPECTED_FINGERPRINT}" ]]; then
+            echo "Error: Imported key fingerprint does not match expected."
+            echo "Expected: ${EXPECTED_FINGERPRINT}"
+            echo "Actual:   ${IMPORTED_FINGERPRINT}"
+            exit 1
+          fi
+
+          # Trust the key for verification
+          echo "${EXPECTED_FINGERPRINT}:6:" | gpg --import-ownertrust
+
+          # Verify the tag signature
+          git tag -v "${TARGET_TAG}"
+
+          # Verify tag points to HEAD
+          TAG_SHA=$(git rev-list -n 1 "refs/tags/${TARGET_TAG}")
+          HEAD_SHA=$(git rev-parse HEAD)
+
+          if [[ "${TAG_SHA}" != "${HEAD_SHA}" ]]; then
+            echo "Error: Tag SHA ${TAG_SHA} does not match HEAD ${HEAD_SHA}"
+            exit 1
+          fi
+
+          SHORT_SHA=$(git rev-parse --short HEAD)
+
+          {
+            echo "sha=${HEAD_SHA}"
+            echo "short_sha=${SHORT_SHA}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up Python
-        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # v5.1.1
+        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d  # v5.1.1
         with:
           python-version: "3.12"
 
@@ -47,23 +119,54 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
           python -m pip install -r requirements-dev.txt
-
-      - name: Run validation
+      - name: Audit Python dependencies
+        run: python -m pip_audit --progress-spinner off -r requirements.txt
+      - name: Compile Python sources
+        run: python -m compileall -q grayhaven_timetracker scripts tests
+      - name: Mypy type check
+        run: mypy --strict grayhaven_timetracker scripts
+      - name: Ruff lint
+        run: ruff check grayhaven_timetracker scripts tests
+      - name: Ruff format check
+        run: ruff format --check grayhaven_timetracker scripts tests
+      - name: Run actionlint
+        uses: devops-actions/actionlint@9fb9c192862f19e684586ca84b500461bcd8a541  # v0.1.12
+      - name: Run yamllint
+        uses: ibiqlik/action-yamllint@2576378a8e339169678f9939646ee3ee325e845c  # v3
+      - name: Validate Docker Compose config
+        run: docker compose config --quiet
+      - name: Build container image
+        env:
+          APP_VERSION: release-validation
+        run: docker build --build-arg APP_VERSION="${APP_VERSION}" --tag grayhaven-timetracker:validation .
+      - name: Run unit tests
         run: |
-          python -m pip_audit --progress-spinner off -r requirements.txt
-          python -m compileall -q grayhaven_timetracker scripts tests
-          mypy --strict grayhaven_timetracker scripts
-          ruff check grayhaven_timetracker scripts tests
-          ruff format --check grayhaven_timetracker scripts tests
           python -m coverage run -m unittest discover -s tests -v
           python -m coverage report
-          docker build --build-arg APP_VERSION=local-validation --tag grayhaven-timetracker:validation .
+
+  publish:
+    name: Publish Release Image
+    runs-on: ubuntu-latest
+    needs: validate
+    environment: container-publish
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29  # v4.1.7
+        with:
+          persist-credentials: false
+          ref: ${{ needs.validate.outputs.sha }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4c0215fde272c134d7a2aa7f3d99598539256d15 # v3.4.0
+        uses: docker/setup-buildx-action@4c0215fde272c134d7a2aa7f3d99598539256d15  # v3.4.0
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@0d4c9c5ea7693da7b068278f7b52bda2a190a446 # v3.2.0
+        uses: docker/login-action@0d4c9c5ea7693da7b068278f7b52bda2a190a446  # v3.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -71,34 +174,39 @@ jobs:
 
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81 # v5.5.1
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81  # v5.5.1
         with:
           images: ghcr.io/${{ github.repository }}
-          tags: type=ref,event=tag
+          tags: |
+            type=raw,value=${{ needs.validate.outputs.version }}
+          flavor: |
+            latest=false
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.revision=${{ needs.validate.outputs.sha }}
+            org.opencontainers.image.version=${{ needs.validate.outputs.version }}
             org.opencontainers.image.licenses=MIT
 
       - name: Build and push Docker image
         id: build-and-push
-        uses: docker/build-push-action@2a17ab46db1a71c890a93c7843b0b52c01828f24 # v5.4.0
+        uses: docker/build-push-action@2a17ab46db1a71c890a93c7843b0b52c01828f24  # v5.4.0
         with:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            APP_VERSION=${{ github.ref_name }}
+            APP_VERSION=${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.short_sha }}
 
       - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@1a5124b0773d578688757a35c5e851d785715201 # v1.2.0
+        uses: actions/attest-build-provenance@1a5124b0773d578688757a35c5e851d785715201  # v1.2.0
         with:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.build-and-push.outputs.digest }}
           push-to-registry: true
 
       - name: Echo image digest
+        env:
+          DIGEST: ${{ steps.build-and-push.outputs.digest }}
         run: |
-          echo "Image digest: ${{ steps.build-and-push.outputs.digest }}"
+          echo "Image digest: ${DIGEST}"
