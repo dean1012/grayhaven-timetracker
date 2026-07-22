@@ -180,7 +180,7 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
             pending_totp_secret=None,
             role=spec.role,
             is_enabled=spec.enabled,
-            password_change_required=False,
+            password_change_required=True,
             session_version=1,
             created_at=_utc_now(),
         )

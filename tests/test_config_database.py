@@ -266,7 +266,6 @@ class ConfigurationTests(unittest.TestCase):
                 validate_branding(str(root))
             assets = (
                 "grayhaven-logo-wordmark-dark.svg",
-                "grayhaven-logo-wordmark-light.png",
                 "favicon.ico",
                 "favicon-16.png",
                 "favicon-32.png",
@@ -288,7 +287,6 @@ class ConfigurationTests(unittest.TestCase):
             branding = root / "branding"
             assets = (
                 "grayhaven-logo-wordmark-dark.svg",
-                "grayhaven-logo-wordmark-light.png",
                 "favicon.ico",
                 "favicon-16.png",
                 "favicon-32.png",
@@ -559,6 +557,7 @@ class BootstrapTests(AppTestCase):
         return json.loads(cast(str, self.app.config["BOOTSTRAP_USERS"]))
 
     def test_manifest_creates_initial_users_and_is_ignored_afterward(self) -> None:
+        bootstrap_totp = pyotp.random_base32()
         manifest = [
             {
                 "email": "first-admin@example.invalid",
@@ -573,6 +572,7 @@ class BootstrapTests(AppTestCase):
                 "last_name": "User",
                 "password_hash": ADMIN_PASSWORD_HASH,
                 "role": "user",
+                "totp_secret": bootstrap_totp,
             },
         ]
         self.app.config["BOOTSTRAP_USERS"] = json.dumps(manifest)
@@ -585,6 +585,11 @@ class BootstrapTests(AppTestCase):
             self.assertEqual(
                 [item.outcome for item in outcomes], ["created", "created"]
             )
+            self.assertTrue(
+                all(item.user.password_change_required for item in outcomes)
+            )
+            self.assertIsNone(outcomes[0].user.totp_secret)
+            self.assertEqual(outcomes[1].user.totp_secret, bootstrap_totp)
 
         manifest[0]["first_name"] = "Changed"
         manifest.append(
