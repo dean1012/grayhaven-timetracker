@@ -9,6 +9,7 @@ image promotion, scheduled backups, and observability integration.
 ## Table of Contents
 
 - [Service Health](#service-health)
+- [Releases](#releases)
 - [Deployment](#deployment)
 - [Backups](#backups)
 - [Backup and Restore Verification](#backup-and-restore-verification)
@@ -209,7 +210,32 @@ to match.
 `BOOTSTRAP_USERS_FILE` is a first-install interface. The deployment process
 renders its JSON from protected configuration and installs it as a restricted
 secret. The application reads it only when the user table is empty; it does not
-continuously reconcile existing accounts.
+continuously reconcile existing accounts. Every bootstrap-created account must
+replace its initial password at first sign-in. A preconfigured TOTP enrollment
+remains active during that password change.
+
+Generate an Argon2id hash for an initial password through the application image
+so the password is entered without terminal echo:
+
+```bash
+docker compose run --rm --no-deps timetracker python -c '
+from getpass import getpass
+from grayhaven_timetracker.auth import hash_password
+print(hash_password(getpass("Initial password: ")))
+'
+```
+
+Generate an optional Base32 TOTP secret through the same image:
+
+```bash
+docker compose run --rm --no-deps timetracker \
+  python -c 'import pyotp; print(pyotp.random_base32())'
+```
+
+Treat both generated values as credentials. Put them directly into the
+approved secret-management workflow, do not write them to repository files,
+and deliver the initial password and TOTP enrollment through separate approved
+channels.
 
 After installation, administrators manage accounts in the application. A
 password reset generates a strong temporary password, displays it once,

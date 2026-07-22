@@ -91,6 +91,10 @@ class AppTestCase(unittest.TestCase):
         self.root = Path(self.temporary_directory.name)
         logging.disable(logging.CRITICAL)
         self.app = create_app(test_config(self.root))
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.password_change_required = False
         routes.login_limiter = LoginLimiter()
         routes.login_ip_limiter = LoginLimiter(limit=50)
         routes.shared_report_limiter = LoginLimiter()

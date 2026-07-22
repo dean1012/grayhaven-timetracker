@@ -70,6 +70,10 @@ by the application. Generate the manifest through deployment automation; do
 not store real or example credentials in Git. The structural sample under
 `examples/` contains placeholders only.
 
+Every bootstrap-created account must replace its initial password at first
+sign-in. A preconfigured TOTP enrollment remains active during that password
+change.
+
 After initial provisioning, manage accounts through the application. Retaining
 the manifest does not overwrite existing accounts.
 
@@ -81,7 +85,6 @@ The runtime branding directory must contain:
 
 ```text
 grayhaven-logo-wordmark-dark.svg
-grayhaven-logo-wordmark-light.png
 favicon.ico
 favicon-16.png
 favicon-32.png
