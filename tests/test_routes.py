@@ -1091,20 +1091,25 @@ class ClientContractTaskRouteTests(AppTestCase):
 
     def test_sensitive_delete_forms_require_reason_and_reauthentication(self) -> None:
         seed = self.seed_contract()
-        self.assertEqual(
-            self.client.get(f"/clients/{seed.client_id}/delete").status_code, 200
-        )
+        client_path = f"/clients/{seed.client_id}/delete"
+        self.assertEqual(self.client.get(client_path).status_code, 302)
+        authentication_url = self.client.get(client_path).location
+        self.assertEqual(self.client.get(authentication_url).status_code, 200)
         self.assertEqual(
             self.client.post(
-                f"/clients/{seed.client_id}/delete",
-                data={"current_password": ADMIN_PASSWORD},
+                authentication_url,
+                data={"password": "wrong"},
             ).status_code,
             400,
         )
+        cancelled = self.client.post(authentication_url, data={"cancel": "1"})
+        self.assertEqual(cancelled.location, f"/clients/{seed.client_id}")
+        self.authorize_sensitive_action(client_path)
+        self.assertEqual(self.client.get(client_path).status_code, 200)
         self.assertEqual(
             self.client.post(
-                f"/clients/{seed.client_id}/delete",
-                data={"current_password": "wrong", "correction_reason": "Reject"},
+                client_path,
+                data={},
             ).status_code,
             400,
         )
@@ -1114,21 +1119,10 @@ class ClientContractTaskRouteTests(AppTestCase):
             f"/subtasks/{seed.subtask_id}/delete",
         ):
             with self.subTest(path=path):
+                self.authorize_sensitive_action(path)
                 self.assertEqual(self.client.get(path).status_code, 200)
                 self.assertEqual(
-                    self.client.post(
-                        path, data={"current_password": ADMIN_PASSWORD}
-                    ).status_code,
-                    400,
-                )
-                self.assertEqual(
-                    self.client.post(
-                        path,
-                        data={
-                            "current_password": "wrong",
-                            "correction_reason": "Reject",
-                        },
-                    ).status_code,
+                    self.client.post(path, data={}).status_code,
                     400,
                 )
 
@@ -1270,40 +1264,14 @@ class ClientContractTaskRouteTests(AppTestCase):
             "/?stale=contract_deleted",
         )
         replacement_password = "Replacement-Report-Password-For-Test-0001!"
-        self.assertEqual(
-            self.client.get(f"/clients/{client_id}/report-password/reset").status_code,
-            200,
-        )
-        routes.sensitive_action_limiter = LoginLimiter(limit=1)
-        rejected_reset = self.client.post(
-            f"/clients/{client_id}/report-password/reset",
-            data={"current_password": "wrong", "totp": "000000"},
-        )
-        self.assertEqual(rejected_reset.status_code, 400)
-        self.assertEqual(
-            self.client.post(
-                f"/clients/{client_id}/report-password/reset",
-                data={"current_password": "wrong", "totp": "000000"},
-            ).status_code,
-            429,
-        )
-        routes.sensitive_action_limiter = LoginLimiter()
-        missing_totp = self.client.post(
-            f"/clients/{client_id}/report-password/reset",
-            data={"current_password": ADMIN_PASSWORD},
-        )
-        self.assertEqual(missing_totp.status_code, 400)
+        reset_path = f"/clients/{client_id}/report-password/reset"
+        self.authorize_sensitive_action(reset_path)
+        self.assertEqual(self.client.get(reset_path).status_code, 200)
         with patch(
             "grayhaven_timetracker.routes.generate_temporary_password",
             return_value=replacement_password,
         ):
-            reset_password = self.client.post(
-                f"/clients/{client_id}/report-password/reset",
-                data={
-                    "current_password": ADMIN_PASSWORD,
-                    "totp": next_totp(ADMIN_TOTP_SECRET),
-                },
-            )
+            reset_password = self.client.post(reset_path)
         self.assertEqual(reset_password.status_code, 302)
         confirmation_url = reset_password.headers["Location"]
         confirmation = self.client.get(confirmation_url)
@@ -1399,48 +1367,39 @@ class ClientContractTaskRouteTests(AppTestCase):
             assert admin is not None
             admin.totp_secret = None
 
-        confirmation = self.client.get(f"/subtasks/{child_id}/delete")
+        subtask_delete_path = f"/subtasks/{child_id}/delete"
+        self.authorize_sensitive_action(subtask_delete_path, totp_secret="")
+        confirmation = self.client.get(subtask_delete_path)
         self.assertEqual(confirmation.status_code, 200)
         self.assertIn(b"Audit history is retained", confirmation.data)
         self.assertEqual(
             self.client.post(
-                f"/subtasks/{child_id}/delete", data={"current_password": "wrong"}
-            ).status_code,
-            400,
-        )
-        self.assertEqual(
-            self.client.post(
-                f"/subtasks/{child_id}/delete",
-                data={
-                    "current_password": ADMIN_PASSWORD,
-                    "correction_reason": "Remove test subtask",
-                },
+                subtask_delete_path,
+                data={"correction_reason": "Remove test subtask"},
             ).status_code,
             302,
         )
         stale_subtask = self.client.get(f"/subtasks/{child_id}/delete")
         self.assertEqual(stale_subtask.status_code, 302)
         self.assertIn(f"/contracts/{seed.contract_id}", stale_subtask.location)
+        unused_task_delete_path = f"/tasks/{unused_id}/delete"
+        self.authorize_sensitive_action(unused_task_delete_path, totp_secret="")
         self.assertEqual(
             self.client.post(
-                f"/tasks/{unused_id}/delete",
-                data={
-                    "current_password": ADMIN_PASSWORD,
-                    "correction_reason": "Remove unused test task",
-                },
+                unused_task_delete_path,
+                data={"correction_reason": "Remove unused test task"},
             ).status_code,
             302,
         )
         stale_task = self.client.get(f"/tasks/{unused_id}/delete")
         self.assertEqual(stale_task.status_code, 302)
         self.assertIn(f"/contracts/{seed.contract_id}", stale_task.location)
+        task_delete_path = f"/tasks/{seed.task_id}/delete"
+        self.authorize_sensitive_action(task_delete_path, totp_secret="")
         self.assertEqual(
             self.client.post(
-                f"/tasks/{seed.task_id}/delete",
-                data={
-                    "current_password": ADMIN_PASSWORD,
-                    "correction_reason": "Remove test task",
-                },
+                task_delete_path,
+                data={"correction_reason": "Remove test task"},
             ).status_code,
             302,
         )
@@ -1476,13 +1435,12 @@ class ClientContractTaskRouteTests(AppTestCase):
             assert admin is not None
             admin.totp_secret = None
 
+        contract_delete_path = f"/contracts/{seed.contract_id}/delete"
+        self.authorize_sensitive_action(contract_delete_path, totp_secret="")
         self.assertEqual(
             self.client.post(
-                f"/contracts/{seed.contract_id}/delete",
-                data={
-                    "current_password": ADMIN_PASSWORD,
-                    "correction_reason": "Remove test contract",
-                },
+                contract_delete_path,
+                data={"correction_reason": "Remove test contract"},
             ).status_code,
             302,
         )
@@ -1508,13 +1466,12 @@ class ClientContractTaskRouteTests(AppTestCase):
                 f"Hamilton Beach - Phase 1 (ID: {seed.contract_id})",
             )
 
+        client_delete_path = f"/clients/{seed.client_id}/delete"
+        self.authorize_sensitive_action(client_delete_path, totp_secret="")
         self.assertEqual(
             self.client.post(
-                f"/clients/{seed.client_id}/delete",
-                data={
-                    "current_password": ADMIN_PASSWORD,
-                    "correction_reason": "Remove test client",
-                },
+                client_delete_path,
+                data={"correction_reason": "Remove test client"},
             ).status_code,
             302,
         )
@@ -1671,10 +1628,26 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         self.login()
 
     def test_profile_name_and_password_change_require_valid_inputs(self) -> None:
-        self.assertEqual(self.client.get("/profile").status_code, 200)
+        profile = self.client.get("/profile")
+        self.assertEqual(profile.status_code, 200)
+        self.assertIn(b'href="/profile/password/authenticate"', profile.data)
         self.assertEqual(
             self.client.get("/profile/password/change-required").location,
             "/profile",
+        )
+        self.assertEqual(
+            self.client.get("/profile/password/change").location,
+            "/profile/password/authenticate",
+        )
+        self.assertEqual(
+            self.client.post(
+                "/profile/password",
+                data={
+                    "new_password": "Unapproved-Password-For-Testing-0001!",
+                    "confirm_password": "Unapproved-Password-For-Testing-0001!",
+                },
+            ).location,
+            "/profile/password/authenticate",
         )
         self.assertEqual(
             self.client.post(
@@ -1685,24 +1658,58 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         self.client.post(
             "/profile/name", data={"first_name": "Updated", "last_name": "Operator"}
         )
+        challenge_redirect = self.client.get("/profile/password/authenticate")
+        self.assertEqual(challenge_redirect.status_code, 302)
+        challenge_url = challenge_redirect.location
+        challenge = self.client.get(challenge_url)
+        self.assertEqual(challenge.status_code, 200)
+        self.assertNotIn(b'autocomplete="username"', challenge.data)
+        self.assertIn(b'autocomplete="current-password"', challenge.data)
+        self.assertIn(b'name="password"', challenge.data)
+        self.assertNotIn(b'name="email"', challenge.data)
+        self.assertNotIn(b"data-totp-bubbles", challenge.data)
+        self.assertNotIn(b"data-protonpass-ignore", challenge.data)
+        self.assertEqual(
+            self.client.post(
+                challenge_url,
+                data={"password": "wrong"},
+            ).status_code,
+            400,
+        )
+        authorized = self.client.post(
+            challenge_url,
+            data={"password": ADMIN_PASSWORD},
+        )
+        self.assertEqual(authorized.location, "/reauthenticate/authenticator")
+        authenticator = self.client.get(authorized.location)
+        self.assertEqual(authenticator.status_code, 200)
+        self.assertIn(b"data-totp-bubbles", authenticator.data)
+        self.assertNotIn(b'type="password"', authenticator.data)
+        self.assertEqual(
+            self.client.post(
+                "/reauthenticate/authenticator",
+                data={"totp_digit": list("000000")},
+            ).status_code,
+            400,
+        )
+        authorized = self.client.post(
+            "/reauthenticate/authenticator",
+            data={"totp_digit": list(next_totp(ADMIN_TOTP_SECRET))},
+        )
+        self.assertEqual(authorized.location, "/profile/password/change")
+        password_form = self.client.get("/profile/password/change")
+        self.assertEqual(password_form.status_code, 200)
+        self.assertNotIn(b'name="current_password"', password_form.data)
         cases = [
             {
-                "current_password": "wrong",
-                "new_password": "New-Password-For-Testing-0000001!",
-                "confirm_password": "New-Password-For-Testing-0000001!",
-            },
-            {
-                "current_password": ADMIN_PASSWORD,
                 "new_password": ADMIN_PASSWORD,
                 "confirm_password": ADMIN_PASSWORD,
             },
             {
-                "current_password": ADMIN_PASSWORD,
                 "new_password": "New-Password-For-Testing-0000001!",
                 "confirm_password": "different",
             },
             {
-                "current_password": ADMIN_PASSWORD,
                 "new_password": "short",
                 "confirm_password": "short",
             },
@@ -1716,17 +1723,23 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         changed = self.client.post(
             "/profile/password",
             data={
-                "current_password": ADMIN_PASSWORD,
                 "new_password": new_password,
                 "confirm_password": new_password,
             },
         )
         self.assertEqual(changed.status_code, 302)
-        self.login(
-            password=new_password,
-            totp_secret=ADMIN_TOTP_SECRET,
-            totp_token=next_totp(ADMIN_TOTP_SECRET),
-        )
+        self.assertEqual(changed.location, "/login")
+        with patch(
+            "grayhaven_timetracker.auth.now_utc_timestamp",
+            return_value=time.time() + 30,
+        ):
+            self.login(
+                password=new_password,
+                totp_secret=ADMIN_TOTP_SECRET,
+                totp_token=pyotp.TOTP(ADMIN_TOTP_SECRET).generate_otp(
+                    int(time.time()) // 30 + 2
+                ),
+            )
         self.assertEqual(self.client.get("/profile").status_code, 200)
         with session_scope(self.app) as database:
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
@@ -1743,7 +1756,33 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             )
         self.assertEqual(response.status_code, 302)
 
+    def test_password_change_authorization_expires_and_supports_password_only(
+        self,
+    ) -> None:
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.totp_secret = None
+            reset_totp_replay_state(database, admin.id)
+
+        self.authorize_sensitive_action("/profile/password/change", totp_secret="")
+        self.assertEqual(self.client.get("/profile/password/change").status_code, 200)
+        with self.client.session_transaction() as browser_session:
+            browser_session["sensitive_action_authorized_until"] = 0
+        self.assertEqual(
+            self.client.get("/profile/password/change").location,
+            "/profile/password/authenticate",
+        )
+
     def test_totp_setup_confirmation_and_disable(self) -> None:
+        profile = self.client.get("/profile")
+        self.assertIn(b'href="/profile/totp/disable"', profile.data)
+        self.assertNotIn(b'name="current_password"', profile.data)
+        self.authorize_sensitive_action("/profile/totp/disable")
+        disable_form = self.client.get("/profile/totp/disable")
+        self.assertEqual(disable_form.status_code, 200)
+        self.assertNotIn(b'type="password"', disable_form.data)
+        self.assertNotIn(b"data-totp-bubbles", disable_form.data)
         with session_scope(self.app) as database:
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
             assert admin is not None
@@ -1783,27 +1822,12 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             302,
         )
         self.login(totp_secret=pending, totp_token=next_totp(pending))
-        self.assertEqual(
-            self.client.post(
-                "/profile/totp/disable",
-                data={"current_password": "wrong", "totp": "000000"},
-            ).status_code,
-            400,
+        self.authorize_sensitive_action(
+            "/profile/totp/disable",
+            totp_secret=pending,
+            totp_token=next_totp(pending),
         )
-        with session_scope(self.app) as database:
-            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
-            assert admin is not None
-            reset_totp_replay_state(database, admin.id)
-        self.assertEqual(
-            self.client.post(
-                "/profile/totp/disable",
-                data={
-                    "current_password": ADMIN_PASSWORD,
-                    "totp": pyotp.TOTP(pending).now(),
-                },
-            ).status_code,
-            302,
-        )
+        self.assertEqual(self.client.post("/profile/totp/disable").status_code, 302)
         self.login(totp_secret="")
         self.assertEqual(
             self.client.post("/profile/totp/disable").location,
@@ -1934,27 +1958,14 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                     started_at=datetime(2026, 7, 15, 12, 0, 0),
                 )
             )
-        self.assertEqual(
-            self.client.post(
-                f"/users/{user_id}/toggle-admin",
-                data={"current_password": ADMIN_PASSWORD},
-            ).status_code,
-            302,
-        )
-        self.assertEqual(
-            self.client.post(
-                f"/users/{user_id}/toggle-admin",
-                data={"current_password": ADMIN_PASSWORD},
-            ).status_code,
-            302,
-        )
-        self.assertEqual(
-            self.client.post(
-                f"/users/{user_id}/toggle-enabled",
-                data={"current_password": ADMIN_PASSWORD},
-            ).status_code,
-            302,
-        )
+        toggle_admin_path = f"/users/{user_id}/toggle-admin"
+        toggle_enabled_path = f"/users/{user_id}/toggle-enabled"
+        self.authorize_sensitive_action(toggle_admin_path)
+        self.assertEqual(self.client.post(toggle_admin_path).status_code, 302)
+        self.authorize_sensitive_action(toggle_admin_path)
+        self.assertEqual(self.client.post(toggle_admin_path).status_code, 302)
+        self.authorize_sensitive_action(toggle_enabled_path)
+        self.assertEqual(self.client.post(toggle_enabled_path).status_code, 302)
         with session_scope(self.app) as database:
             user = database.get(User, user_id)
             entry = database.scalar(
@@ -1963,33 +1974,10 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             assert user and entry
             self.assertFalse(user.is_enabled)
             self.assertIsNotNone(entry.stopped_at)
-        self.assertEqual(
-            self.client.get(f"/users/{user_id}/toggle-enabled").status_code, 200
-        )
-        self.assertEqual(
-            self.client.get(f"/users/{user_id}/toggle-admin").status_code, 200
-        )
-        self.assertEqual(
-            self.client.post(
-                f"/users/{user_id}/toggle-enabled",
-                data={"current_password": "wrong"},
-            ).status_code,
-            400,
-        )
-        self.assertEqual(
-            self.client.post(
-                f"/users/{user_id}/toggle-admin",
-                data={"current_password": "wrong"},
-            ).status_code,
-            400,
-        )
-        self.assertEqual(
-            self.client.post(
-                f"/users/{user_id}/toggle-enabled",
-                data={"current_password": ADMIN_PASSWORD},
-            ).status_code,
-            302,
-        )
+        self.assertEqual(self.client.get(toggle_enabled_path).status_code, 302)
+        self.assertEqual(self.client.get(toggle_admin_path).status_code, 302)
+        self.authorize_sensitive_action(toggle_enabled_path)
+        self.assertEqual(self.client.post(toggle_enabled_path).status_code, 302)
         with session_scope(self.app) as database:
             user = database.get(User, user_id)
             assert user is not None
@@ -2083,18 +2071,9 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             reset_totp_replay_state(database, admin.id)
         disable_url = f"/users/{target.id}/disable-totp"
         self.assertEqual(self.client.post("/users/1/disable-totp").status_code, 409)
+        self.authorize_sensitive_action(disable_url, totp_secret="")
         self.assertEqual(self.client.get(disable_url).status_code, 200)
-        self.assertEqual(
-            self.client.post(
-                disable_url,
-                data={"current_password": "wrong"},
-            ).status_code,
-            400,
-        )
-        disabled = self.client.post(
-            disable_url,
-            data={"current_password": ADMIN_PASSWORD},
-        )
+        disabled = self.client.post(disable_url)
         self.assertEqual(disabled.status_code, 302)
         with session_scope(self.app) as database:
             user = database.get(User, target.id)
@@ -2120,9 +2099,10 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                         self.app.test_request_context(
                             f"/users/1/{endpoint}",
                             method="POST",
-                            data={
-                                "current_password": "Standard-User-Test-Password-0001!"
-                            },
+                        ),
+                        patch(
+                            "grayhaven_timetracker.routes.sensitive_action_authorized",
+                            return_value=True,
                         ),
                         self.assertRaises(Conflict),
                     ):
@@ -2140,9 +2120,15 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         ):
             with self.subTest(path=path):
                 routes.sensitive_action_limiter = LoginLimiter(limit=1)
-                data = {"current_password": "wrong"}
-                self.assertEqual(self.client.post(path, data=data).status_code, 400)
-                self.assertEqual(self.client.post(path, data=data).status_code, 429)
+                authentication_url = self.client.get(path).location
+                self.assertEqual(self.client.get(authentication_url).status_code, 200)
+                data = {"password": "wrong"}
+                self.assertEqual(
+                    self.client.post(authentication_url, data=data).status_code, 400
+                )
+                self.assertEqual(
+                    self.client.post(authentication_url, data=data).status_code, 429
+                )
                 routes.sensitive_action_limiter = LoginLimiter()
 
     def test_admin_password_reset_requires_change_and_preserves_totp(self) -> None:
@@ -2158,38 +2144,14 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             password=original_password,
             totp_secret=secret,
         )
-        self.assertEqual(
-            self.client.get(f"/users/{user.id}/reset-password").status_code, 200
-        )
-        routes.sensitive_action_limiter = LoginLimiter(limit=1)
-        self.assertEqual(
-            self.client.post(
-                f"/users/{user.id}/reset-password",
-                data={"current_password": "wrong", "totp": "000000"},
-            ).status_code,
-            400,
-        )
-        self.assertEqual(
-            self.client.post(
-                f"/users/{user.id}/reset-password",
-                data={"current_password": "wrong", "totp": "000000"},
-            ).status_code,
-            429,
-        )
-        routes.sensitive_action_limiter = LoginLimiter()
-
+        reset_path = f"/users/{user.id}/reset-password"
+        self.authorize_sensitive_action(reset_path)
+        self.assertEqual(self.client.get(reset_path).status_code, 200)
         with patch(
             "grayhaven_timetracker.routes.generate_temporary_password",
             return_value=temporary_password,
         ):
-            reset = self.client.post(
-                f"/users/{user.id}/reset-password",
-                data={
-                    "current_password": ADMIN_PASSWORD,
-                    "totp": next_totp(ADMIN_TOTP_SECRET),
-                },
-                follow_redirects=True,
-            )
+            reset = self.client.post(reset_path, follow_redirects=True)
         self.assertEqual(reset.status_code, 200)
         self.assertIn(temporary_password.encode(), reset.data)
         self.assertIn("/login", existing_session.get("/").location)
@@ -2230,6 +2192,9 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         self.assertEqual(
             recovered.get("/profile/password/change-required").status_code, 200
         )
+        required_form = recovered.get("/profile/password/change-required")
+        self.assertNotIn(b'name="current_password"', required_form.data)
+        self.assertNotIn(b"data-protonpass-ignore", required_form.data)
         self.assertEqual(
             recovered.get("/profile").location,
             "/profile/password/change-required",
@@ -2237,7 +2202,6 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         changed = recovered.post(
             "/profile/password",
             data={
-                "current_password": temporary_password,
                 "new_password": permanent_password,
                 "confirm_password": permanent_password,
             },
@@ -2437,40 +2401,16 @@ class ReportAndSessionRouteTests(AppTestCase):
     def test_session_payment_status_requires_metadata_and_is_reversible(self) -> None:
         self.login()
         status_url = f"/sessions/{self.seed.entry_id}/status"
+        self.authorize_sensitive_action(status_url)
         self.assertEqual(self.client.get(status_url).status_code, 200)
-
-        routes.sensitive_action_limiter = LoginLimiter(limit=1)
-        rejected_status = {
-            "billing_status": "pending_invoice",
-            "correction_reason": "Reject status credentials",
-            "current_password": "wrong",
-        }
-        self.assertEqual(
-            self.client.post(status_url, data=rejected_status).status_code, 400
-        )
-        self.assertEqual(
-            self.client.post(status_url, data=rejected_status).status_code, 429
-        )
-        routes.sensitive_action_limiter = LoginLimiter()
-
-        with session_scope(self.app) as database:
-            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
-            assert admin is not None
-            reset_totp_replay_state(database, admin.id)
         invalid_status = self.client.post(
             status_url,
             data={
                 "billing_status": "invalid",
                 "correction_reason": "Reject invalid status",
-                "current_password": ADMIN_PASSWORD,
-                "totp_digit": list(pyotp.TOTP(ADMIN_TOTP_SECRET).now()),
             },
         )
         self.assertEqual(invalid_status.status_code, 400)
-        with session_scope(self.app) as database:
-            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
-            assert admin is not None
-            reset_totp_replay_state(database, admin.id)
         invoiced = self.client.post(
             status_url,
             data={
@@ -2478,8 +2418,6 @@ class ReportAndSessionRouteTests(AppTestCase):
                 "invoice_number": "INV-001",
                 "invoice_date": "2026-07-17",
                 "correction_reason": "Record invoice",
-                "current_password": ADMIN_PASSWORD,
-                "totp_digit": list(pyotp.TOTP(ADMIN_TOTP_SECRET).now()),
             },
         )
         self.assertEqual(invoiced.status_code, 302)
@@ -2500,17 +2438,12 @@ class ReportAndSessionRouteTests(AppTestCase):
             self.client.get(f"/tasks/{self.seed.task_id}/delete").status_code, 409
         )
 
-        with session_scope(self.app) as database:
-            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
-            assert admin is not None
-            reset_totp_replay_state(database, admin.id)
+        self.authorize_sensitive_action(status_url)
         pending = self.client.post(
             status_url,
             data={
                 "billing_status": "pending_invoice",
                 "correction_reason": "Correct invoice assignment",
-                "current_password": ADMIN_PASSWORD,
-                "totp_digit": list(pyotp.TOTP(ADMIN_TOTP_SECRET).now()),
             },
         )
         self.assertEqual(pending.status_code, 302)
@@ -2555,10 +2488,8 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         with session_scope(self.app) as database:
             database.delete(database.get(TimeEntry, active_id))
-        base = {
-            "current_password": ADMIN_PASSWORD,
-            "correction_reason": "Reject bad metadata",
-        }
+        base = {"correction_reason": "Reject bad metadata"}
+        self.authorize_sensitive_action(status_url, totp_secret="")
         invalid_cases = (
             {"billing_status": "invoiced"},
             {"billing_status": "invoiced", "invoice_number": "INV-2"},
@@ -2589,6 +2520,7 @@ class ReportAndSessionRouteTests(AppTestCase):
             },
         )
         self.assertEqual(invoiced.status_code, 302)
+        self.authorize_sensitive_action(status_url, totp_secret="")
         self.assertEqual(
             self.client.post(
                 status_url,
@@ -2616,6 +2548,7 @@ class ReportAndSessionRouteTests(AppTestCase):
             },
         )
         self.assertEqual(paid.status_code, 302)
+        self.authorize_sensitive_action(status_url, totp_secret="")
         for extra in (
             {"billing_status": "disbursed", "transaction_number": "TX-1"},
             {
@@ -2725,42 +2658,15 @@ class ReportAndSessionRouteTests(AppTestCase):
             assert admin is not None
             admin.totp_secret = None
         delete_url = f"/sessions/{self.seed.entry_id}/delete"
+        self.authorize_sensitive_action(delete_url, totp_secret="")
         self.assertEqual(self.client.get(delete_url).status_code, 200)
         self.assertEqual(
-            self.client.post(
-                delete_url,
-                data={"current_password": ADMIN_PASSWORD},
-            ).status_code,
+            self.client.post(delete_url, data={}).status_code,
             400,
         )
-        routes.sensitive_action_limiter = LoginLimiter(limit=1)
-        self.assertEqual(
-            self.client.post(
-                delete_url,
-                data={
-                    "current_password": "wrong",
-                    "correction_reason": "Reject invalid delete",
-                },
-            ).status_code,
-            400,
-        )
-        self.assertEqual(
-            self.client.post(
-                delete_url,
-                data={
-                    "current_password": "wrong",
-                    "correction_reason": "Reject invalid delete",
-                },
-            ).status_code,
-            429,
-        )
-        routes.sensitive_action_limiter = LoginLimiter()
         deleted = self.client.post(
             delete_url,
-            data={
-                "current_password": ADMIN_PASSWORD,
-                "correction_reason": "Remove corrected test session",
-            },
+            data={"correction_reason": "Remove corrected test session"},
         )
         self.assertEqual(deleted.status_code, 302)
         with session_scope(self.app) as database:
@@ -2887,28 +2793,9 @@ class ReportAndSessionRouteTests(AppTestCase):
         active_contract_page = self.client.get(f"/contracts/{self.seed.contract_id}")
         self.assertIn(b'class="icon-button timer-action"', active_contract_page.data)
         self.assertIn(b'class="timer-stop-form"', active_contract_page.data)
+        self.authorize_sensitive_action(archive_url)
         self.assertEqual(self.client.get(archive_url).status_code, 200)
-        routes.sensitive_action_limiter = LoginLimiter(limit=1)
-        rejected = self.client.post(
-            archive_url,
-            data={"current_password": "wrong-password", "totp": "000000"},
-        )
-        self.assertEqual(rejected.status_code, 400)
-        self.assertEqual(
-            self.client.post(
-                archive_url,
-                data={"current_password": "wrong-password", "totp": "000000"},
-            ).status_code,
-            429,
-        )
-        routes.sensitive_action_limiter = LoginLimiter()
-        archived = self.client.post(
-            archive_url,
-            data={
-                "current_password": ADMIN_PASSWORD,
-                "totp_digit": list(pyotp.TOTP(ADMIN_TOTP_SECRET).now()),
-            },
-        )
+        archived = self.client.post(archive_url)
         self.assertEqual(archived.status_code, 302)
         with session_scope(self.app) as database:
             contract = database.get(Contract, self.seed.contract_id)
@@ -2931,17 +2818,8 @@ class ReportAndSessionRouteTests(AppTestCase):
             archived_report.data,
         )
 
-        with session_scope(self.app) as database:
-            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
-            assert admin is not None
-            reset_totp_replay_state(database, admin.id)
-        activated = self.client.post(
-            archive_url,
-            data={
-                "current_password": ADMIN_PASSWORD,
-                "totp_digit": list(pyotp.TOTP(ADMIN_TOTP_SECRET).now()),
-            },
-        )
+        self.authorize_sensitive_action(archive_url)
+        activated = self.client.post(archive_url)
         self.assertEqual(activated.status_code, 302)
         with session_scope(self.app) as database:
             contract = database.get(Contract, self.seed.contract_id)

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Authenticator · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li aria-current="page"><span class="breadcrumb-label" title="Authenticator">Authenticator</span></li></ol></nav>{% endblock %}
+{% block content %}
+<section class="narrow-content">
+  <div class="panel form-panel">
+    <p class="eyebrow">SECURITY CHECK</p>
+    <h1>Enter Authenticator Code</h1>
+    <form method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {% include "_totp_bubbles.html" %}
+      <div class="form-actions"><button class="button button-secondary" type="submit" name="cancel" value="1" formnovalidate>Cancel</button><button class="button button-primary" type="submit"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Verify</button></div>
+    </form>
+  </div>
+</section>
+{% endblock %}

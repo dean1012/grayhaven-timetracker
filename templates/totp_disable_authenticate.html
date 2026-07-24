@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Disable two-factor authentication · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li><a class="breadcrumb-label" href="{{ url_for('main.profile') }}" title="Profile">Profile</a></li><li aria-current="page"><span class="breadcrumb-label" title="Disable Two-Factor Authentication">Disable Two-Factor Authentication</span></li></ol></nav>{% endblock %}
+{% block content %}
+<section class="narrow-content">
+  <div class="panel form-panel">
+    <p class="eyebrow">TWO-FACTOR AUTHENTICATION</p>
+    <h1>Disable Two-Factor Authentication</h1>
+    <p class="muted">Your identity has been verified. Confirm that you want to remove authenticator protection.</p>
+    <form method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="form-actions"><a class="button button-secondary" href="{{ url_for('main.profile') }}">Cancel</a><button class="button button-primary" type="submit"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Disable 2FA</button></div>
+    </form>
+  </div>
+</section>
+{% endblock %}

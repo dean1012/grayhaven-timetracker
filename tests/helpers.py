@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import tempfile
+import time
 import unittest
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -16,7 +17,11 @@ from flask.testing import FlaskClient
 from sqlalchemy import select
 
 from grayhaven_timetracker import create_app, routes
-from grayhaven_timetracker.auth import LoginLimiter, hash_password
+from grayhaven_timetracker.auth import (
+    LoginLimiter,
+    hash_password,
+    reset_totp_replay_state,
+)
 from grayhaven_timetracker.database import dispose_app_database, session_scope
 from grayhaven_timetracker.models import (
     Client,
@@ -165,6 +170,56 @@ class AppTestCase(unittest.TestCase):
             database.flush()
             database.expunge(user)
         return user
+
+    def authorize_sensitive_action(
+        self,
+        path: str,
+        client: FlaskClient | None = None,
+        *,
+        password: str = ADMIN_PASSWORD,
+        totp_secret: str | None = None,
+        totp_token: str | None = None,
+    ) -> FlaskClient:
+        """Complete the password and optional TOTP flow for one action path."""
+        selected = client or self.client
+        with selected.session_transaction() as browser_session:
+            user_id = browser_session["user_id"]
+            for key in routes.PENDING_SENSITIVE_ACTION_SESSION_KEYS:
+                browser_session.pop(key, None)
+            for key in routes.SENSITIVE_ACTION_AUTHORIZATION_SESSION_KEYS:
+                browser_session.pop(key, None)
+        with session_scope(self.app) as database:
+            user = database.get(User, user_id)
+            assert user is not None
+            effective_totp_secret = (
+                user.totp_secret if totp_secret is None else totp_secret
+            )
+        response = selected.get(path)
+        for _ in range(3):
+            self.assertEqual(response.status_code, 302)
+            if "/reauthenticate?" in response.location:
+                break
+            response = selected.get(response.location)
+        self.assertIn("/reauthenticate?", response.location)
+        authentication_url = response.location
+        self.assertEqual(selected.get(authentication_url).status_code, 200)
+        response = selected.post(authentication_url, data={"password": password})
+        if effective_totp_secret:
+            self.assertEqual(response.location, "/reauthenticate/authenticator")
+            self.assertEqual(
+                selected.get("/reauthenticate/authenticator").status_code, 200
+            )
+            with session_scope(self.app) as database:
+                reset_totp_replay_state(database, user_id)
+            token = totp_token or pyotp.TOTP(effective_totp_secret).generate_otp(
+                int(time.time()) // 30
+            )
+            response = selected.post(
+                "/reauthenticate/authenticator",
+                data={"totp_digit": list(token)},
+            )
+        self.assertEqual(response.location, path)
+        return selected
 
     def seed_contract(self, *, entry_user_id: int | None = None) -> SeedData:
         """Create one client, contract, tasks, subtask, and completed session."""
