@@ -1774,6 +1774,117 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             "/profile/password/authenticate",
         )
 
+    def test_sensitive_action_challenges_reject_invalid_state(self) -> None:
+        self.assertEqual(self.client.get("/reauthenticate").status_code, 400)
+        self.assertEqual(
+            self.client.post("/reauthenticate").location,
+            "/profile",
+        )
+        self.assertEqual(
+            self.client.get("/reauthenticate/authenticator").location,
+            "/profile",
+        )
+
+        challenge_url = self.client.get("/profile/password/authenticate").location
+        self.assertEqual(self.client.get(challenge_url).status_code, 200)
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.totp_secret = None
+            reset_totp_replay_state(database, admin.id)
+        self.assertEqual(
+            self.client.get("/reauthenticate/authenticator").location,
+            "/profile",
+        )
+
+    def test_sensitive_action_authenticator_cancels_and_rate_limits(self) -> None:
+        challenge_url = self.client.get("/profile/password/authenticate").location
+        self.assertEqual(self.client.get(challenge_url).status_code, 200)
+        self.assertEqual(
+            self.client.post(
+                challenge_url,
+                data={"password": ADMIN_PASSWORD},
+            ).location,
+            "/reauthenticate/authenticator",
+        )
+        cancelled = self.client.post(
+            "/reauthenticate/authenticator",
+            data={"cancel": "1"},
+        )
+        self.assertEqual(cancelled.location, "/profile")
+        with self.client.session_transaction() as browser_session:
+            for key in (
+                *routes.PENDING_SENSITIVE_ACTION_SESSION_KEYS,
+                *routes.SENSITIVE_ACTION_AUTHORIZATION_SESSION_KEYS,
+            ):
+                self.assertNotIn(key, browser_session)
+
+        challenge_url = self.client.get("/profile/password/authenticate").location
+        self.assertEqual(self.client.get(challenge_url).status_code, 200)
+        self.assertEqual(
+            self.client.post(
+                challenge_url,
+                data={"password": ADMIN_PASSWORD},
+            ).location,
+            "/reauthenticate/authenticator",
+        )
+        routes.sensitive_action_limiter = LoginLimiter(limit=1)
+        self.assertEqual(
+            self.client.post(
+                "/reauthenticate/authenticator",
+                data={"totp_digit": list("000000")},
+            ).status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/reauthenticate/authenticator",
+                data={"totp_digit": list("000000")},
+            ).status_code,
+            429,
+        )
+
+    def test_required_password_change_bypasses_profile_reauthentication(self) -> None:
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.password_change_required = True
+
+        for path in (
+            "/profile/password/authenticate",
+            "/profile/password/change",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.client.get(path).location,
+                    "/profile/password/change-required",
+                )
+
+        for view, path in (
+            (
+                routes.authenticate_password_change,
+                "/profile/password/authenticate",
+            ),
+            (
+                routes.password_change_form,
+                "/profile/password/change",
+            ),
+        ):
+            with (
+                self.subTest(path=path),
+                self.app.test_request_context(path),
+                session_scope(self.app) as database,
+            ):
+                admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+                assert admin is not None
+                g.database_session = database
+                g.current_user = admin
+                response = view.__wrapped__()
+                self.assertEqual(
+                    response.location,
+                    "/profile/password/change-required",
+                )
+
     def test_totp_setup_confirmation_and_disable(self) -> None:
         profile = self.client.get("/profile")
         self.assertIn(b'href="/profile/totp/disable"', profile.data)
