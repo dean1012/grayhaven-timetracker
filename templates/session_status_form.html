@@ -5,7 +5,7 @@
 <section class="narrow-content"><div class="panel form-panel">
   <p class="eyebrow">PAYMENT STATUS</p><h1>Update Session Status</h1>
   <p class="muted">Update financial status only. Any correction requires a reason and is permanently audited.</p>
-  <form method="post" class="form-stack" autocomplete="off" data-protonpass-ignore="true">
+  <form method="post" class="form-stack" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>Payment Status<span class="select-control"><select name="billing_status" required autocomplete="off" data-protonpass-ignore="true">{% for value, label in status_labels.items() %}<option value="{{ value }}" {% if request.form.get('billing_status', entry.billing_status) == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span></label>
     <label>Invoice Number<input name="invoice_number" value="{{ request.form.get('invoice_number', entry.invoice_number or '') }}" maxlength="100" autocomplete="off" data-protonpass-ignore="true"></label>
