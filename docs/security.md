@@ -61,7 +61,9 @@ authenticated application sessions.
   and a new TOTP code.
 - Session cookies are HTTP-only, SameSite Lax, host-only, and fixed-lifetime.
   External deployments must enable Secure cookies.
-- State-changing browser requests use POST and CSRF protection.
+- State-changing browser requests use POST and CSRF protection. The same-origin
+  referrer policy supplies HTTPS origin evidence without disclosing referrers
+  across origins.
 - Route permissions and object-state checks are centralized and enforced on the
   server.
 - Browser Host values use an explicit allowlist. A configured public origin
