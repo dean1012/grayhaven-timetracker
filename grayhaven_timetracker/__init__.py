@@ -161,7 +161,10 @@ def register_security_headers(app: Flask) -> None:
         response.headers["Permissions-Policy"] = (
             "camera=(), microphone=(), geolocation=(), payment=()"
         )
-        response.headers["Referrer-Policy"] = "no-referrer"
+        # Flask-WTF's HTTPS CSRF check requires a same-origin Referer. Keep
+        # cross-origin requests private while allowing protected forms to send
+        # the origin evidence required by that check.
+        response.headers["Referrer-Policy"] = "same-origin"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         if request.is_secure:

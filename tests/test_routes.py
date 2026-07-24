@@ -404,6 +404,7 @@ class SecurityAndErrorRouteTests(AppTestCase):
     def test_security_headers_cache_policy_health_and_errors(self) -> None:
         response = self.client.get("/login", base_url="https://example.invalid")
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+        self.assertEqual(response.headers["Referrer-Policy"], "same-origin")
         self.assertIn(
             "frame-ancestors 'none'", response.headers["Content-Security-Policy"]
         )
@@ -432,6 +433,28 @@ class SecurityAndErrorRouteTests(AppTestCase):
             self.client.get("/login", base_url="https://example.invalid").status_code,
             200,
         )
+
+    def test_https_csrf_accepts_same_origin_form_submission(self) -> None:
+        self.app.config["WTF_CSRF_ENABLED"] = True
+        login_page = self.client.get("/login", base_url="https://example.invalid")
+        match = re.search(
+            rb'name="csrf_token" value="([^"]+)"',
+            login_page.data,
+        )
+        self.assertIsNotNone(match)
+        assert match is not None
+
+        response = self.client.post(
+            "/login",
+            base_url="https://example.invalid",
+            headers={"Referer": "https://example.invalid/login"},
+            data={
+                "csrf_token": match.group(1).decode(),
+                "email": "invalid@example.invalid",
+                "password": "invalid",
+            },
+        )
+        self.assertEqual(response.status_code, 401)
 
     def test_health_failure_and_database_error_return_generic_pages(self) -> None:
         self.app.config["PROPAGATE_EXCEPTIONS"] = False
