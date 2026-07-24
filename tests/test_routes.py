@@ -1810,6 +1810,14 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         )
 
     def test_totp_setup_confirmation_and_disable(self) -> None:
+        profile = self.client.get("/profile")
+        self.assertIn(b'href="/profile/totp/disable"', profile.data)
+        self.assertNotIn(b'name="current_password"', profile.data)
+        disable_form = self.client.get("/profile/totp/disable")
+        self.assertEqual(disable_form.status_code, 200)
+        self.assertIn(b'name="current_password"', disable_form.data)
+        self.assertIn(b"data-totp-bubbles", disable_form.data)
+        self.assertNotIn(b"data-protonpass-ignore", disable_form.data)
         with session_scope(self.app) as database:
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
             assert admin is not None

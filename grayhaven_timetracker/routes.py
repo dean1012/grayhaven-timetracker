@@ -3192,12 +3192,14 @@ def confirm_totp() -> Any:
     return redirect(url_for("main.login"))
 
 
-@main.post("/profile/totp/disable")
+@main.route("/profile/totp/disable", methods=["GET", "POST"])
 @login_required
 def disable_totp() -> Any:
     user = cast(User, current_user())
     if not user.totp_secret:
         return redirect(url_for("main.profile"))
+    if request.method != "POST":
+        return render_template("totp_disable_authenticate.html")
     if not verify_password(
         user.password_hash, request.form.get("current_password", "")
     ) or not consume_totp(user, submitted_totp_token()):
@@ -3208,7 +3210,7 @@ def disable_totp() -> Any:
             reason="reauthentication",
         )
         flash("The password or verification code was not accepted.", "error")
-        return redirect(url_for("main.profile")), 400
+        return render_template("totp_disable_authenticate.html"), 400
     user.totp_secret = None
     user.pending_totp_secret = None
     reset_totp_replay_state(get_session(), user.id)
