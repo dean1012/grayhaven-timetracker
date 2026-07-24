@@ -155,7 +155,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .button-stop { color: var(--soft-white); background: color-mix(in srgb, var(--alert-error) 14%, transparent); border-color: color-mix(in srgb, var(--alert-error) 60%, transparent); }
 .button-stop:hover { background: color-mix(in srgb, var(--alert-error) 25%, transparent); border-color: var(--alert-error); }
 .table-button { min-height: 34px; padding: .35rem .65rem; font-size: .78rem; }
-.status-pill { display: inline-block; padding: .2rem .55rem; color: var(--soft-white); border-radius: var(--pill-radius); font-size: .72rem; font-weight: var(--font-weight-semibold); }
+.status-pill { display: inline-flex; align-items: center; justify-content: center; padding: .2rem .55rem; color: var(--soft-white); border-radius: var(--pill-radius); font-size: .72rem; font-weight: var(--font-weight-semibold); text-align: center; }
 .status-enabled { background: color-mix(in srgb, var(--alert-success) 15%, transparent); }
 .status-disabled { background: color-mix(in srgb, var(--alert-error) 15%, transparent); }
 .status-neutral { color: var(--cool-grey); background: color-mix(in srgb, var(--cool-grey) 12%, transparent); }
@@ -292,7 +292,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .share-controls form { margin: 0; }
 .share-form label { min-width: 145px; }
 .table-scroll { max-width: 100%; overflow: visible; }
-.user-table .status-pill { display: inline-flex; align-items: center; justify-content: flex-start; width: 9rem; text-align: left; }
+.user-table .status-pill { width: 9rem; }
 .audit-table { table-layout: fixed; }
 .audit-table th:nth-child(1) { width: 14%; }
 .audit-table th:nth-child(2) { width: 11%; }
