@@ -1703,6 +1703,8 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         )
         challenge = self.client.get("/profile/password/authenticate")
         self.assertEqual(challenge.status_code, 200)
+        self.assertIn(b'autocomplete="username"', challenge.data)
+        self.assertIn(b'autocomplete="current-password"', challenge.data)
         self.assertIn(b'name="password"', challenge.data)
         self.assertNotIn(b"Current Password", challenge.data)
         self.assertIn(b"data-totp-bubbles", challenge.data)
