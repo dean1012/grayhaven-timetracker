@@ -1671,10 +1671,26 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         self.login()
 
     def test_profile_name_and_password_change_require_valid_inputs(self) -> None:
-        self.assertEqual(self.client.get("/profile").status_code, 200)
+        profile = self.client.get("/profile")
+        self.assertEqual(profile.status_code, 200)
+        self.assertIn(b'href="/profile/password/authenticate"', profile.data)
         self.assertEqual(
             self.client.get("/profile/password/change-required").location,
             "/profile",
+        )
+        self.assertEqual(
+            self.client.get("/profile/password/change").location,
+            "/profile/password/authenticate",
+        )
+        self.assertEqual(
+            self.client.post(
+                "/profile/password",
+                data={
+                    "new_password": "Unapproved-Password-For-Testing-0001!",
+                    "confirm_password": "Unapproved-Password-For-Testing-0001!",
+                },
+            ).location,
+            "/profile/password/authenticate",
         )
         self.assertEqual(
             self.client.post(
@@ -1685,24 +1701,42 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         self.client.post(
             "/profile/name", data={"first_name": "Updated", "last_name": "Operator"}
         )
+        challenge = self.client.get("/profile/password/authenticate")
+        self.assertEqual(challenge.status_code, 200)
+        self.assertIn(b'name="current_password"', challenge.data)
+        self.assertIn(b"data-totp-bubbles", challenge.data)
+        self.assertNotIn(b"data-protonpass-ignore", challenge.data)
+        self.assertEqual(
+            self.client.post(
+                "/profile/password/authenticate",
+                data={
+                    "current_password": "wrong",
+                    "totp_digit": list(next_totp(ADMIN_TOTP_SECRET)),
+                },
+            ).status_code,
+            400,
+        )
+        authorized = self.client.post(
+            "/profile/password/authenticate",
+            data={
+                "current_password": ADMIN_PASSWORD,
+                "totp_digit": list(next_totp(ADMIN_TOTP_SECRET)),
+            },
+        )
+        self.assertEqual(authorized.location, "/profile/password/change")
+        password_form = self.client.get("/profile/password/change")
+        self.assertEqual(password_form.status_code, 200)
+        self.assertNotIn(b'name="current_password"', password_form.data)
         cases = [
             {
-                "current_password": "wrong",
-                "new_password": "New-Password-For-Testing-0000001!",
-                "confirm_password": "New-Password-For-Testing-0000001!",
-            },
-            {
-                "current_password": ADMIN_PASSWORD,
                 "new_password": ADMIN_PASSWORD,
                 "confirm_password": ADMIN_PASSWORD,
             },
             {
-                "current_password": ADMIN_PASSWORD,
                 "new_password": "New-Password-For-Testing-0000001!",
                 "confirm_password": "different",
             },
             {
-                "current_password": ADMIN_PASSWORD,
                 "new_password": "short",
                 "confirm_password": "short",
             },
@@ -1716,17 +1750,22 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         changed = self.client.post(
             "/profile/password",
             data={
-                "current_password": ADMIN_PASSWORD,
                 "new_password": new_password,
                 "confirm_password": new_password,
             },
         )
         self.assertEqual(changed.status_code, 302)
-        self.login(
-            password=new_password,
-            totp_secret=ADMIN_TOTP_SECRET,
-            totp_token=next_totp(ADMIN_TOTP_SECRET),
-        )
+        with patch(
+            "grayhaven_timetracker.auth.now_utc_timestamp",
+            return_value=time.time() + 30,
+        ):
+            self.login(
+                password=new_password,
+                totp_secret=ADMIN_TOTP_SECRET,
+                totp_token=pyotp.TOTP(ADMIN_TOTP_SECRET).generate_otp(
+                    int(time.time()) // 30 + 2
+                ),
+            )
         self.assertEqual(self.client.get("/profile").status_code, 200)
         with session_scope(self.app) as database:
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
@@ -1742,6 +1781,33 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                 data={"first_name": "Still", "last_name": "Available"},
             )
         self.assertEqual(response.status_code, 302)
+
+    def test_password_change_authorization_expires_and_supports_password_only(
+        self,
+    ) -> None:
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.totp_secret = None
+            reset_totp_replay_state(database, admin.id)
+
+        challenge = self.client.get("/profile/password/authenticate")
+        self.assertEqual(challenge.status_code, 200)
+        self.assertNotIn(b"data-totp-bubbles", challenge.data)
+        self.assertEqual(
+            self.client.post(
+                "/profile/password/authenticate",
+                data={"current_password": ADMIN_PASSWORD},
+            ).location,
+            "/profile/password/change",
+        )
+        self.assertEqual(self.client.get("/profile/password/change").status_code, 200)
+        with self.client.session_transaction() as browser_session:
+            browser_session["password_change_authorized_until"] = 0
+        self.assertEqual(
+            self.client.get("/profile/password/change").location,
+            "/profile/password/authenticate",
+        )
 
     def test_totp_setup_confirmation_and_disable(self) -> None:
         with session_scope(self.app) as database:
@@ -2230,6 +2296,9 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         self.assertEqual(
             recovered.get("/profile/password/change-required").status_code, 200
         )
+        required_form = recovered.get("/profile/password/change-required")
+        self.assertNotIn(b'name="current_password"', required_form.data)
+        self.assertNotIn(b"data-protonpass-ignore", required_form.data)
         self.assertEqual(
             recovered.get("/profile").location,
             "/profile/password/change-required",
@@ -2237,7 +2306,6 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         changed = recovered.post(
             "/profile/password",
             data={
-                "current_password": temporary_password,
                 "new_password": permanent_password,
                 "confirm_password": permanent_password,
             },

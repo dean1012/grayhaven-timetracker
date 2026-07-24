@@ -125,6 +125,7 @@ shared_report_limiter = LoginLimiter()
 sensitive_action_limiter = LoginLimiter()
 REPORT_PASSWORD_CONFIRMATION_TTL_SECONDS = 120
 TOTP_SETUP_TTL_SECONDS = 300
+PASSWORD_CHANGE_AUTHORIZATION_TTL_SECONDS = 300
 AUDIT_SOURCES = frozenset({"admin", "user", "public", "system"})
 AUDIT_PAGE_SIZE = 25
 USER_PAGE_SIZE = 25
@@ -151,6 +152,10 @@ USER_PASSWORD_CONFIRMATION_SESSION_KEYS = (
     "user_password_confirmation_token",
 )
 TOTP_SETUP_EXPIRES_AT_SESSION_KEY = "totp_setup_expires_at"
+PASSWORD_CHANGE_AUTHORIZATION_SESSION_KEYS = (
+    "password_change_authorized_session_version",
+    "password_change_authorized_until",
+)
 
 
 @dataclass(frozen=True)
@@ -1011,6 +1016,26 @@ def clear_pending_login() -> None:
     """Remove an incomplete two-stage login without disturbing flash state."""
     for key in PENDING_LOGIN_SESSION_KEYS:
         session.pop(key, None)
+
+
+def clear_password_change_authorization() -> None:
+    """Remove a pending profile password-change authorization."""
+    for key in PASSWORD_CHANGE_AUTHORIZATION_SESSION_KEYS:
+        session.pop(key, None)
+
+
+def password_change_authorized(user: User) -> bool:
+    """Validate a short-lived reauthentication grant for a password change."""
+    expires_at = session.get("password_change_authorized_until")
+    session_version = session.get("password_change_authorized_session_version")
+    authorized = (
+        isinstance(expires_at, (int, float))
+        and expires_at > now_utc_timestamp()
+        and session_version == user.session_version
+    )
+    if not authorized:
+        clear_password_change_authorization()
+    return authorized
 
 
 def pending_login_user() -> User | None:
@@ -2971,6 +2996,70 @@ def required_password_change() -> Any:
     return render_template("password_change_required.html", user=user)
 
 
+@main.route("/profile/password/authenticate", methods=["GET", "POST"])
+@login_required
+def authenticate_password_change() -> Any:
+    """Reauthenticate an established session before changing its password."""
+    user = cast(User, current_user())
+    if user.password_change_required:
+        return redirect(url_for("main.required_password_change"))
+    if password_change_authorized(user):
+        return redirect(url_for("main.password_change_form"))
+    if request.method != "POST":
+        return render_template(
+            "password_change_authenticate.html",
+            totp_required=bool(user.totp_secret),
+        )
+
+    rate_key = sensitive_action_rate_key(user)
+    if sensitive_action_limiter.blocked(rate_key):
+        audit(
+            "password_change_reauthentication_rate_limited",
+            user_id=user.id,
+            source_ip=request.remote_addr,
+        )
+        abort(429)
+    if not sensitive_action_credentials_valid(user):
+        sensitive_action_limiter.record_failure(rate_key)
+        audit(
+            "password_change_reauthentication_rejected",
+            user_id=user.id,
+            source_ip=request.remote_addr,
+        )
+        flash("The account credentials were not accepted.", "error")
+        return (
+            render_template(
+                "password_change_authenticate.html",
+                totp_required=bool(user.totp_secret),
+            ),
+            400,
+        )
+
+    sensitive_action_limiter.clear(rate_key)
+    session["password_change_authorized_until"] = (
+        now_utc_timestamp() + PASSWORD_CHANGE_AUTHORIZATION_TTL_SECONDS
+    )
+    session["password_change_authorized_session_version"] = user.session_version
+    audit(
+        "password_change_reauthentication_succeeded",
+        user_id=user.id,
+        source_ip=request.remote_addr,
+    )
+    return redirect(url_for("main.password_change_form"))
+
+
+@main.get("/profile/password/change")
+@login_required
+def password_change_form() -> Any:
+    """Show the profile password form only after recent reauthentication."""
+    user = cast(User, current_user())
+    if user.password_change_required:
+        return redirect(url_for("main.required_password_change"))
+    if not password_change_authorized(user):
+        return redirect(url_for("main.authenticate_password_change"))
+    return render_template("password_change_form.html")
+
+
 @main.post("/profile/name")
 @login_required
 def update_profile_name() -> Any:
@@ -3001,12 +3090,11 @@ def update_profile_name() -> Any:
 def change_password() -> Any:
     user = cast(User, current_user())
     was_required = user.password_change_required
-    current_password = request.form.get("current_password", "")
+    if not was_required and not password_change_authorized(user):
+        return redirect(url_for("main.authenticate_password_change"))
     new_password = request.form.get("new_password", "")
     confirmation = request.form.get("confirm_password", "")
-    if not verify_password(user.password_hash, current_password):
-        flash("The current password was not accepted.", "error")
-    elif verify_password(user.password_hash, new_password):
+    if verify_password(user.password_hash, new_password):
         flash("The new password must differ from the current password.", "error")
     elif new_password != confirmation:
         flash("The new password confirmation does not match.", "error")
@@ -3027,7 +3115,11 @@ def change_password() -> Any:
         flash("Password changed successfully. Please sign in again.", "success")
         return redirect(url_for("main.login"))
     return redirect(
-        url_for("main.required_password_change" if was_required else "main.profile")
+        url_for(
+            "main.required_password_change"
+            if was_required
+            else "main.password_change_form"
+        )
     )
 
 
