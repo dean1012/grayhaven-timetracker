@@ -1731,6 +1731,7 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             },
         )
         self.assertEqual(changed.status_code, 302)
+        self.assertEqual(changed.location, "/login")
         with patch(
             "grayhaven_timetracker.auth.now_utc_timestamp",
             return_value=time.time() + 30,

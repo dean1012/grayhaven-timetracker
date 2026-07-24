@@ -1041,7 +1041,7 @@ def authorize_sensitive_action(user: User, path: str) -> None:
     )
 
 
-def sensitive_action_authorized(user: User) -> bool:
+def sensitive_action_authorized(user: User, expected_path: str | None = None) -> bool:
     """Validate a short-lived grant scoped to the current action URL."""
     expires_at = session.get("sensitive_action_authorized_until")
     session_version = session.get("sensitive_action_authorized_session_version")
@@ -1050,7 +1050,7 @@ def sensitive_action_authorized(user: User) -> bool:
         isinstance(expires_at, (int, float))
         and expires_at > now_utc_timestamp()
         and session_version == user.session_version
-        and path == request.path
+        and path == (expected_path or request.path)
     )
     if not authorized:
         clear_sensitive_action_authorization()
@@ -3147,7 +3147,9 @@ def update_profile_name() -> Any:
 def change_password() -> Any:
     user = cast(User, current_user())
     was_required = user.password_change_required
-    if not was_required and not sensitive_action_authorized(user):
+    if not was_required and not sensitive_action_authorized(
+        user, url_for("main.password_change_form")
+    ):
         return redirect(url_for("main.authenticate_password_change"))
     new_password = request.form.get("new_password", "")
     confirmation = request.form.get("confirm_password", "")
