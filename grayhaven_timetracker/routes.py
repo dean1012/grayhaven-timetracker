@@ -125,7 +125,7 @@ shared_report_limiter = LoginLimiter()
 sensitive_action_limiter = LoginLimiter()
 REPORT_PASSWORD_CONFIRMATION_TTL_SECONDS = 120
 TOTP_SETUP_TTL_SECONDS = 300
-PASSWORD_CHANGE_AUTHORIZATION_TTL_SECONDS = 300
+SENSITIVE_ACTION_AUTHORIZATION_TTL_SECONDS = 300
 AUDIT_SOURCES = frozenset({"admin", "user", "public", "system"})
 AUDIT_PAGE_SIZE = 25
 USER_PAGE_SIZE = 25
@@ -152,9 +152,17 @@ USER_PASSWORD_CONFIRMATION_SESSION_KEYS = (
     "user_password_confirmation_token",
 )
 TOTP_SETUP_EXPIRES_AT_SESSION_KEY = "totp_setup_expires_at"
-PASSWORD_CHANGE_AUTHORIZATION_SESSION_KEYS = (
-    "password_change_authorized_session_version",
-    "password_change_authorized_until",
+PENDING_SENSITIVE_ACTION_SESSION_KEYS = (
+    "pending_sensitive_action_cancel_url",
+    "pending_sensitive_action_expires_at",
+    "pending_sensitive_action_path",
+    "pending_sensitive_action_session_version",
+    "pending_sensitive_action_user_id",
+)
+SENSITIVE_ACTION_AUTHORIZATION_SESSION_KEYS = (
+    "sensitive_action_authorized_path",
+    "sensitive_action_authorized_session_version",
+    "sensitive_action_authorized_until",
 )
 
 
@@ -384,16 +392,6 @@ def get_shared_report_client(token: str) -> Client:
     return client
 
 
-def sensitive_action_credentials_valid(user: User) -> bool:
-    """Reauthenticate an administrator before a credential rotation."""
-    password_valid = verify_password(
-        user.password_hash, request.form.get("current_password", "")
-    )
-    if not password_valid:
-        return False
-    return not user.totp_secret or consume_totp(user, submitted_totp_token())
-
-
 def submitted_totp_token() -> str:
     """Return the six-bubble authenticator value submitted by a form."""
     digits = request.form.getlist("totp_digit")
@@ -446,26 +444,6 @@ def audit_time_entry_details(entry: TimeEntry) -> dict[str, str]:
         "user": audit_object_label(entry.user.full_name, entry.user_id),
         "time entry": f"Time entry (ID: {entry.id})",
     }
-
-
-def sensitive_action_failure(
-    actor: User,
-    confirmation: dict[str, Any],
-    event: str,
-    **details: Any,
-) -> Any | None:
-    """Return a reauthentication failure response or clear a valid challenge."""
-    rate_key = sensitive_action_rate_key(actor)
-    if sensitive_action_limiter.blocked(rate_key):
-        audit(f"{event}_rate_limited", actor_id=actor.id, **details)
-        abort(429)
-    if sensitive_action_credentials_valid(actor):
-        sensitive_action_limiter.clear(rate_key)
-        return None
-    sensitive_action_limiter.record_failure(rate_key)
-    audit(f"{event}_rejected", actor_id=actor.id, **details)
-    flash("The administrator credentials were not accepted.", "error")
-    return render_template("sensitive_action_form.html", **confirmation), 400
 
 
 def purge_subtask_data(subtask_id: int) -> int:
@@ -1018,24 +996,85 @@ def clear_pending_login() -> None:
         session.pop(key, None)
 
 
-def clear_password_change_authorization() -> None:
-    """Remove a pending profile password-change authorization."""
-    for key in PASSWORD_CHANGE_AUTHORIZATION_SESSION_KEYS:
+def clear_pending_sensitive_action() -> None:
+    """Remove an incomplete sensitive-action authentication challenge."""
+    for key in PENDING_SENSITIVE_ACTION_SESSION_KEYS:
         session.pop(key, None)
 
 
-def password_change_authorized(user: User) -> bool:
-    """Validate a short-lived reauthentication grant for a password change."""
-    expires_at = session.get("password_change_authorized_until")
-    session_version = session.get("password_change_authorized_session_version")
+def clear_sensitive_action_authorization() -> None:
+    """Remove a short-lived sensitive-action authorization."""
+    for key in SENSITIVE_ACTION_AUTHORIZATION_SESSION_KEYS:
+        session.pop(key, None)
+
+
+def pending_sensitive_action(user: User) -> tuple[str, str] | None:
+    """Return the target and cancel URLs for a valid authentication challenge."""
+    user_id = session.get("pending_sensitive_action_user_id")
+    session_version = session.get("pending_sensitive_action_session_version")
+    expires_at = session.get("pending_sensitive_action_expires_at")
+    path = session.get("pending_sensitive_action_path")
+    cancel_url = session.get("pending_sensitive_action_cancel_url")
+    valid = (
+        user_id == user.id
+        and session_version == user.session_version
+        and isinstance(expires_at, (int, float))
+        and expires_at > now_utc_timestamp()
+        and isinstance(path, str)
+        and safe_next_url(path) == path
+        and isinstance(cancel_url, str)
+        and safe_next_url(cancel_url) == cancel_url
+    )
+    if not valid:
+        clear_pending_sensitive_action()
+        return None
+    return cast(str, path), cast(str, cancel_url)
+
+
+def authorize_sensitive_action(user: User, path: str) -> None:
+    """Promote a completed password and TOTP challenge into a scoped grant."""
+    clear_pending_sensitive_action()
+    session["sensitive_action_authorized_path"] = path
+    session["sensitive_action_authorized_session_version"] = user.session_version
+    session["sensitive_action_authorized_until"] = (
+        now_utc_timestamp() + SENSITIVE_ACTION_AUTHORIZATION_TTL_SECONDS
+    )
+
+
+def sensitive_action_authorized(user: User) -> bool:
+    """Validate a short-lived grant scoped to the current action URL."""
+    expires_at = session.get("sensitive_action_authorized_until")
+    session_version = session.get("sensitive_action_authorized_session_version")
+    path = session.get("sensitive_action_authorized_path")
     authorized = (
         isinstance(expires_at, (int, float))
         and expires_at > now_utc_timestamp()
         and session_version == user.session_version
+        and path == request.path
     )
     if not authorized:
-        clear_password_change_authorization()
+        clear_sensitive_action_authorization()
     return authorized
+
+
+def require_sensitive_action_authorization(
+    user: User, cancel_url: str
+) -> Any | None:
+    """Redirect an unauthenticated sensitive action into the shared flow."""
+    if sensitive_action_authorized(user):
+        return None
+    return redirect(
+        url_for(
+            "main.authenticate_sensitive_action",
+            next=request.path,
+            cancel=cancel_url,
+        )
+    )
+
+
+def consume_sensitive_action_authorization() -> None:
+    """Consume a scoped grant after its authorized action succeeds."""
+    clear_sensitive_action_authorization()
 
 
 def pending_login_user() -> User | None:
@@ -1172,6 +1211,131 @@ def login_authenticator() -> Any:
     pending_next = session.get("pending_login_next")
     next_url = safe_next_url(pending_next if isinstance(pending_next, str) else None)
     return complete_login(user, ip, next_url)
+
+
+@main.route("/reauthenticate", methods=["GET", "POST"])
+@login_required
+def authenticate_sensitive_action() -> Any:
+    """Verify the current password before a sensitive application action."""
+    user = cast(User, current_user())
+    if request.method != "POST":
+        next_url = safe_next_url(request.args.get("next"))
+        cancel_url = safe_next_url(request.args.get("cancel"))
+        if not next_url or not cancel_url:
+            abort(400)
+        clear_pending_sensitive_action()
+        clear_sensitive_action_authorization()
+        session["pending_sensitive_action_user_id"] = user.id
+        session["pending_sensitive_action_session_version"] = user.session_version
+        session["pending_sensitive_action_expires_at"] = (
+            now_utc_timestamp() + SENSITIVE_ACTION_AUTHORIZATION_TTL_SECONDS
+        )
+        session["pending_sensitive_action_path"] = next_url
+        session["pending_sensitive_action_cancel_url"] = cancel_url
+    pending = pending_sensitive_action(user)
+    if pending is None:
+        flash("Your authentication challenge expired. Please try again.", "warning")
+        return redirect(url_for("main.profile"))
+    next_url, cancel_url = pending
+    if request.method != "POST":
+        return render_template(
+            "sensitive_action_authenticate.html", cancel_url=cancel_url
+        )
+    if request.form.get("cancel") == "1":
+        clear_pending_sensitive_action()
+        clear_sensitive_action_authorization()
+        return redirect(cancel_url)
+
+    rate_key = sensitive_action_rate_key(user)
+    if sensitive_action_limiter.blocked(rate_key):
+        audit(
+            "sensitive_action_reauthentication_rate_limited",
+            user_id=user.id,
+            source_ip=request.remote_addr,
+            action_path=next_url,
+        )
+        abort(429)
+    if not verify_password(user.password_hash, request.form.get("password", "")):
+        sensitive_action_limiter.record_failure(rate_key)
+        audit(
+            "sensitive_action_reauthentication_rejected",
+            user_id=user.id,
+            source_ip=request.remote_addr,
+            stage="password",
+            action_path=next_url,
+        )
+        flash("The password was not accepted.", "error")
+        return (
+            render_template(
+                "sensitive_action_authenticate.html", cancel_url=cancel_url
+            ),
+            400,
+        )
+    if user.totp_secret:
+        return redirect(url_for("main.authenticate_sensitive_action_totp"))
+    sensitive_action_limiter.clear(rate_key)
+    authorize_sensitive_action(user, next_url)
+    audit(
+        "sensitive_action_reauthentication_succeeded",
+        user_id=user.id,
+        source_ip=request.remote_addr,
+        action_path=next_url,
+    )
+    return redirect(next_url)
+
+
+@main.route("/reauthenticate/authenticator", methods=["GET", "POST"])
+@login_required
+def authenticate_sensitive_action_totp() -> Any:
+    """Complete a sensitive-action challenge using a separate TOTP form."""
+    user = cast(User, current_user())
+    pending = pending_sensitive_action(user)
+    if pending is None or not user.totp_secret:
+        flash("Your authentication challenge expired. Please try again.", "warning")
+        return redirect(url_for("main.profile"))
+    next_url, cancel_url = pending
+    if request.method != "POST":
+        return render_template(
+            "sensitive_action_authenticator.html", cancel_url=cancel_url
+        )
+    if request.form.get("cancel") == "1":
+        clear_pending_sensitive_action()
+        clear_sensitive_action_authorization()
+        return redirect(cancel_url)
+    rate_key = sensitive_action_rate_key(user)
+    if sensitive_action_limiter.blocked(rate_key):
+        audit(
+            "sensitive_action_reauthentication_rate_limited",
+            user_id=user.id,
+            source_ip=request.remote_addr,
+            action_path=next_url,
+        )
+        abort(429)
+    if not consume_totp(user, submitted_totp_token()):
+        sensitive_action_limiter.record_failure(rate_key)
+        audit(
+            "sensitive_action_reauthentication_rejected",
+            user_id=user.id,
+            source_ip=request.remote_addr,
+            stage="authenticator",
+            action_path=next_url,
+        )
+        flash("The authenticator code was not accepted.", "error")
+        return (
+            render_template(
+                "sensitive_action_authenticator.html", cancel_url=cancel_url
+            ),
+            400,
+        )
+    sensitive_action_limiter.clear(rate_key)
+    authorize_sensitive_action(user, next_url)
+    audit(
+        "sensitive_action_reauthentication_succeeded",
+        user_id=user.id,
+        source_ip=request.remote_addr,
+        action_path=next_url,
+    )
+    return redirect(next_url)
 
 
 @main.post("/logout")
@@ -1334,9 +1498,12 @@ def delete_client(client_id: int) -> Any:
         "breadcrumb_parent_label": item.name,
         "breadcrumb_parent_url": url_for("main.client", client_id=item.id),
         "breadcrumb_label": "Delete Client",
-        "totp_required": bool(actor.totp_secret),
         "correction_reason_required": True,
     }
+    if response := require_sensitive_action_authorization(
+        actor, cast(str, confirmation["cancel_url"])
+    ):
+        return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
     try:
@@ -1345,15 +1512,6 @@ def delete_client(client_id: int) -> Any:
         flash(str(exc), "error")
         return render_template("sensitive_action_form.html", **confirmation), 400
     client_label = audit_object_label(item.name, item.id)
-    failure = sensitive_action_failure(
-        actor,
-        confirmation,
-        "client_delete",
-        client=client_label,
-        correction_reason=reason,
-    )
-    if failure is not None:
-        return failure
     deleted_time = purge_contract_data(
         select(Contract.id).where(Contract.client_id == item.id)
     )
@@ -1366,6 +1524,7 @@ def delete_client(client_id: int) -> Any:
         deleted_time_entries=deleted_time,
         correction_reason=reason,
     )
+    consume_sensitive_action_authorization()
     flash("Client and associated work data deleted.", "success")
     return redirect(url_for("main.dashboard"))
 
@@ -1388,30 +1547,13 @@ def reset_client_report_password(client_id: int) -> Any:
         "breadcrumb_parent_label": item.name,
         "breadcrumb_parent_url": url_for("main.client", client_id=item.id),
         "breadcrumb_label": "Generate Report Password",
-        "totp_required": bool(actor.totp_secret),
     }
+    if response := require_sensitive_action_authorization(
+        actor, confirmation["cancel_url"]
+    ):
+        return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
-    rate_key = sensitive_action_rate_key(actor)
-    if sensitive_action_limiter.blocked(rate_key):
-        audit(
-            "client_report_password_reset_rate_limited",
-            actor_id=actor.id,
-            client_id=item.id,
-            source_ip=request.remote_addr,
-        )
-        abort(429)
-    if not sensitive_action_credentials_valid(actor):
-        sensitive_action_limiter.record_failure(rate_key)
-        audit(
-            "client_report_password_reset_rejected",
-            actor_id=actor.id,
-            client_id=item.id,
-            source_ip=request.remote_addr,
-        )
-        flash("The administrator credentials were not accepted.", "error")
-        return render_template("sensitive_action_form.html", **confirmation), 400
-    sensitive_action_limiter.clear(rate_key)
     report_password = generate_temporary_password()
     item.report_password_hash = hash_password(report_password)
     item.report_password_version += 1
@@ -1438,6 +1580,7 @@ def reset_client_report_password(client_id: int) -> Any:
         session.pop(key, None)
     session["report_password_confirmation_client_id"] = item.id
     session["report_password_confirmation_token"] = confirmation_token
+    consume_sensitive_action_authorization()
     return redirect(
         url_for("main.client_report_password_confirmation", client_id=item.id)
     )
@@ -1612,9 +1755,12 @@ def delete_contract(contract_id: int) -> Any:
         "breadcrumb_parent_label": client_name,
         "breadcrumb_parent_url": url_for("main.client", client_id=client_id),
         "breadcrumb_label": "Delete Contract",
-        "totp_required": bool(actor.totp_secret),
         "correction_reason_required": True,
     }
+    if response := require_sensitive_action_authorization(
+        actor, cast(str, confirmation["cancel_url"])
+    ):
+        return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
     try:
@@ -1624,16 +1770,6 @@ def delete_contract(contract_id: int) -> Any:
         return render_template("sensitive_action_form.html", **confirmation), 400
     client_label = audit_object_label(client_name, client_id)
     contract_label = audit_object_label(contract_name, item.id)
-    failure = sensitive_action_failure(
-        actor,
-        confirmation,
-        "contract_delete",
-        client=client_label,
-        contract=contract_label,
-        correction_reason=reason,
-    )
-    if failure is not None:
-        return failure
     deleted_time = purge_contract_data(
         select(Contract.id).where(Contract.id == item.id)
     )
@@ -1646,6 +1782,7 @@ def delete_contract(contract_id: int) -> Any:
         deleted_time_entries=deleted_time,
         correction_reason=reason,
     )
+    consume_sensitive_action_authorization()
     flash("Contract and associated work data deleted.", "success")
     return redirect(url_for("main.client", client_id=client_id))
 
@@ -1674,19 +1811,13 @@ def archive_contract(contract_id: int) -> Any:
         "breadcrumb_parent_label": item.client.name,
         "breadcrumb_parent_url": url_for("main.client", client_id=item.client_id),
         "breadcrumb_label": "Activate Contract" if activating else "Archive Contract",
-        "totp_required": bool(actor.totp_secret),
     }
+    if response := require_sensitive_action_authorization(
+        actor, confirmation["cancel_url"]
+    ):
+        return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
-    failure = sensitive_action_failure(
-        actor,
-        confirmation,
-        "contract_activate" if activating else "contract_archive",
-        client=audit_object_label(item.client.name, item.client_id),
-        contract=audit_object_label(item.name, item.id),
-    )
-    if failure is not None:
-        return failure
     if activating:
         item.archived_at = None
         item.archived_by_user_id = None
@@ -1698,6 +1829,7 @@ def archive_contract(contract_id: int) -> Any:
             contract_id=item.id,
             changes={"Archived": {"from": "Archived", "to": "Active"}},
         )
+        consume_sensitive_action_authorization()
         flash("Contract activated.", "success")
     else:
         stopped_count = 0
@@ -1735,6 +1867,7 @@ def archive_contract(contract_id: int) -> Any:
             stopped_timers=stopped_count,
             changes={"Archived": {"from": "Active", "to": "Archived"}},
         )
+        consume_sensitive_action_authorization()
         flash("Contract archived and active timers stopped.", "success")
     return redirect(url_for("main.contract", contract_id=item.id))
 
@@ -1933,9 +2066,12 @@ def delete_task(task_id: int) -> Any:
         "breadcrumb_parent_label": task.contract.name,
         "breadcrumb_parent_url": url_for("main.contract", contract_id=task.contract_id),
         "breadcrumb_label": "Delete Task",
-        "totp_required": bool(actor.totp_secret),
         "correction_reason_required": True,
     }
+    if response := require_sensitive_action_authorization(
+        actor, cast(str, confirmation["cancel_url"])
+    ):
+        return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
     try:
@@ -1943,17 +2079,6 @@ def delete_task(task_id: int) -> Any:
     except ValueError as exc:
         flash(str(exc), "error")
         return render_template("sensitive_action_form.html", **confirmation), 400
-    failure = sensitive_action_failure(
-        actor,
-        confirmation,
-        "task_delete",
-        client=client_label,
-        contract=contract_label,
-        task=task_label,
-        correction_reason=reason,
-    )
-    if failure is not None:
-        return failure
     deleted_time = purge_task_data(select(Task.id).where(Task.id == task.id))
     database.commit()
     audit(
@@ -1965,6 +2090,7 @@ def delete_task(task_id: int) -> Any:
         deleted_time_entries=deleted_time,
         correction_reason=reason,
     )
+    consume_sensitive_action_authorization()
     flash("Task deleted.", "success")
     return redirect(url_for("main.contract", contract_id=contract_id))
 
@@ -2001,9 +2127,12 @@ def delete_subtask(subtask_id: int) -> Any:
         "breadcrumb_parent_label": subtask.task.contract.name,
         "breadcrumb_parent_url": url_for("main.contract", contract_id=contract_id),
         "breadcrumb_label": "Delete Subtask",
-        "totp_required": bool(actor.totp_secret),
         "correction_reason_required": True,
     }
+    if response := require_sensitive_action_authorization(
+        actor, cast(str, confirmation["cancel_url"])
+    ):
+        return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
     try:
@@ -2011,18 +2140,6 @@ def delete_subtask(subtask_id: int) -> Any:
     except ValueError as exc:
         flash(str(exc), "error")
         return render_template("sensitive_action_form.html", **confirmation), 400
-    failure = sensitive_action_failure(
-        actor,
-        confirmation,
-        "subtask_delete",
-        client=client_label,
-        contract=contract_label,
-        task=task_label,
-        subtask=subtask_label,
-        correction_reason=reason,
-    )
-    if failure is not None:
-        return failure
     deleted_time = purge_subtask_data(subtask.id)
     database.commit()
     audit(
@@ -2035,6 +2152,7 @@ def delete_subtask(subtask_id: int) -> Any:
         deleted_time_entries=deleted_time,
         correction_reason=reason,
     )
+    consume_sensitive_action_authorization()
     flash("Subtask deleted.", "success")
     return redirect(url_for("main.contract", contract_id=contract_id))
 
@@ -2748,9 +2866,12 @@ def delete_time_entry(entry_id: int) -> Any:
             "main.contract_sessions", contract_id=contract_id
         ),
         "breadcrumb_label": "Delete Session",
-        "totp_required": bool(actor.totp_secret),
         "correction_reason_required": True,
     }
+    if response := require_sensitive_action_authorization(
+        actor, cast(str, confirmation["cancel_url"])
+    ):
+        return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
     try:
@@ -2758,25 +2879,6 @@ def delete_time_entry(entry_id: int) -> Any:
     except ValueError as exc:
         flash(str(exc), "error")
         return render_template("sensitive_action_form.html", **confirmation), 400
-    rate_key = sensitive_action_rate_key(actor)
-    if sensitive_action_limiter.blocked(rate_key):
-        abort(429)
-    if not sensitive_action_credentials_valid(actor):
-        sensitive_action_limiter.record_failure(rate_key)
-        audit(
-            "time_entry_delete_rejected",
-            actor_id=actor.id,
-            user=user_label,
-            client=client_label,
-            contract=contract_label,
-            task=task_label,
-            subtask=subtask_label,
-            time_entry=entry_label,
-            correction_reason=reason,
-        )
-        flash("The administrator credentials were not accepted.", "error")
-        return render_template("sensitive_action_form.html", **confirmation), 400
-    sensitive_action_limiter.clear(rate_key)
     database.delete(entry)
     database.commit()
     audit(
@@ -2794,6 +2896,7 @@ def delete_time_entry(entry_id: int) -> Any:
         billable_rate=audit_rate(entry.task.contract.hourly_rate_cents),
         correction_reason=reason,
     )
+    consume_sensitive_action_authorization()
     flash("Time session deleted.", "success")
     return redirect(url_for("main.contract_sessions", contract_id=contract_id))
 
@@ -2841,26 +2944,15 @@ def edit_time_entry_status(entry_id: int) -> Any:
         "breadcrumb_label": "Update Session Status",
         "entry": entry,
         "status_labels": status_labels,
-        "totp_required": bool(actor.totp_secret),
     }
+    if response := require_sensitive_action_authorization(
+        actor, cast(str, confirmation["cancel_url"])
+    ):
+        return response
     if request.method != "POST":
         return render_template("session_status_form.html", **confirmation)
     try:
         reason = correction_reason()
-        rate_key = sensitive_action_rate_key(actor)
-        if sensitive_action_limiter.blocked(rate_key):
-            abort(429)
-        if not sensitive_action_credentials_valid(actor):
-            sensitive_action_limiter.record_failure(rate_key)
-            audit(
-                "time_entry_status_update_rejected",
-                actor_id=actor.id,
-                time_entry=f"Time entry (ID: {entry.id})",
-                correction_reason=reason,
-            )
-            flash("The administrator credentials were not accepted.", "error")
-            return render_template("session_status_form.html", **confirmation), 400
-        sensitive_action_limiter.clear(rate_key)
         target_status = request.form.get("billing_status", "").strip()
         if target_status not in status_labels:
             raise ValueError("Select a valid payment status.")
@@ -2970,6 +3062,7 @@ def edit_time_entry_status(entry_id: int) -> Any:
         ),
         correction_reason=reason,
     )
+    consume_sensitive_action_authorization()
     flash("Session payment status updated.", "success")
     return redirect(
         url_for("main.contract_sessions", contract_id=entry.task.contract_id)
@@ -3003,55 +3096,13 @@ def authenticate_password_change() -> Any:
     user = cast(User, current_user())
     if user.password_change_required:
         return redirect(url_for("main.required_password_change"))
-    if password_change_authorized(user):
-        return redirect(url_for("main.password_change_form"))
-    if request.method != "POST":
-        return render_template(
-            "password_change_authenticate.html",
-            totp_required=bool(user.totp_secret),
+    return redirect(
+        url_for(
+            "main.authenticate_sensitive_action",
+            next=url_for("main.password_change_form"),
+            cancel=url_for("main.profile"),
         )
-
-    rate_key = sensitive_action_rate_key(user)
-    if sensitive_action_limiter.blocked(rate_key):
-        audit(
-            "password_change_reauthentication_rate_limited",
-            user_id=user.id,
-            source_ip=request.remote_addr,
-        )
-        abort(429)
-    password_valid = verify_password(
-        user.password_hash, request.form.get("password", "")
     )
-    credentials_valid = password_valid and (
-        not user.totp_secret or consume_totp(user, submitted_totp_token())
-    )
-    if not credentials_valid:
-        sensitive_action_limiter.record_failure(rate_key)
-        audit(
-            "password_change_reauthentication_rejected",
-            user_id=user.id,
-            source_ip=request.remote_addr,
-        )
-        flash("The account credentials were not accepted.", "error")
-        return (
-            render_template(
-                "password_change_authenticate.html",
-                totp_required=bool(user.totp_secret),
-            ),
-            400,
-        )
-
-    sensitive_action_limiter.clear(rate_key)
-    session["password_change_authorized_until"] = (
-        now_utc_timestamp() + PASSWORD_CHANGE_AUTHORIZATION_TTL_SECONDS
-    )
-    session["password_change_authorized_session_version"] = user.session_version
-    audit(
-        "password_change_reauthentication_succeeded",
-        user_id=user.id,
-        source_ip=request.remote_addr,
-    )
-    return redirect(url_for("main.password_change_form"))
 
 
 @main.get("/profile/password/change")
@@ -3061,7 +3112,7 @@ def password_change_form() -> Any:
     user = cast(User, current_user())
     if user.password_change_required:
         return redirect(url_for("main.required_password_change"))
-    if not password_change_authorized(user):
+    if not sensitive_action_authorized(user):
         return redirect(url_for("main.authenticate_password_change"))
     return render_template("password_change_form.html")
 
@@ -3096,7 +3147,7 @@ def update_profile_name() -> Any:
 def change_password() -> Any:
     user = cast(User, current_user())
     was_required = user.password_change_required
-    if not was_required and not password_change_authorized(user):
+    if not was_required and not sensitive_action_authorized(user):
         return redirect(url_for("main.authenticate_password_change"))
     new_password = request.form.get("new_password", "")
     confirmation = request.form.get("confirm_password", "")
@@ -3204,19 +3255,12 @@ def disable_totp() -> Any:
     user = cast(User, current_user())
     if not user.totp_secret:
         return redirect(url_for("main.profile"))
+    if response := require_sensitive_action_authorization(
+        user, url_for("main.profile")
+    ):
+        return response
     if request.method != "POST":
         return render_template("totp_disable_authenticate.html")
-    if not verify_password(
-        user.password_hash, request.form.get("current_password", "")
-    ) or not consume_totp(user, submitted_totp_token()):
-        audit(
-            "totp_disable_rejected",
-            user_id=user.id,
-            source_ip=request.remote_addr,
-            reason="reauthentication",
-        )
-        flash("The password or verification code was not accepted.", "error")
-        return render_template("totp_disable_authenticate.html"), 400
     user.totp_secret = None
     user.pending_totp_secret = None
     reset_totp_replay_state(get_session(), user.id)
@@ -3228,6 +3272,7 @@ def disable_totp() -> Any:
         source_ip=request.remote_addr,
         sessions_invalidated=True,
     )
+    consume_sensitive_action_authorization()
     session.clear()
     flash(
         "Two-factor authentication has been disabled. Please sign in again.", "success"
@@ -3493,30 +3538,13 @@ def reset_user_password(user_id: int) -> Any:
         "breadcrumb_parent_label": "Users",
         "breadcrumb_parent_url": url_for("main.users"),
         "breadcrumb_label": "Reset User Password",
-        "totp_required": bool(actor.totp_secret),
     }
+    if response := require_sensitive_action_authorization(
+        actor, confirmation["cancel_url"]
+    ):
+        return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
-    rate_key = sensitive_action_rate_key(actor)
-    if sensitive_action_limiter.blocked(rate_key):
-        audit(
-            "user_password_reset_rate_limited",
-            actor_id=actor.id,
-            user_id=user.id,
-            source_ip=request.remote_addr,
-        )
-        abort(429)
-    if not sensitive_action_credentials_valid(actor):
-        sensitive_action_limiter.record_failure(rate_key)
-        audit(
-            "user_password_reset_rejected",
-            actor_id=actor.id,
-            user_id=user.id,
-            source_ip=request.remote_addr,
-        )
-        flash("The administrator credentials were not accepted.", "error")
-        return render_template("sensitive_action_form.html", **confirmation), 400
-    sensitive_action_limiter.clear(rate_key)
     temporary_password = generate_temporary_password()
     user.password_hash = hash_password(temporary_password)
     user.password_change_required = True
@@ -3540,6 +3568,7 @@ def reset_user_password(user_id: int) -> Any:
         session.pop(key, None)
     session["user_password_confirmation_user_id"] = user.id
     session["user_password_confirmation_token"] = confirmation_token
+    consume_sensitive_action_authorization()
     return redirect(url_for("main.reset_user_password_confirmation", user_id=user.id))
 
 
@@ -3593,30 +3622,13 @@ def disable_user_totp(user_id: int) -> Any:
         "breadcrumb_parent_label": "Users",
         "breadcrumb_parent_url": url_for("main.users"),
         "breadcrumb_label": "Disable TOTP",
-        "totp_required": bool(actor.totp_secret),
     }
+    if response := require_sensitive_action_authorization(
+        actor, confirmation["cancel_url"]
+    ):
+        return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
-    rate_key = sensitive_action_rate_key(actor)
-    if sensitive_action_limiter.blocked(rate_key):
-        audit(
-            "user_totp_disable_rate_limited",
-            actor_id=actor.id,
-            user_id=user.id,
-            source_ip=request.remote_addr,
-        )
-        abort(429)
-    if not sensitive_action_credentials_valid(actor):
-        sensitive_action_limiter.record_failure(rate_key)
-        audit(
-            "user_totp_disable_rejected",
-            actor_id=actor.id,
-            user_id=user.id,
-            source_ip=request.remote_addr,
-        )
-        flash("The administrator credentials were not accepted.", "error")
-        return render_template("sensitive_action_form.html", **confirmation), 400
-    sensitive_action_limiter.clear(rate_key)
     user.totp_secret = None
     user.pending_totp_secret = None
     reset_totp_replay_state(database, user.id)
@@ -3630,6 +3642,7 @@ def disable_user_totp(user_id: int) -> Any:
         source_ip=request.remote_addr,
         sessions_invalidated=True,
     )
+    consume_sensitive_action_authorization()
     flash("TOTP has been disabled for the user.", "success")
     return redirect(url_for("main.users"))
 
@@ -3657,30 +3670,13 @@ def toggle_user_enabled(user_id: int) -> Any:
         "breadcrumb_parent_label": "Users",
         "breadcrumb_parent_url": url_for("main.users"),
         "breadcrumb_label": "Disable User" if user.is_enabled else "Enable User",
-        "totp_required": bool(actor.totp_secret),
     }
+    if response := require_sensitive_action_authorization(
+        actor, confirmation["cancel_url"]
+    ):
+        return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
-    rate_key = sensitive_action_rate_key(actor)
-    if sensitive_action_limiter.blocked(rate_key):
-        audit(
-            "user_enabled_change_rate_limited",
-            actor_id=actor.id,
-            user_id=user.id,
-            source_ip=request.remote_addr,
-        )
-        abort(429)
-    if not sensitive_action_credentials_valid(actor):
-        sensitive_action_limiter.record_failure(rate_key)
-        audit(
-            "user_enabled_change_rejected",
-            actor_id=actor.id,
-            user_id=user.id,
-            source_ip=request.remote_addr,
-        )
-        flash("The administrator credentials were not accepted.", "error")
-        return render_template("sensitive_action_form.html", **confirmation), 400
-    sensitive_action_limiter.clear(rate_key)
     previous_enabled = user.is_enabled
     user.is_enabled = not user.is_enabled
     user.session_version += 1
@@ -3705,6 +3701,7 @@ def toggle_user_enabled(user_id: int) -> Any:
         source_ip=request.remote_addr,
         changes=audit_changes(enabled=(previous_enabled, user.is_enabled)),
     )
+    consume_sensitive_action_authorization()
     flash("User enabled." if user.is_enabled else "User disabled.", "success")
     return redirect(url_for("main.users"))
 
@@ -3733,30 +3730,13 @@ def toggle_user_admin(user_id: int) -> Any:
         "breadcrumb_parent_label": "Users",
         "breadcrumb_parent_url": url_for("main.users"),
         "breadcrumb_label": "Promote User" if promoting else "Demote Administrator",
-        "totp_required": bool(actor.totp_secret),
     }
+    if response := require_sensitive_action_authorization(
+        actor, confirmation["cancel_url"]
+    ):
+        return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
-    rate_key = sensitive_action_rate_key(actor)
-    if sensitive_action_limiter.blocked(rate_key):
-        audit(
-            "user_role_change_rate_limited",
-            actor_id=actor.id,
-            user_id=user.id,
-            source_ip=request.remote_addr,
-        )
-        abort(429)
-    if not sensitive_action_credentials_valid(actor):
-        sensitive_action_limiter.record_failure(rate_key)
-        audit(
-            "user_role_change_rejected",
-            actor_id=actor.id,
-            user_id=user.id,
-            source_ip=request.remote_addr,
-        )
-        flash("The administrator credentials were not accepted.", "error")
-        return render_template("sensitive_action_form.html", **confirmation), 400
-    sensitive_action_limiter.clear(rate_key)
     previous_role = user.role
     user.role = "user" if user.role == "admin" else "admin"
     user.session_version += 1
@@ -3777,6 +3757,7 @@ def toggle_user_admin(user_id: int) -> Any:
             )
         ),
     )
+    consume_sensitive_action_authorization()
     flash(
         "User role changed to Administrator."
         if user.is_admin
