@@ -3019,7 +3019,13 @@ def authenticate_password_change() -> Any:
             source_ip=request.remote_addr,
         )
         abort(429)
-    if not sensitive_action_credentials_valid(user):
+    password_valid = verify_password(
+        user.password_hash, request.form.get("password", "")
+    )
+    credentials_valid = password_valid and (
+        not user.totp_secret or consume_totp(user, submitted_totp_token())
+    )
+    if not credentials_valid:
         sensitive_action_limiter.record_failure(rate_key)
         audit(
             "password_change_reauthentication_rejected",

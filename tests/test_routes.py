@@ -1703,14 +1703,15 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         )
         challenge = self.client.get("/profile/password/authenticate")
         self.assertEqual(challenge.status_code, 200)
-        self.assertIn(b'name="current_password"', challenge.data)
+        self.assertIn(b'name="password"', challenge.data)
+        self.assertNotIn(b"Current Password", challenge.data)
         self.assertIn(b"data-totp-bubbles", challenge.data)
         self.assertNotIn(b"data-protonpass-ignore", challenge.data)
         self.assertEqual(
             self.client.post(
                 "/profile/password/authenticate",
                 data={
-                    "current_password": "wrong",
+                    "password": "wrong",
                     "totp_digit": list(next_totp(ADMIN_TOTP_SECRET)),
                 },
             ).status_code,
@@ -1719,7 +1720,7 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         authorized = self.client.post(
             "/profile/password/authenticate",
             data={
-                "current_password": ADMIN_PASSWORD,
+                "password": ADMIN_PASSWORD,
                 "totp_digit": list(next_totp(ADMIN_TOTP_SECRET)),
             },
         )
@@ -1797,7 +1798,7 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         self.assertEqual(
             self.client.post(
                 "/profile/password/authenticate",
-                data={"current_password": ADMIN_PASSWORD},
+                data={"password": ADMIN_PASSWORD},
             ).location,
             "/profile/password/change",
         )
