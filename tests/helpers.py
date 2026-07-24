@@ -177,27 +177,41 @@ class AppTestCase(unittest.TestCase):
         client: FlaskClient | None = None,
         *,
         password: str = ADMIN_PASSWORD,
-        totp_secret: str = ADMIN_TOTP_SECRET,
+        totp_secret: str | None = None,
         totp_token: str | None = None,
     ) -> FlaskClient:
         """Complete the password and optional TOTP flow for one action path."""
         selected = client or self.client
+        with selected.session_transaction() as browser_session:
+            user_id = browser_session["user_id"]
+            for key in routes.PENDING_SENSITIVE_ACTION_SESSION_KEYS:
+                browser_session.pop(key, None)
+            for key in routes.SENSITIVE_ACTION_AUTHORIZATION_SESSION_KEYS:
+                browser_session.pop(key, None)
+        with session_scope(self.app) as database:
+            user = database.get(User, user_id)
+            assert user is not None
+            effective_totp_secret = (
+                user.totp_secret if totp_secret is None else totp_secret
+            )
         response = selected.get(path)
-        self.assertEqual(response.status_code, 302)
+        for _ in range(3):
+            self.assertEqual(response.status_code, 302)
+            if "/reauthenticate?" in response.location:
+                break
+            response = selected.get(response.location)
         self.assertIn("/reauthenticate?", response.location)
         authentication_url = response.location
         self.assertEqual(selected.get(authentication_url).status_code, 200)
         response = selected.post(authentication_url, data={"password": password})
-        if totp_secret:
+        if effective_totp_secret:
             self.assertEqual(response.location, "/reauthenticate/authenticator")
             self.assertEqual(
                 selected.get("/reauthenticate/authenticator").status_code, 200
             )
-            with selected.session_transaction() as browser_session:
-                user_id = browser_session["user_id"]
             with session_scope(self.app) as database:
                 reset_totp_replay_state(database, user_id)
-            token = totp_token or pyotp.TOTP(totp_secret).generate_otp(
+            token = totp_token or pyotp.TOTP(effective_totp_secret).generate_otp(
                 int(time.time()) // 30
             )
             response = selected.post(

@@ -1096,6 +1096,7 @@ class ClientContractTaskRouteTests(AppTestCase):
             self.client.get(client_path).status_code, 302
         )
         authentication_url = self.client.get(client_path).location
+        self.assertEqual(self.client.get(authentication_url).status_code, 200)
         self.assertEqual(
             self.client.post(
                 authentication_url,
@@ -2104,9 +2105,10 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                         self.app.test_request_context(
                             f"/users/1/{endpoint}",
                             method="POST",
-                            data={
-                                "current_password": "Standard-User-Test-Password-0001!"
-                            },
+                        ),
+                        patch(
+                            "grayhaven_timetracker.routes.sensitive_action_authorized",
+                            return_value=True,
                         ),
                         self.assertRaises(Conflict),
                     ):
@@ -2125,6 +2127,7 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             with self.subTest(path=path):
                 routes.sensitive_action_limiter = LoginLimiter(limit=1)
                 authentication_url = self.client.get(path).location
+                self.assertEqual(self.client.get(authentication_url).status_code, 200)
                 data = {"password": "wrong"}
                 self.assertEqual(
                     self.client.post(authentication_url, data=data).status_code, 400
