@@ -1057,9 +1057,7 @@ def sensitive_action_authorized(user: User, expected_path: str | None = None) ->
     return authorized
 
 
-def require_sensitive_action_authorization(
-    user: User, cancel_url: str
-) -> Any | None:
+def require_sensitive_action_authorization(user: User, cancel_url: str) -> Any | None:
     """Redirect an unauthenticated sensitive action into the shared flow."""
     if sensitive_action_authorized(user):
         return None

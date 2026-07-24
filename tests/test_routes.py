@@ -1092,9 +1092,7 @@ class ClientContractTaskRouteTests(AppTestCase):
     def test_sensitive_delete_forms_require_reason_and_reauthentication(self) -> None:
         seed = self.seed_contract()
         client_path = f"/clients/{seed.client_id}/delete"
-        self.assertEqual(
-            self.client.get(client_path).status_code, 302
-        )
+        self.assertEqual(self.client.get(client_path).status_code, 302)
         authentication_url = self.client.get(client_path).location
         self.assertEqual(self.client.get(authentication_url).status_code, 200)
         self.assertEqual(
@@ -1268,9 +1266,7 @@ class ClientContractTaskRouteTests(AppTestCase):
         replacement_password = "Replacement-Report-Password-For-Test-0001!"
         reset_path = f"/clients/{client_id}/report-password/reset"
         self.authorize_sensitive_action(reset_path)
-        self.assertEqual(
-            self.client.get(reset_path).status_code, 200
-        )
+        self.assertEqual(self.client.get(reset_path).status_code, 200)
         with patch(
             "grayhaven_timetracker.routes.generate_temporary_password",
             return_value=replacement_password,
@@ -1769,9 +1765,7 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             admin.totp_secret = None
             reset_totp_replay_state(database, admin.id)
 
-        self.authorize_sensitive_action(
-            "/profile/password/change", totp_secret=""
-        )
+        self.authorize_sensitive_action("/profile/password/change", totp_secret="")
         self.assertEqual(self.client.get("/profile/password/change").status_code, 200)
         with self.client.session_transaction() as browser_session:
             browser_session["sensitive_action_authorized_until"] = 0
