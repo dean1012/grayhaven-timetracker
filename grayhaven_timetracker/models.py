@@ -34,6 +34,7 @@ class User(Base):
         CheckConstraint("length(trim(first_name)) > 0", name="ck_user_first_name"),
         CheckConstraint("length(trim(last_name)) > 0", name="ck_user_last_name"),
         CheckConstraint("session_version >= 1", name="ck_user_session_version"),
+        {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -78,6 +79,7 @@ class Client(Base):
         ),
         Index("uq_client_name", "name", unique=True),
         Index("uq_client_report_token", "report_token", unique=True),
+        {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -86,6 +88,7 @@ class Client(Base):
     contact_email: Mapped[str] = mapped_column(String(255))
     report_password_hash: Mapped[str | None] = mapped_column(String(512), nullable=True)
     report_password_version: Mapped[int] = mapped_column(Integer, default=1)
+    visible: Mapped[bool] = mapped_column(Boolean, default=True)
     report_token: Mapped[str] = mapped_column(
         String(128), default=lambda: secrets.token_urlsafe(32)
     )
@@ -110,9 +113,11 @@ class Contract(Base):
             name="ck_contract_rate",
         ),
         Index("uq_contract_client_name", "client_id", "name", unique=True),
+        {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    visible: Mapped[bool] = mapped_column(Boolean, default=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("client.id", ondelete="RESTRICT"))
     name: Mapped[str] = mapped_column(String(200, collation="NOCASE"))
     contact_name: Mapped[str] = mapped_column(String(200))
@@ -140,9 +145,11 @@ class Task(Base):
     __table_args__ = (
         CheckConstraint("length(trim(name)) > 0", name="ck_task_name"),
         Index("uq_task_contract_name", "contract_id", "name", unique=True),
+        {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    visible: Mapped[bool] = mapped_column(Boolean, default=True)
     contract_id: Mapped[int] = mapped_column(
         ForeignKey("contract.id", ondelete="RESTRICT"), index=True
     )
@@ -160,9 +167,11 @@ class Subtask(Base):
     __table_args__ = (
         CheckConstraint("length(trim(name)) > 0", name="ck_subtask_name"),
         Index("uq_subtask_task_name", "task_id", "name", unique=True),
+        {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    visible: Mapped[bool] = mapped_column(Boolean, default=True)
     task_id: Mapped[int] = mapped_column(
         ForeignKey("task.id", ondelete="CASCADE"), index=True
     )
@@ -193,11 +202,13 @@ class TimeEntry(Base):
             "uq_active_timer_per_user",
             "user_id",
             unique=True,
-            sqlite_where=text("stopped_at IS NULL"),
+            sqlite_where=text("stopped_at IS NULL AND visible = 1"),
         ),
+        {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    visible: Mapped[bool] = mapped_column(Boolean, default=True)
     user_id: Mapped[int] = mapped_column(
         ForeignKey("user_account.id", ondelete="RESTRICT"), index=True
     )
@@ -255,6 +266,7 @@ class AuditEvent(Base):
         ),
         CheckConstraint("length(trim(event)) > 0", name="ck_audit_event_name"),
         Index("ix_audit_event_occurred_id", "occurred_at", "id"),
+        {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

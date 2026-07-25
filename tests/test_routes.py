@@ -1294,7 +1294,7 @@ class ClientContractTaskRouteTests(AppTestCase):
             302,
         )
 
-    def test_task_and_subtask_deletion_removes_work_data_and_retains_audit(
+    def test_task_and_subtask_deletion_hides_work_data_and_retains_audit(
         self,
     ) -> None:
         seed = self.seed_contract()
@@ -1410,6 +1410,25 @@ class ClientContractTaskRouteTests(AppTestCase):
             self.assertIsNone(database.get(Task, seed.task_id))
             self.assertIsNone(database.get(Subtask, seed.subtask_id))
             self.assertIsNone(database.get(TimeEntry, seed.entry_id))
+            hidden_task = database.get(
+                Task,
+                seed.task_id,
+                execution_options={"include_hidden": True},
+            )
+            hidden_subtask = database.get(
+                Subtask,
+                seed.subtask_id,
+                execution_options={"include_hidden": True},
+            )
+            hidden_entry = database.get(
+                TimeEntry,
+                seed.entry_id,
+                execution_options={"include_hidden": True},
+            )
+            assert hidden_task and hidden_subtask and hidden_entry
+            self.assertFalse(hidden_task.visible)
+            self.assertFalse(hidden_subtask.visible)
+            self.assertFalse(hidden_entry.visible)
             deleted = next(
                 item
                 for item in database.scalars(
@@ -1426,7 +1445,7 @@ class ClientContractTaskRouteTests(AppTestCase):
                 deleted.details["client"], f"Pellera (ID: {seed.client_id})"
             )
 
-    def test_client_and_contract_deletion_remove_time_without_deleting_audit(
+    def test_client_and_contract_deletion_hide_time_without_deleting_audit(
         self,
     ) -> None:
         seed = self.seed_contract()
@@ -1450,6 +1469,31 @@ class ClientContractTaskRouteTests(AppTestCase):
         with session_scope(self.app) as database:
             self.assertIsNone(database.get(Contract, seed.contract_id))
             self.assertIsNone(database.get(TimeEntry, seed.entry_id))
+            hidden_contract = database.get(
+                Contract,
+                seed.contract_id,
+                execution_options={"include_hidden": True},
+            )
+            hidden_task = database.get(
+                Task,
+                seed.task_id,
+                execution_options={"include_hidden": True},
+            )
+            hidden_subtask = database.get(
+                Subtask,
+                seed.subtask_id,
+                execution_options={"include_hidden": True},
+            )
+            hidden_entry = database.get(
+                TimeEntry,
+                seed.entry_id,
+                execution_options={"include_hidden": True},
+            )
+            assert hidden_contract and hidden_task and hidden_subtask and hidden_entry
+            self.assertFalse(hidden_contract.visible)
+            self.assertFalse(hidden_task.visible)
+            self.assertFalse(hidden_subtask.visible)
+            self.assertFalse(hidden_entry.visible)
             deleted = next(
                 item
                 for item in database.scalars(
@@ -1476,7 +1520,21 @@ class ClientContractTaskRouteTests(AppTestCase):
             302,
         )
         with session_scope(self.app) as database:
-            self.assertIsNone(database.get(Client, seed.client_id))
+            hidden_client = database.get(
+                Client,
+                seed.client_id,
+                execution_options={"include_hidden": True},
+            )
+            assert hidden_client is not None
+            self.assertFalse(hidden_client.visible)
+            replacement = Client(
+                name="Replacement Client",
+                contact_name="New Contact",
+                contact_email="new-contact@example.test",
+            )
+            database.add(replacement)
+            database.flush()
+            self.assertNotEqual(replacement.id, seed.client_id)
             deleted = database.scalar(
                 select(AuditEvent).where(AuditEvent.event == "client_deleted")
             )
@@ -1484,6 +1542,11 @@ class ClientContractTaskRouteTests(AppTestCase):
             self.assertEqual(
                 deleted.details["client"], f"Pellera (ID: {seed.client_id})"
             )
+        self.assertNotIn(b"Pellera", self.client.get("/").data)
+        self.assertEqual(
+            self.client.get(f"/clients/{seed.client_id}").location,
+            "/?stale=client_deleted",
+        )
 
 
 class TimerAndPermissionRouteTests(AppTestCase):
@@ -2782,6 +2845,13 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertEqual(deleted.status_code, 302)
         with session_scope(self.app) as database:
             self.assertIsNone(database.get(TimeEntry, self.seed.entry_id))
+            hidden_entry = database.get(
+                TimeEntry,
+                self.seed.entry_id,
+                execution_options={"include_hidden": True},
+            )
+            assert hidden_entry is not None
+            self.assertFalse(hidden_entry.visible)
 
     def test_my_sessions_lists_pending_and_finalized_rows_with_pagination(self) -> None:
         self.login()

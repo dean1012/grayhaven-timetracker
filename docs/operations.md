@@ -170,6 +170,13 @@ and application recovery.
 8. Record the recovery point, recovery time, validation, and disposition of the
    replaced database.
 
+For a systemd-managed container, stop and start the service with `systemctl`.
+Do not use `podman stop` for maintenance: systemd treats that as an unexpected
+container exit and recreates it. Confirm the service is inactive before
+replacing the database. Remove the live `timetracker.sqlite3-wal` and
+`timetracker.sqlite3-shm` files before installing the verified artifact; those
+sidecars belong only to the database generation that created them.
+
 Never probe a restored database with guessed keys. A wrong-key error does not
 identify the correct key.
 
@@ -263,8 +270,9 @@ step.
 
 Before deleting clients, contracts, or work definitions, return affected
 finalized sessions to pending invoice and confirm that deletion is the intended
-business action. Audit records remain even when eligible operational data is
-removed.
+business action. Deleted business records are hidden from normal workflows but
+retained with their original identifiers for controlled administrative
+recovery. Audit records remain independently immutable.
 
 [Back to top](#operations)
 
