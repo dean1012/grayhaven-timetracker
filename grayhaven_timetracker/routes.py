@@ -36,7 +36,7 @@ from flask import (
     url_for,
 )
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from sqlalchemy import case, delete, func, or_, select
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -384,7 +384,7 @@ def get_shared_report_client(token: str) -> Client:
         abort(404)
     client = get_session().scalar(
         select(Client)
-        .where(Client.report_token == token)
+        .where(Client.report_token == token, Client.visible.is_(True))
         .options(selectinload(Client.contracts))
     )
     if client is None:
@@ -446,36 +446,50 @@ def audit_time_entry_details(entry: TimeEntry) -> dict[str, str]:
     }
 
 
-def purge_subtask_data(subtask_id: int) -> int:
-    """Delete one subtask and its time records, never its audit history."""
+def hide_subtask_data(subtask_id: int) -> int:
+    """Hide one subtask and its time records, never its audit history."""
     database = get_session()
-    deleted_time = cast(
+    hidden_time = cast(
         CursorResult[Any],
-        database.execute(delete(TimeEntry).where(TimeEntry.subtask_id == subtask_id)),
+        database.execute(
+            update(TimeEntry)
+            .where(TimeEntry.subtask_id == subtask_id, TimeEntry.visible.is_(True))
+            .values(visible=False)
+        ),
     ).rowcount
-    database.execute(delete(Subtask).where(Subtask.id == subtask_id))
-    return deleted_time or 0
+    database.execute(
+        update(Subtask).where(Subtask.id == subtask_id).values(visible=False)
+    )
+    return hidden_time or 0
 
 
-def purge_task_data(task_ids: Any) -> int:
-    """Delete tasks, their subtasks, and their time records without audit loss."""
+def hide_task_data(task_ids: Any) -> int:
+    """Hide tasks, their subtasks, and their time records without audit loss."""
     database = get_session()
-    deleted_time = cast(
+    hidden_time = cast(
         CursorResult[Any],
-        database.execute(delete(TimeEntry).where(TimeEntry.task_id.in_(task_ids))),
+        database.execute(
+            update(TimeEntry)
+            .where(TimeEntry.task_id.in_(task_ids), TimeEntry.visible.is_(True))
+            .values(visible=False)
+        ),
     ).rowcount
-    database.execute(delete(Subtask).where(Subtask.task_id.in_(task_ids)))
-    database.execute(delete(Task).where(Task.id.in_(task_ids)))
-    return deleted_time or 0
+    database.execute(
+        update(Subtask).where(Subtask.task_id.in_(task_ids)).values(visible=False)
+    )
+    database.execute(update(Task).where(Task.id.in_(task_ids)).values(visible=False))
+    return hidden_time or 0
 
 
-def purge_contract_data(contract_ids: Any) -> int:
-    """Delete contracts and dependent work data without deleting audit events."""
+def hide_contract_data(contract_ids: Any) -> int:
+    """Hide contracts and dependent work data without deleting audit events."""
     database = get_session()
     task_ids = select(Task.id).where(Task.contract_id.in_(contract_ids))
-    deleted_time = purge_task_data(task_ids)
-    database.execute(delete(Contract).where(Contract.id.in_(contract_ids)))
-    return deleted_time
+    hidden_time = hide_task_data(task_ids)
+    database.execute(
+        update(Contract).where(Contract.id.in_(contract_ids)).values(visible=False)
+    )
+    return hidden_time
 
 
 def shared_report_url(token: str) -> str:
@@ -629,6 +643,16 @@ def require_pending_sessions_for_deletion(statement: Any) -> None:
 
 def get_or_404(model: type[Any], identifier: int) -> Any:
     item = get_session().get(model, identifier)
+    if item is None:
+        abort(404)
+    return item
+
+
+def get_visible_client_or_404(client_id: int) -> Client:
+    """Return a client that remains available to normal application workflows."""
+    item = get_session().scalar(
+        select(Client).where(Client.id == client_id, Client.visible.is_(True))
+    )
     if item is None:
         abort(404)
     return item
@@ -805,7 +829,8 @@ def register_routes(app: Flask) -> None:
 
         client_match = re.fullmatch(r"/clients/(\d+)(?:/.*)?", path)
         if client_match:
-            if get_session().get(Client, int(client_match.group(1))) is not None:
+            client_item = get_session().get(Client, int(client_match.group(1)))
+            if client_item is not None and client_item.visible:
                 return error
             return stale_resource_redirect("main.dashboard", "client_deleted")
 
@@ -1356,7 +1381,10 @@ def dashboard() -> str:
     clients = (
         get_session()
         .scalars(
-            select(Client).options(selectinload(Client.contracts)).order_by(Client.name)
+            select(Client)
+            .where(Client.visible.is_(True))
+            .options(selectinload(Client.contracts))
+            .order_by(Client.name)
         )
         .all()
     )
@@ -1368,7 +1396,7 @@ def dashboard() -> str:
 def client(client_id: int) -> str:
     item = get_session().scalar(
         select(Client)
-        .where(Client.id == client_id)
+        .where(Client.id == client_id, Client.visible.is_(True))
         .options(selectinload(Client.contracts))
     )
     if item is None:
@@ -1428,7 +1456,7 @@ def new_client() -> Any:
 @main.route("/clients/<int:client_id>/edit", methods=["GET", "POST"])
 @permission_required(CLIENT_EDIT)
 def edit_client(client_id: int) -> Any:
-    item = cast(Client, get_or_404(Client, client_id))
+    item = get_visible_client_or_404(client_id)
     if request.method != "POST":
         return render_template("client_form.html", client=item)
     previous_values = {
@@ -1474,9 +1502,9 @@ def edit_client(client_id: int) -> Any:
 @main.route("/clients/<int:client_id>/delete", methods=["GET", "POST"])
 @permission_required(CLIENT_DELETE)
 def delete_client(client_id: int) -> Any:
-    """Delete a client and dependent work data after administrator reauthentication."""
+    """Hide a client and delete dependent work after administrator reauthentication."""
     database = get_session()
-    item = cast(Client, get_or_404(Client, client_id))
+    item = get_visible_client_or_404(client_id)
     require_pending_sessions_for_deletion(
         select(TimeEntry.id)
         .join(TimeEntry.task)
@@ -1510,10 +1538,10 @@ def delete_client(client_id: int) -> Any:
         flash(str(exc), "error")
         return render_template("sensitive_action_form.html", **confirmation), 400
     client_label = audit_object_label(item.name, item.id)
-    deleted_time = purge_contract_data(
+    deleted_time = hide_contract_data(
         select(Contract.id).where(Contract.client_id == item.id)
     )
-    database.execute(delete(Client).where(Client.id == item.id))
+    item.visible = False
     database.commit()
     audit(
         "client_deleted",
@@ -1530,7 +1558,7 @@ def delete_client(client_id: int) -> Any:
 @main.route("/clients/<int:client_id>/report-password/reset", methods=["GET", "POST"])
 @permission_required(REPORT_SHARE)
 def reset_client_report_password(client_id: int) -> Any:
-    item = cast(Client, get_or_404(Client, client_id))
+    item = get_visible_client_or_404(client_id)
     actor = cast(User, current_user())
     confirmation = {
         "eyebrow": "GENERATE REPORT PASSWORD",
@@ -1587,7 +1615,7 @@ def reset_client_report_password(client_id: int) -> Any:
 @main.get("/clients/<int:client_id>/report-password/confirmation")
 @permission_required(REPORT_SHARE)
 def client_report_password_confirmation(client_id: int) -> Any:
-    item = cast(Client, get_or_404(Client, client_id))
+    item = get_visible_client_or_404(client_id)
     actor = cast(User, current_user())
     next_url = url_for("main.client", client_id=item.id)
     confirmation_client_id = session.pop("report_password_confirmation_client_id", None)
@@ -1619,7 +1647,7 @@ def client_report_password_confirmation(client_id: int) -> Any:
 @main.route("/contracts/new/<int:client_id>", methods=["GET", "POST"])
 @permission_required(CONTRACT_ADD)
 def new_contract(client_id: int) -> Any:
-    client_item = cast(Client, get_or_404(Client, client_id))
+    client_item = get_visible_client_or_404(client_id)
     if request.method != "POST":
         return render_template("contract_form.html", client=client_item)
     try:
@@ -1768,9 +1796,7 @@ def delete_contract(contract_id: int) -> Any:
         return render_template("sensitive_action_form.html", **confirmation), 400
     client_label = audit_object_label(client_name, client_id)
     contract_label = audit_object_label(contract_name, item.id)
-    deleted_time = purge_contract_data(
-        select(Contract.id).where(Contract.id == item.id)
-    )
+    deleted_time = hide_contract_data(select(Contract.id).where(Contract.id == item.id))
     database.commit()
     audit(
         "contract_deleted",
@@ -2077,7 +2103,7 @@ def delete_task(task_id: int) -> Any:
     except ValueError as exc:
         flash(str(exc), "error")
         return render_template("sensitive_action_form.html", **confirmation), 400
-    deleted_time = purge_task_data(select(Task.id).where(Task.id == task.id))
+    deleted_time = hide_task_data(select(Task.id).where(Task.id == task.id))
     database.commit()
     audit(
         "task_deleted",
@@ -2138,7 +2164,7 @@ def delete_subtask(subtask_id: int) -> Any:
     except ValueError as exc:
         flash(str(exc), "error")
         return render_template("sensitive_action_form.html", **confirmation), 400
-    deleted_time = purge_subtask_data(subtask.id)
+    deleted_time = hide_subtask_data(subtask.id)
     database.commit()
     audit(
         "subtask_deleted",
@@ -2583,6 +2609,7 @@ def my_sessions() -> Any:
 @permission_required(TIME_ENTRY_EDIT_ANY)
 def session_client_contracts(client_id: int) -> Response:
     """Return contracts for the selected session client without inline script data."""
+    get_visible_client_or_404(client_id)
     contracts = (
         get_session()
         .scalars(
@@ -2684,7 +2711,9 @@ def edit_time_entry(entry_id: int) -> Any:
         .options(selectinload(Task.subtasks))
         .order_by(Task.name)
     ).all()
-    clients = database.scalars(select(Client).order_by(Client.name)).all()
+    clients = database.scalars(
+        select(Client).where(Client.visible.is_(True)).order_by(Client.name)
+    ).all()
     users = database.scalars(
         select(User).order_by(User.last_name, User.first_name, User.email)
     ).all()
@@ -2718,6 +2747,7 @@ def edit_time_entry(entry_id: int) -> Any:
             entry_user is None
             or not entry_user.is_enabled
             or selected_client is None
+            or not selected_client.visible
             or selected_contract is None
             or selected_contract.client_id != selected_client.id
         ):
@@ -2877,7 +2907,7 @@ def delete_time_entry(entry_id: int) -> Any:
     except ValueError as exc:
         flash(str(exc), "error")
         return render_template("sensitive_action_form.html", **confirmation), 400
-    database.delete(entry)
+    entry.visible = False
     database.commit()
     audit(
         "time_entry_deleted",
@@ -3874,7 +3904,7 @@ def shared_report_live(token: str) -> Any:
 @main.get("/reports/<int:client_id>")
 @permission_required(REPORT_VIEW)
 def report_view(client_id: int) -> str:
-    client_item = cast(Client, get_or_404(Client, client_id))
+    client_item = get_visible_client_or_404(client_id)
     report = build_client_report(
         get_session(),
         client_item,
@@ -3898,7 +3928,7 @@ def report_view(client_id: int) -> str:
 @main.get("/reports/<int:client_id>/live")
 @permission_required(REPORT_VIEW)
 def report_live(client_id: int) -> Any:
-    client_item = cast(Client, get_or_404(Client, client_id))
+    client_item = get_visible_client_or_404(client_id)
     report = build_client_report(
         get_session(),
         client_item,
