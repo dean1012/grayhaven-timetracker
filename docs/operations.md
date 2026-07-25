@@ -2,15 +2,16 @@
 
 [Return to README](../README.md)
 
-This runbook covers application-specific operations. The Grayhaven deployment
-repository owns host provisioning, proxy configuration, secret distribution,
-image promotion, scheduled backups, and observability integration.
+This runbook covers application-specific work on a Grayhaven managed host.
+Host provisioning, proxy configuration, secret distribution, image promotion,
+scheduled backups, and observability integration remain owned by the managed
+deployment repositories.
 
 ## Table of Contents
 
 - [Service Health](#service-health)
 - [Releases](#releases)
-- [Deployment](#deployment)
+- [Managed Service Lifecycle](#managed-service-lifecycle)
 - [Backups](#backups)
 - [Backup and Restore Verification](#backup-and-restore-verification)
 - [Database Restore](#database-restore)
@@ -27,227 +28,326 @@ image promotion, scheduled backups, and observability integration.
 healthy service returns HTTP 200 and `{"status":"ok"}`. A database failure
 returns HTTP 503 without internal diagnostic details.
 
-The supplied Compose service exposes the application only on
-`127.0.0.1:8000`. The managed reverse proxy should keep `/health` private while
-allowing local monitoring to query it.
+On the managed host, check the systemd unit, the approved running image, and
+the loopback endpoint with the configured public hostname:
+
+```bash
+sudo systemctl status grayhaven-timetracker.service
+sudo podman container inspect \
+  --format '{{.ImageName}} {{.ImageDigest}}' \
+  grayhaven-timetracker
+curl --fail --silent \
+  --header 'Host: <configured-hostname>' \
+  http://127.0.0.1:8000/health
+```
+
+The reverse proxy keeps `/health` private. Replace `<configured-hostname>` with
+the environment's Time Tracker hostname; the application rejects untrusted
+Host headers.
 
 [Back to top](#operations)
 
 ## Releases
 
-The project uses GitHub Actions to publish versioned images to GHCR
-automatically. To publish a new image:
+The project publishes versioned images to GHCR through GitHub Actions:
 
-1. Create a signed tag following the `build/<major>.<minor>.<build>` format
-   locally (e.g., `build/0.4.5`).
-2. Push the specific tag to GitHub.
-3. The `Publish Release Image` workflow automatically triggers, verifies the tag
-   signature against the committed release-signing key, and builds the verified
-   revision.
-4. The workflow pauses at the `container-publish` environment gate. An
-   authorized operator must approve the release.
-5. Once approved, the image is built and pushed with OCI metadata, an artifact
-   attestation, and the immutable digest is logged.
+1. Create a signed `build/<major>.<minor>.<build>` tag from a clean,
+   synchronized `main` revision whose CI and unit tests passed.
+2. Push only that tag.
+3. Approve the `container-publish` environment gate after the workflow verifies
+   the tag signature and tagged revision.
+4. Record the immutable published digest and verify that the public image can
+   be pulled without authentication.
 
-In case of a failure during the automated run, the `Publish Release Image`
-workflow supports manual execution via `workflow_dispatch`. Supply the name of
-an existing signed build tag (e.g., `build/0.4.5`). Dispatches targeting
-branches or unsigned tags will be rejected.
+The workflow supports manual dispatch only for an existing signed build tag.
+Branches and unsigned tags are rejected. Never move, replace, reuse, or delete
+a published build tag; corrections require a new signed tag and digest.
 
 [Back to top](#operations)
 
-## Deployment
+## Managed Service Lifecycle
 
-Before promoting a release:
+The container lifecycle is owned by
+`grayhaven-timetracker.service`. Use systemd for maintenance:
 
-1. Confirm CI and unit tests pass for the exact signed revision.
-2. Select the published versioned image from GHCR and record its immutable
-   digest. Never use `latest`.
-3. Confirm the target uses a clean database when the release schema is not
-   compatible with an earlier deployment.
-4. Render new environment-specific secret files and the initial bootstrap-user
-   manifest from the approved vault.
-5. Verify persistent volume ownership, runtime branding, trusted hosts, public
-   origin, proxy count, timezone, and secure-cookie settings.
-6. Start the service and check `/health` through the host monitoring path.
-7. Verify administrator login and TOTP, a timer cycle, one representative
-   report, shared-report access, and an audit entry.
-
-For an external deployment, set an exact HTTPS origin and trust boundary:
-
-```text
-PUBLIC_BASE_URL=https://timetracker.example.invalid
-SESSION_COOKIE_SECURE=true
-TRUSTED_HOSTS=timetracker.example.invalid
-TRUSTED_PROXY_COUNT=1
+```bash
+sudo systemctl stop grayhaven-timetracker.service
+sudo systemctl is-active grayhaven-timetracker.service
+sudo systemctl start grayhaven-timetracker.service
 ```
 
-Match the proxy count to the actual controlled hops. Preserve the original
-Host and expected forwarded address and scheme headers. Configure proxy access
-logs to redact `/shared/reports/<token>` paths because the application cannot
-control logs written by the proxy.
+Require `systemctl is-active` to report `inactive` before changing database or
+key files. Direct `podman stop` or `podman start` is unsupported: systemd treats
+a direct container stop as an unexpected exit and recreates the container.
+One-off `podman run` and `podman exec` maintenance commands documented below do
+not replace systemd lifecycle control.
 
 [Back to top](#operations)
 
 ## Backups
 
-Do not have restic copy the live database file directly. WAL activity can make
-an uncoordinated file copy inconsistent. First create an encrypted online
-artifact with the application utility:
+Create the managed application and host backup with:
 
 ```bash
-mkdir -p data/backups
-docker compose exec timetracker \
-  python scripts/database_maintenance.py backup \
-  /app/data/timetracker.sqlite3 \
-  /run/secrets/sqlcipher_passphrase \
-  /app/data/backups/timetracker-$(date -u +%Y%m%dT%H%M%SZ).sqlite3
+sudo grayhaven-backupctl backup
 ```
 
-The command uses SQLite's online backup API, verifies SQLCipher and SQLite
-integrity, writes mode `0600`, and refuses to overwrite an existing path. The
-artifact includes application data and the audit history.
+This command invokes the authoritative managed backup script. On a Time Tracker
+host, that script first requires the systemd service to be active, creates an
+encrypted online database snapshot through SQLite's backup API, verifies both
+SQLCipher and SQLite integrity, and atomically publishes the verified artifact
+under `/var/lib/grayhaven/timetracker/backups`. Only then does restic capture
+that directory through the configured local and remote backup workflow. The
+live database and its WAL and SHM sidecars are deliberately excluded from
+restic.
 
-Backup orchestration should require this command to succeed before restic
-captures the artifact. Verify a retained artifact with its matching key:
+Do not substitute a direct restic invocation or copy the live database. Record
+the generated artifact name, checksum, restic snapshot ID, application image
+digest, schema version, and SQLCipher key version as one recovery point.
+
+Verify a retained local artifact with the running approved container and its
+deployed key:
 
 ```bash
-docker compose exec timetracker \
+sudo podman exec grayhaven-timetracker \
   python scripts/database_maintenance.py verify \
-  /app/data/backups/<backup-file> \
+  /app/backups/<backup> \
   /run/secrets/sqlcipher_passphrase
 ```
-
-Restic repository configuration, schedules, retention, off-host replication,
-and alerting remain deployment responsibilities.
 
 [Back to top](#operations)
 
 ## Backup and Restore Verification
 
-Verify the complete backup and restore path periodically and after material
-changes to the database, backup job, secret paths, or deployment automation:
+Verify the complete recovery path periodically and after material changes to
+the schema, image, backup hook, key, or managed backup configuration:
 
-1. Identify representative existing records, including users, clients,
-   contracts, billing metadata, shared-report configuration, and audit events.
-2. Run the online backup command and require the restic job to capture that
-   exact artifact.
-3. Record the restic snapshot ID, artifact checksum, application version,
-   schema version, and key version.
-4. Restore the artifact from restic into an isolated path; do not use the local
-   pre-snapshot copy.
-5. Verify the isolated artifact with
-   `scripts/database_maintenance.py verify` and the matching key.
-6. Start the matching application build against the restored database on an
-   isolated recovery target.
-7. Verify health, login, TOTP, the identified records, billing metadata,
-   shared-report access, and audit history.
-8. Perform a controlled write to prove the restored database remains writable,
-   then discard that recovery copy rather than returning it to service.
-9. Record the result and dispose of recovery artifacts according to the
-   applicable data-retention policy.
+1. Identify representative users, clients, contracts, billing metadata,
+   shared-report configuration, and audit events.
+2. Run `sudo grayhaven-backupctl backup` and require it to succeed.
+3. Use `sudo grayhaven-backupctl list` and
+   `sudo grayhaven-backupctl ls <snapshot> --path
+   /var/lib/grayhaven/timetracker/backups --recursive` to confirm that the
+   recorded verified artifact is present in the expected snapshot.
+4. Restore that artifact to an isolated target. Do not validate only the local
+   pre-restic copy.
+5. Verify the isolated artifact with the exact approved image digest, matching
+   schema, and matching SQLCipher key.
+6. Start that matching image against a disposable copy on an isolated recovery
+   target. Verify health, login, TOTP, the selected records, billing metadata,
+   reports, shared-report access, audit history, and a controlled write.
+7. Record the result and dispose of recovery copies under the applicable
+   retention policy.
 
-This validates the application database path through the complete chain:
-consistent SQLCipher artifact, restic capture, restic restore, integrity check,
-and application recovery.
+Keep the current production database and key untouched during an isolated
+exercise. A backup is not accepted merely because restic listed or restored a
+file; the encrypted artifact and recovered application data must both pass
+validation.
 
 [Back to top](#operations)
 
 ## Database Restore
 
-1. Identify the approved restic snapshot, backup artifact, application build,
-   schema version, and SQLCipher key version.
-2. Stop the application and prevent automatic restart.
-3. Retain the current database and its `-wal` and `-shm` sidecars for controlled
-   rollback and investigation.
-4. Restore the encrypted artifact into an isolated path and verify it with the
-   matching key.
-5. Install it as `data/timetracker.sqlite3`, set the runtime owner and mode
-   `0600`, and remove stale sidecars.
-6. Start the matching application build.
-7. Confirm `/health`, administrator login, TOTP, current records, reports,
-   shared-report access, audit history, and one controlled write.
-8. Record the recovery point, recovery time, validation, and disposition of the
-   replaced database.
+Select the recovery point before changing the host. Record the application
+image digest, schema version, SQLCipher key version, restic snapshot, and Time
+Tracker artifact name. Never probe an artifact with guessed keys.
 
-For a systemd-managed container, stop and start the service with `systemctl`.
-Do not use `podman stop` for maintenance: systemd treats that as an unexpected
-container exit and recreates it. Confirm the service is inactive before
-replacing the database. Remove the live `timetracker.sqlite3-wal` and
-`timetracker.sqlite3-shm` files before installing the verified artifact; those
-sidecars belong only to the database generation that created them.
+If the approved artifact is already local, verify it while the service is
+running:
 
-Never probe a restored database with guessed keys. A wrong-key error does not
-identify the correct key.
+```bash
+sudo podman exec grayhaven-timetracker \
+  python scripts/database_maintenance.py verify \
+  /app/backups/<backup> \
+  /run/secrets/sqlcipher_passphrase
+```
+
+If it is not local, restore the backups directory beneath an isolated target:
+
+```bash
+sudo grayhaven-backupctl restore latest \
+  --target /tmp \
+  --path /var/lib/grayhaven/timetracker/backups
+```
+
+`latest` selects the newest matching recovery point. Modify the selector or
+command when the approved artifact belongs to a specific snapshot or point in
+time; do not assume that the newest snapshot is always correct. See
+[Restoring to a Target Directory](https://github.com/dean1012/grayhaven-backupctl/blob/main/docs/operations.md#restoring-to-a-target-directory)
+for the authoritative selector, target-tree, overwrite, and snapshot behavior.
+
+Verify a remotely restored artifact before installing it. Use the approved
+immutable image and the deployed matching key without starting the managed
+service:
+
+```bash
+sudo podman run --rm \
+  --user 777:777 \
+  --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
+  --cap-drop all \
+  --security-opt no-new-privileges \
+  --volume /tmp/var/lib/grayhaven/timetracker/backups/<backup>:/recovery/timetracker.sqlite3:ro,Z \
+  --volume /var/lib/grayhaven/timetracker/secrets:/run/secrets:ro,Z \
+  <approved-image>@sha256:<digest> \
+  python scripts/database_maintenance.py verify \
+  /recovery/timetracker.sqlite3 \
+  /run/secrets/sqlcipher_passphrase
+```
+
+After verification, stop the systemd-owned service and enforce the inactive
+state before touching database files:
+
+```bash
+sudo systemctl stop grayhaven-timetracker.service
+if sudo systemctl is-active --quiet grayhaven-timetracker.service; then
+  echo 'grayhaven-timetracker.service is still active' >&2
+  exit 1
+fi
+```
+
+Preserve the complete live database generation in a root-only rollback
+directory, including any WAL and SHM sidecars, then remove the live generation:
+
+```bash
+rollback_dir="$(sudo mktemp -d \
+  /var/lib/grayhaven/timetracker/rollback.XXXXXXXX)"
+for path in \
+  /var/lib/grayhaven/timetracker/data/timetracker.sqlite3 \
+  /var/lib/grayhaven/timetracker/data/timetracker.sqlite3-wal \
+  /var/lib/grayhaven/timetracker/data/timetracker.sqlite3-shm; do
+  if sudo test -e "$path"; then
+    sudo cp -a -- "$path" "$rollback_dir/"
+  fi
+done
+printf 'Rollback directory: %s\n' "$rollback_dir"
+sudo rm -f -- \
+  /var/lib/grayhaven/timetracker/data/timetracker.sqlite3 \
+  /var/lib/grayhaven/timetracker/data/timetracker.sqlite3-wal \
+  /var/lib/grayhaven/timetracker/data/timetracker.sqlite3-shm
+```
+
+For an already-present local application backup, install it with:
+
+```bash
+sudo cp -a \
+  /var/lib/grayhaven/timetracker/backups/<backup> \
+  /var/lib/grayhaven/timetracker/data/timetracker.sqlite3
+```
+
+For an artifact restored beneath `/tmp`, install it with:
+
+```bash
+sudo cp -a \
+  /tmp/var/lib/grayhaven/timetracker/backups/<backup> \
+  /var/lib/grayhaven/timetracker/data/timetracker.sqlite3
+```
+
+Restore the managed owner, mode, and SELinux context:
+
+```bash
+sudo chown 777:777 \
+  /var/lib/grayhaven/timetracker/data/timetracker.sqlite3
+sudo chmod 0600 \
+  /var/lib/grayhaven/timetracker/data/timetracker.sqlite3
+sudo restorecon -RF \
+  /var/lib/grayhaven/timetracker/data \
+  /var/lib/grayhaven/timetracker/backups
+```
+
+Start only through systemd and validate the restored service:
+
+```bash
+sudo systemctl start grayhaven-timetracker.service
+sudo systemctl is-active --quiet grayhaven-timetracker.service
+curl --fail --silent \
+  --header 'Host: <configured-hostname>' \
+  http://127.0.0.1:8000/health
+sudo podman container inspect \
+  --format '{{.ImageName}} {{.ImageDigest}}' \
+  grayhaven-timetracker
+```
+
+Then verify administrator login, TOTP, current records, billing metadata,
+reports, shared-report access, audit history, and one controlled write. Retain
+the rollback directory and matching prior key until recovery is accepted. If
+validation fails, stop the service again, remove the failed database and
+sidecars, restore the complete prior generation from the recorded rollback
+directory, restore owner/mode/SELinux context, and start through systemd.
 
 [Back to top](#operations)
 
 ## SQLCipher Key Rotation
 
-Treat key rotation as offline maintenance:
+Treat key rotation as offline maintenance and coordinate it with the approved
+secret source:
 
-1. Create and verify a current backup.
-2. Stop the service with `docker compose stop timetracker`.
-3. Install the proposed key as
-   `secrets/sqlcipher_passphrase.new` with mode `0600`.
-4. Run:
+1. Run `sudo grayhaven-backupctl backup`, verify the new artifact, and record
+   the current image digest, schema, and key version.
+2. Install the proposed key as
+   `/var/lib/grayhaven/timetracker/secrets/sqlcipher_passphrase.new`, owned by
+   UID/GID 777 with mode `0400`, through the approved secret-delivery process.
+3. Record the currently running immutable image, stop
+   `grayhaven-timetracker.service`, and require it to be inactive.
+4. Preserve the database, sidecars, and current key in a root-only rollback
+   directory.
+5. Run the rekey utility with the same approved immutable image:
 
    ```bash
-   docker compose run --rm --no-deps timetracker \
+   sudo podman run --rm \
+     --user 777:777 \
+     --read-only \
+     --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
+     --cap-drop all \
+     --security-opt no-new-privileges \
+     --volume /var/lib/grayhaven/timetracker/data:/app/data:Z \
+     --volume /var/lib/grayhaven/timetracker/secrets:/run/secrets:ro,Z \
+     <approved-image>@sha256:<digest> \
      python scripts/database_maintenance.py rekey \
      /app/data/timetracker.sqlite3 \
      /run/secrets/sqlcipher_passphrase \
      /run/secrets/sqlcipher_passphrase.new
    ```
 
-5. Verify the database with the new key.
-6. Atomically promote the new secret through the approved deployment process.
-7. Start the service and validate health, login, writes, and reports.
-8. Retain the pre-rotation backup and old key only for the approved rollback
-   window, then dispose of both through the controlled process.
+6. Verify the database with the proposed key using the same one-off container
+   shape and `scripts/database_maintenance.py verify`.
+7. Atomically replace the deployed key, restore its managed metadata and
+   SELinux context, and update the approved encrypted configuration to the same
+   value before the next convergence:
 
-The utility attempts to restore and verify its pre-rotation backup if rekeying
-fails. Keep the service stopped until the database and deployed key are known
-to match.
+   ```bash
+   sudo mv -f -- \
+     /var/lib/grayhaven/timetracker/secrets/sqlcipher_passphrase.new \
+     /var/lib/grayhaven/timetracker/secrets/sqlcipher_passphrase
+   sudo chown 777:777 \
+     /var/lib/grayhaven/timetracker/secrets/sqlcipher_passphrase
+   sudo chmod 0400 \
+     /var/lib/grayhaven/timetracker/secrets/sqlcipher_passphrase
+   sudo restorecon -RF /var/lib/grayhaven/timetracker/secrets
+   ```
+
+8. Start with `sudo systemctl start grayhaven-timetracker.service`, then verify
+   health, login, writes, reports, and the running image digest.
+
+The utility attempts to restore and verify its pre-rotation database backup if
+rekeying fails. Keep the service stopped until the database, deployed key, and
+approved secret source are known to match. Retain the pre-rotation artifact and
+old key only for the approved rollback window.
 
 [Back to top](#operations)
 
 ## User Provisioning and Recovery
 
-`BOOTSTRAP_USERS_FILE` is a first-install interface. The deployment process
-renders its JSON from protected configuration and installs it as a restricted
-secret. The application reads it only when the user table is empty; it does not
-continuously reconcile existing accounts. Every bootstrap-created account must
-replace its initial password at first sign-in. A preconfigured TOTP enrollment
-remains active during that password change.
-
-Generate an Argon2id hash for an initial password through the application image
-so the password is entered without terminal echo:
-
-```bash
-docker compose run --rm --no-deps timetracker python -c '
-from getpass import getpass
-from grayhaven_timetracker.auth import hash_password
-print(hash_password(getpass("Initial password: ")))
-'
-```
-
-Generate an optional Base32 TOTP secret through the same image:
-
-```bash
-docker compose run --rm --no-deps timetracker \
-  python -c 'import pyotp; print(pyotp.random_base32())'
-```
-
-Treat both generated values as credentials. Put them directly into the
-approved secret-management workflow, do not write them to repository files,
-and deliver the initial password and TOTP enrollment through separate approved
-channels.
+`BOOTSTRAP_USERS_FILE` is a first-install interface. Managed deployment renders
+the manifest from protected configuration and installs it as a restricted
+secret. The application reads it only when the user table is empty and does not
+reconcile established accounts. Every bootstrap-created account must replace
+its initial password at first sign-in.
 
 After installation, administrators manage accounts in the application. A
 password reset generates a strong temporary password, displays it once,
-invalidates the user's existing sessions, and requires a replacement at the
-next sign-in. Existing TOTP enrollment is retained.
+invalidates existing sessions, and requires replacement at the next sign-in.
+Existing TOTP enrollment remains active.
 
 If a user also loses TOTP access, an administrator can disable that enrollment
 after password and TOTP reauthentication. Deliver temporary passwords and new
@@ -269,10 +369,10 @@ billing lifecycle again with accurate metadata. The audit log records each
 step.
 
 Before deleting clients, contracts, or work definitions, return affected
-finalized sessions to pending invoice and confirm that deletion is the intended
-business action. Deleted business records are hidden from normal workflows but
-retained with their original identifiers for controlled administrative
-recovery. Audit records remain independently immutable.
+finalized sessions to pending invoice and confirm that deletion is intended.
+Deleted business records remain hidden from normal workflows but retain their
+identifiers for controlled administrative recovery. Audit records remain
+independently immutable.
 
 [Back to top](#operations)
 
@@ -292,10 +392,11 @@ shown.
 
 ## Timezone Changes
 
-Set `TZ` to an IANA timezone and recreate the container. Timestamps remain
-stored in UTC, so this changes display and entry interpretation without
-rewriting stored instants. Validate a representative report after a timezone
-change.
+Change the environment's managed `TZ` value to an IANA timezone and run normal
+configuration convergence. Timestamps remain stored in UTC, so this changes
+display and entry interpretation without rewriting stored instants. Require
+the systemd service to return healthy and validate a representative report
+after convergence.
 
 [Back to top](#operations)
 
@@ -304,16 +405,14 @@ change.
 The application emits one JSON object per line to standard error. Request,
 authentication, shared-report, and state-change events include safe operational
 context without passwords, TOTP values, or report tokens. The encrypted
-database also contains the append-only audit history available to
-administrators.
+database also contains append-only audit history available to administrators.
 
 The managed environment owns collection, retention, dashboards, alerts, and
-access controls. When Grayhaven's Grafana stack is enabled, its integration
-should consume the existing structured stream rather than require an
-application-specific logging mode. Validate log collection and alerts before
-the service receives real data.
+access controls. Its integration consumes the existing structured journald
+stream rather than requiring an application-specific logging mode. Validate log
+collection and alerts before the service receives real data.
 
-Monitor persistent-volume growth because the audit history is intentionally not
+Monitor persistent-volume growth because audit history is intentionally not
 editable or deletable through the application.
 
 [Back to top](#operations)
