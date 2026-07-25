@@ -5,7 +5,8 @@
 This runbook covers application-specific work on a Grayhaven managed host.
 Host provisioning, proxy configuration, secret distribution, image promotion,
 scheduled backups, and observability integration remain owned by the managed
-deployment repositories.
+deployment repositories. For optional standalone/local operation, see the
+[standalone container guide](docker-compose.md).
 
 ## Table of Contents
 

@@ -90,7 +90,9 @@ curl --fail http://127.0.0.1:8000/health
 ```
 
 Open `http://127.0.0.1:8000`. For the complete runtime interface and bootstrap
-manifest format, see [Configuration](docs/configuration.md).
+manifest format, see [Configuration](docs/configuration.md). For backup,
+restore, key rotation, and other standalone procedures, see
+[Standalone Docker Compose Operations](docs/docker-compose.md).
 
 Local defaults must not be reused in a managed deployment. Generate new
 secrets and start with a clean database when establishing one.
@@ -103,8 +105,10 @@ secrets and start with a clean database when establishing one.
   time tracking, billing, reporting, and persistence.
 - [Configuration](docs/configuration.md): runtime settings, secrets, branding,
   bootstrap users, and proxy integration.
-- [Operations](docs/operations.md): health checks, deployment, database
+- [Operations](docs/operations.md): managed-host health, lifecycle, database
   maintenance, backup and restore validation, and recovery procedures.
+- [Standalone Docker Compose Operations](docs/docker-compose.md): optional
+  local startup, backup, restore, and key rotation workflows.
 - [Security](docs/security.md): trust boundaries, controls, and deployment
   responsibilities.
 
