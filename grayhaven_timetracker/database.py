@@ -9,13 +9,37 @@ from typing import Any, cast
 
 from flask import Flask, g
 from sqlalchemy import Engine, create_engine, event, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import ORMExecuteState, Session, sessionmaker, with_loader_criteria
 from sqlcipher3 import dbapi2 as sqlcipher
 
-from .models import Base
+from .models import Base, Client, Contract, Subtask, Task, TimeEntry
 
 SQLITE_HEADER = b"SQLite format 3\x00"
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
+SOFT_DELETABLE_MODELS = (Client, Contract, Task, Subtask, TimeEntry)
+
+
+class ApplicationSession(Session):
+    """Session that excludes soft-deleted business records by default."""
+
+
+@event.listens_for(ApplicationSession, "do_orm_execute")
+def exclude_soft_deleted_records(execute_state: ORMExecuteState) -> None:
+    """Keep hidden records outside normal ORM reads and relationship loads."""
+    if not execute_state.is_select or execute_state.execution_options.get(
+        "include_hidden"
+    ):
+        return
+    execute_state.statement = execute_state.statement.options(
+        *(
+            with_loader_criteria(
+                model,
+                lambda record: record.visible.is_(True),
+                include_aliases=True,
+            )
+            for model in SOFT_DELETABLE_MODELS
+        )
+    )
 
 
 class DatabaseError(RuntimeError):
@@ -124,6 +148,7 @@ def initialize_database(engine: Engine) -> None:
             WHEN EXISTS (
               SELECT 1 FROM time_entry AS existing
               WHERE existing.user_id = NEW.user_id
+                AND existing.visible = 1
                 AND NEW.started_at < COALESCE(
                     existing.stopped_at, '9999-12-31 23:59:59.999999'
                 )
@@ -139,6 +164,7 @@ def initialize_database(engine: Engine) -> None:
             WHEN EXISTS (
               SELECT 1 FROM time_entry AS existing
               WHERE existing.id != OLD.id AND existing.user_id = NEW.user_id
+                AND existing.visible = 1
                 AND NEW.started_at < COALESCE(
                     existing.stopped_at, '9999-12-31 23:59:59.999999'
                 )
@@ -213,7 +239,12 @@ def init_app(app: Flask) -> None:
     )
     initialize_database(engine)
     verify_cipher_integrity(engine)
-    factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    factory = sessionmaker(
+        bind=engine,
+        class_=ApplicationSession,
+        expire_on_commit=False,
+        future=True,
+    )
     app.extensions["database_engine"] = engine
     app.extensions["database_session_factory"] = factory
 
