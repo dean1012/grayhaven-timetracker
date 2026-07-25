@@ -96,8 +96,12 @@ stops its active timers and removes its work from operational selection and
 reporting. Activation restores normal availability.
 
 Deletion is intentionally constrained. Finalized time must first be returned to
-the pending-invoice state. Deleting eligible work records removes associated
-operational data while retaining the append-only audit history.
+the pending-invoice state. Deleting eligible clients, contracts, tasks,
+subtasks, or time entries marks those records and their dependent work as
+hidden. Normal application queries exclude hidden records, while their stable
+identifiers and the append-only audit history remain available for controlled
+administrative recovery. User accounts follow the same lifecycle principle
+through enablement rather than a delete operation.
 
 [Back to top](#application-architecture)
 

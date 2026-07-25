@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pyotp
 from argon2 import PasswordHasher
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
 
 from grayhaven_timetracker import create_app
@@ -345,6 +345,21 @@ class DatabaseAndModelTests(AppTestCase):
             assert marker is not None
             self.assertEqual(marker.version, CURRENT_SCHEMA_VERSION)
 
+    def test_database_does_not_reuse_hard_deleted_identifiers(self) -> None:
+        seed = self.seed_contract()
+        with session_scope(self.app) as database:
+            first = Task(contract_id=seed.contract_id, name="Disposable task")
+            database.add(first)
+            database.flush()
+            first_id = first.id
+            database.execute(delete(Task).where(Task.id == first_id))
+            database.commit()
+
+            replacement = Task(contract_id=seed.contract_id, name="Replacement task")
+            database.add(replacement)
+            database.flush()
+            self.assertGreater(replacement.id, first_id)
+
     def test_database_rejects_unsupported_schema_version(self) -> None:
         from grayhaven_timetracker.database import initialize_database
 
@@ -449,6 +464,25 @@ class DatabaseAndModelTests(AppTestCase):
             )
             with self.assertRaises(IntegrityError):
                 database.flush()
+            database.rollback()
+
+            database.add(
+                TimeEntry(
+                    user_id=user.id,
+                    task_id=seed.task_id,
+                    started_at=datetime(2026, 7, 15, 12, 0, 0),
+                    visible=False,
+                )
+            )
+            database.flush()
+            database.add(
+                TimeEntry(
+                    user_id=user.id,
+                    task_id=seed.task_id,
+                    started_at=datetime(2026, 7, 15, 12, 1, 0),
+                )
+            )
+            database.flush()
             database.rollback()
 
             unrelated_task = Task(contract_id=seed.contract_id, name="Unrelated task")
