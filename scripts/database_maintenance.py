@@ -217,7 +217,7 @@ def create_backup(database: Path, key_file: Path, output: Path) -> None:
 def parser() -> argparse.ArgumentParser:
     """Build the maintenance command-line parser."""
     command_parser = argparse.ArgumentParser(
-        description="Maintain the Grayhaven Time Tracker SQLCipher database"
+        description="Maintain the Grayhaven Systems LLC Time Tracker SQLCipher database"
     )
     subparsers = command_parser.add_subparsers(dest="command", required=True)
 

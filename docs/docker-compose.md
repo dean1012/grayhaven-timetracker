@@ -1,141 +1,404 @@
-# Standalone Docker Compose Operations
+# Docker Compose Operations
 
 [Return to README](../README.md)
 
-This guide covers the repository's optional standalone/local Docker Compose
-workflow. It is intended for local evaluation and adaptation. It is not the
-Grayhaven managed deployment and is not a turnkey production platform. The
-operator remains responsible for host hardening, TLS, secret delivery,
-monitoring, off-host backups, retention, and recovery testing.
+This guide is the authoritative procedure for the repository's optional
+standalone Docker Compose installation. It is intended for local evaluation
+and adaptation. It is not the Grayhaven Systems LLC managed deployment and is
+not a turnkey production platform. The operator is responsible for host
+hardening, TLS, secret delivery, monitoring, off-host backups, retention, and
+recovery testing.
+
+Run all commands from the repository root.
 
 ## Table of Contents
 
-- [Startup](#startup)
-- [Service Health](#service-health)
-- [Online Backups](#online-backups)
-- [Backup Verification](#backup-verification)
-- [Database Restore](#database-restore)
-- [SQLCipher Key Rotation](#sqlcipher-key-rotation)
-- [Bootstrap Credential Generation](#bootstrap-credential-generation)
-- [Timezone Changes](#timezone-changes)
+- [Prepare the Installation](#prepare-the-installation)
+- [Build and Start the Application](#build-and-start-the-application)
+- [Check Service Health](#check-service-health)
+- [Manage the Service](#manage-the-service)
+- [Review Logs](#review-logs)
+- [Create a Backup](#create-a-backup)
+- [Verify a Backup](#verify-a-backup)
+- [Restore a Backup](#restore-a-backup)
+- [Rotate the SQLCipher Passphrase](#rotate-the-sqlcipher-passphrase)
+- [Update the Application](#update-the-application)
+- [Change the Timezone](#change-the-timezone)
 
-## Startup
+## Prepare the Installation
 
-Create local state and secret directories, generate unique secrets, and supply
-the separately licensed runtime branding and bootstrap-user manifest described
-in [Configuration](configuration.md):
+1. Create the persistent data, secret, and branding directories.
 
-```bash
-mkdir -p data secrets
-chmod 700 data secrets
-python3 -c 'import secrets; print(secrets.token_urlsafe(48))' \
-  > secrets/flask_secret_key
-python3 -c 'import secrets; print(secrets.token_urlsafe(48))' \
-  > secrets/sqlcipher_passphrase
-chmod 600 secrets/*
-docker compose up --build -d
-```
+   ```bash
+   install -d -m 0700 data secrets
+   install -d -m 0755 branding branding/fonts
+   ```
 
-The supplied Compose service binds only to `127.0.0.1:8000`. Local defaults,
-keys, and branding must not be reused in a managed or public environment.
+2. Build the application image before using it for credential generation.
+   Replace `<version>` with the version that should appear in the interface.
 
-[Back to top](#standalone-docker-compose-operations)
+   ```bash
+   APP_VERSION="<version>" docker compose build timetracker
+   ```
 
-## Service Health
+3. Generate independent Flask and SQLCipher secrets.
 
-Check service state and the loopback health endpoint:
+   ```bash
+   umask 077
+   python3 -c 'import secrets; print(secrets.token_urlsafe(48))' \
+     > secrets/flask_secret_key
+   python3 -c 'import secrets; print(secrets.token_urlsafe(48))' \
+     > secrets/sqlcipher_passphrase
+   chmod 0600 secrets/flask_secret_key secrets/sqlcipher_passphrase
+   ```
 
-```bash
-docker compose ps
-curl --fail http://127.0.0.1:8000/health
-```
+4. Generate an Argon2id hash for the initial administrator password. Enter the
+   password when prompted and copy the resulting hash.
 
-A healthy response is HTTP 200 with `{"status":"ok"}`.
+   ```bash
+   docker compose run --rm --no-deps timetracker python -c '
+   from getpass import getpass
+   from grayhaven_timetracker.auth import hash_password
+   print(hash_password(getpass("Initial password: ")))
+   '
+   ```
 
-[Back to top](#standalone-docker-compose-operations)
+5. Create the bootstrap-user manifest from the supplied structural example.
 
-## Online Backups
+   ```bash
+   install -m 0600 \
+     examples/bootstrap_users.sample.json \
+     secrets/bootstrap_users
+   "${EDITOR:-vi}" secrets/bootstrap_users
+   ```
 
-Do not copy the live database while WAL activity is possible. Create an
-encrypted online artifact with SQLite's backup API:
+   Replace every placeholder. Set the administrator's `password_hash` to the
+   hash generated in step 4. Leave `totp_secret` as `null` unless an existing
+   Base32 TOTP secret is intentionally being supplied. The application rejects
+   a manifest without an enabled administrator.
 
-```bash
-mkdir -p data/backups
-docker compose exec timetracker \
-  python scripts/database_maintenance.py backup \
-  /app/data/timetracker.sqlite3 \
-  /run/secrets/sqlcipher_passphrase \
-  /app/data/backups/timetracker-$(date -u +%Y%m%dT%H%M%SZ).sqlite3
-```
+6. Copy an authorized branding bundle into `branding/`. Replace
+   `<branding-source>` with the directory containing the assets.
 
-The utility verifies SQLCipher and SQLite integrity, writes mode `0600`, and
-refuses to overwrite an existing path. Configure any external backup system to
-capture only after this command succeeds.
+   ```bash
+   install -m 0644 <branding-source>/grayhaven-logo-wordmark-dark.svg \
+     branding/grayhaven-logo-wordmark-dark.svg
+   install -m 0644 <branding-source>/favicon.ico branding/favicon.ico
+   install -m 0644 <branding-source>/favicon-16.png branding/favicon-16.png
+   install -m 0644 <branding-source>/favicon-32.png branding/favicon-32.png
+   install -m 0644 <branding-source>/apple-touch-icon.png \
+     branding/apple-touch-icon.png
+   install -m 0644 <branding-source>/fonts/inter-400.ttf \
+     branding/fonts/inter-400.ttf
+   install -m 0644 <branding-source>/fonts/inter-500.ttf \
+     branding/fonts/inter-500.ttf
+   install -m 0644 <branding-source>/fonts/inter-600.ttf \
+     branding/fonts/inter-600.ttf
+   install -m 0644 <branding-source>/fonts/inter-700.ttf \
+     branding/fonts/inter-700.ttf
+   ```
 
-[Back to top](#standalone-docker-compose-operations)
+   External adopters must use branding they are authorized to distribute and
+   may need to adapt the application templates and styles for a different
+   identity.
 
-## Backup Verification
+7. Confirm that every required runtime file exists.
 
-Verify a retained artifact with its matching key:
+   ```bash
+   test -s secrets/flask_secret_key
+   test -s secrets/sqlcipher_passphrase
+   test -s secrets/bootstrap_users
+   test -s branding/grayhaven-logo-wordmark-dark.svg
+   test -s branding/favicon.ico
+   test -s branding/favicon-16.png
+   test -s branding/favicon-32.png
+   test -s branding/apple-touch-icon.png
+   test -s branding/fonts/inter-400.ttf
+   test -s branding/fonts/inter-500.ttf
+   test -s branding/fonts/inter-600.ttf
+   test -s branding/fonts/inter-700.ttf
+   ```
 
-```bash
-docker compose exec timetracker \
-  python scripts/database_maintenance.py verify \
-  /app/data/backups/<backup> \
-  /run/secrets/sqlcipher_passphrase
-```
+[Back to top](#docker-compose-operations)
 
-Record the artifact checksum, application image/version, schema version, and
-key version. Periodically restore the artifact to an isolated copy and verify
-health, login, TOTP, representative records, reports, audit history, and a
-controlled write.
+## Build and Start the Application
 
-[Back to top](#standalone-docker-compose-operations)
+1. Validate the resolved Compose configuration.
 
-## Database Restore
+   ```bash
+   docker compose config --quiet
+   ```
 
-Identify and verify the approved artifact, matching application build, schema,
-and key. Preserve the current database generation before replacing it:
+2. Build and start the service. Replace `<version>` with the application
+   version that should appear in the interface.
+
+   ```bash
+   APP_VERSION="<version>" docker compose up --build --detach
+   ```
+
+3. Wait for the container health check to report `healthy`.
+
+   ```bash
+   docker compose ps
+   ```
+
+4. Query the loopback health endpoint.
+
+   ```bash
+   curl --fail --silent --show-error http://127.0.0.1:8000/health
+   ```
+
+5. Open the application in a browser.
+
+   ```text
+   http://127.0.0.1:8000
+   ```
+
+The Compose definition binds only to `127.0.0.1:8000`. Do not expose this
+plain-HTTP listener directly to an untrusted network.
+
+[Back to top](#docker-compose-operations)
+
+## Check Service Health
+
+1. Display the container state and health result.
+
+   ```bash
+   docker compose ps
+   ```
+
+2. Query the application health endpoint.
+
+   ```bash
+   curl --fail --silent --show-error http://127.0.0.1:8000/health
+   ```
+
+A healthy application returns `{"status":"ok"}`. The application returns
+HTTP 503 if it cannot query the encrypted database.
+
+[Back to top](#docker-compose-operations)
+
+## Manage the Service
+
+Stop the application without removing its container:
 
 ```bash
 docker compose stop timetracker
-rollback_dir="$(mktemp -d data/rollback.XXXXXXXX)"
-for path in \
-  data/timetracker.sqlite3 \
-  data/timetracker.sqlite3-wal \
-  data/timetracker.sqlite3-shm; do
-  if test -e "$path"; then
-    cp -a -- "$path" "$rollback_dir/"
-  fi
-done
-printf 'Rollback directory: %s\n' "$rollback_dir"
-rm -f -- \
-  data/timetracker.sqlite3 \
-  data/timetracker.sqlite3-wal \
-  data/timetracker.sqlite3-shm
-cp -a -- data/backups/<backup> data/timetracker.sqlite3
-chown "$(id -u):$(id -g)" data/timetracker.sqlite3
-chmod 0600 data/timetracker.sqlite3
-docker compose start timetracker
-curl --fail http://127.0.0.1:8000/health
 ```
 
-Then verify login, TOTP, current records, reports, shared-report access, audit
-history, and one controlled write. Retain the rollback directory and matching
-old key until the restore is accepted. Remove stale WAL and SHM sidecars again
-before returning a preserved prior database generation to service.
+Start the existing container:
 
-[Back to top](#standalone-docker-compose-operations)
+```bash
+docker compose start timetracker
+```
 
-## SQLCipher Key Rotation
+Restart the application:
 
-Treat key rotation as offline maintenance:
+```bash
+docker compose restart timetracker
+```
 
-1. Create and verify a current backup.
-2. Stop the service with `docker compose stop timetracker`.
-3. Install the proposed key as `secrets/sqlcipher_passphrase.new` with mode
-   `0600`.
-4. Run:
+Stop and remove the container without deleting persistent data or secrets:
+
+```bash
+docker compose down
+```
+
+Never add `--volumes` to the final command unless permanent data deletion is
+intended and separately approved.
+
+[Back to top](#docker-compose-operations)
+
+## Review Logs
+
+Display the most recent application log entries:
+
+```bash
+docker compose logs --tail 200 timetracker
+```
+
+Follow new application log entries during a controlled reproduction:
+
+```bash
+docker compose logs --follow timetracker
+```
+
+[Back to top](#docker-compose-operations)
+
+## Create a Backup
+
+1. Confirm that the application is healthy.
+
+   ```bash
+   docker compose ps
+   curl --fail --silent --show-error http://127.0.0.1:8000/health
+   ```
+
+2. Create the backup directory.
+
+   ```bash
+   install -d -m 0700 data/backups
+   ```
+
+3. Create a timestamped encrypted snapshot with SQLite's online backup API.
+
+   ```bash
+   BACKUP_NAME="timetracker-$(date -u +%Y%m%dT%H%M%SZ).sqlite3"
+   docker compose exec timetracker \
+     python scripts/database_maintenance.py backup \
+     /app/data/timetracker.sqlite3 \
+     /run/secrets/sqlcipher_passphrase \
+     "/app/data/backups/${BACKUP_NAME}"
+   ```
+
+4. Record the checksum and application version with the backup artifact.
+
+   ```bash
+   sha256sum "data/backups/${BACKUP_NAME}"
+   docker compose exec timetracker printenv APP_VERSION
+   ```
+
+The backup command verifies SQLCipher and SQLite integrity, writes the artifact
+with mode `0600`, and refuses to overwrite an existing path. Configure an
+off-host backup system to capture `data/backups/` only after this command
+succeeds. Do not copy `data/timetracker.sqlite3` while the application is
+running.
+
+[Back to top](#docker-compose-operations)
+
+## Verify a Backup
+
+1. Select the exact artifact to verify.
+
+   ```bash
+   BACKUP_NAME="<backup>"
+   test -f "data/backups/${BACKUP_NAME}"
+   ```
+
+2. Verify the encrypted artifact with its matching SQLCipher passphrase.
+
+   ```bash
+   docker compose exec timetracker \
+     python scripts/database_maintenance.py verify \
+     "/app/data/backups/${BACKUP_NAME}" \
+     /run/secrets/sqlcipher_passphrase
+   ```
+
+3. Record the checksum after verification.
+
+   ```bash
+   sha256sum "data/backups/${BACKUP_NAME}"
+   ```
+
+Periodically restore a verified artifact into an isolated installation and
+verify health, login, TOTP, representative records, billing metadata, reports,
+shared-report access, audit history, and one controlled write.
+
+[Back to top](#docker-compose-operations)
+
+## Restore a Backup
+
+1. Select and verify the exact artifact before stopping the service.
+
+   ```bash
+   BACKUP_NAME="<backup>"
+   test -f "data/backups/${BACKUP_NAME}"
+   docker compose exec timetracker \
+     python scripts/database_maintenance.py verify \
+     "/app/data/backups/${BACKUP_NAME}" \
+     /run/secrets/sqlcipher_passphrase
+   ```
+
+2. Stop the application and confirm that it is not running.
+
+   ```bash
+   docker compose stop timetracker
+   test "$(docker compose ps --status running --quiet timetracker)" = ""
+   ```
+
+3. Preserve the current database, WAL, and SHM files in a rollback directory.
+
+   ```bash
+   ROLLBACK_DIR="$(mktemp -d data/rollback.XXXXXXXX)"
+   find data \
+     -maxdepth 1 \
+     -type f \
+     \( -name 'timetracker.sqlite3' \
+        -o -name 'timetracker.sqlite3-wal' \
+        -o -name 'timetracker.sqlite3-shm' \) \
+     -exec cp -a -t "$ROLLBACK_DIR" -- {} +
+   printf 'Rollback directory: %s\n' "$ROLLBACK_DIR"
+   ```
+
+4. Remove the old database and sidecars, then install the verified artifact.
+
+   ```bash
+   rm -f -- \
+     data/timetracker.sqlite3 \
+     data/timetracker.sqlite3-wal \
+     data/timetracker.sqlite3-shm
+   cp -a -- "data/backups/${BACKUP_NAME}" data/timetracker.sqlite3
+   chmod 0600 data/timetracker.sqlite3
+   ```
+
+5. Start the application and verify its health.
+
+   ```bash
+   docker compose start timetracker
+   docker compose ps
+   curl --fail --silent --show-error http://127.0.0.1:8000/health
+   ```
+
+6. Verify administrator login, TOTP, current records, billing metadata,
+   reports, shared-report access, audit history, and one controlled write.
+   Retain the rollback directory and prior passphrase until the restore is
+   accepted.
+
+If validation fails, stop the service, remove the failed database and its
+sidecars, copy the complete prior generation from the printed rollback
+directory into `data/`, and start the service again.
+
+[Back to top](#docker-compose-operations)
+
+## Rotate the SQLCipher Passphrase
+
+1. Create and verify a current backup by following
+   [Create a Backup](#create-a-backup) and
+   [Verify a Backup](#verify-a-backup).
+
+2. Generate the proposed passphrase in a separate secret file.
+
+   ```bash
+   umask 077
+   python3 -c 'import secrets; print(secrets.token_urlsafe(48))' \
+     > secrets/sqlcipher_passphrase.new
+   chmod 0600 secrets/sqlcipher_passphrase.new
+   ```
+
+3. Stop the application and confirm that it is not running.
+
+   ```bash
+   docker compose stop timetracker
+   test "$(docker compose ps --status running --quiet timetracker)" = ""
+   ```
+
+4. Preserve the current database, sidecars, and passphrase in a rollback
+   directory.
+
+   ```bash
+   ROLLBACK_DIR="$(mktemp -d data/rekey-rollback.XXXXXXXX)"
+   cp -a secrets/sqlcipher_passphrase "$ROLLBACK_DIR/"
+   find data \
+     -maxdepth 1 \
+     -type f \
+     \( -name 'timetracker.sqlite3' \
+        -o -name 'timetracker.sqlite3-wal' \
+        -o -name 'timetracker.sqlite3-shm' \) \
+     -exec cp -a -t "$ROLLBACK_DIR" -- {} +
+   printf 'Rollback directory: %s\n' "$ROLLBACK_DIR"
+   ```
+
+5. Rekey the database with a one-off container.
 
    ```bash
    docker compose run --rm --no-deps timetracker \
@@ -145,53 +408,107 @@ Treat key rotation as offline maintenance:
      /run/secrets/sqlcipher_passphrase.new
    ```
 
-5. Verify the database with the new key.
-6. Atomically replace `secrets/sqlcipher_passphrase`, then start with
-   `docker compose start timetracker`.
-7. Validate health, login, writes, and reports.
+6. Verify the database with the proposed passphrase.
 
-The utility attempts to restore and verify its pre-rotation backup if rekeying
-fails. Keep the service stopped until the database and active key are known to
-match. Retain the pre-rotation backup and old key only for the approved rollback
-window.
+   ```bash
+   docker compose run --rm --no-deps timetracker \
+     python scripts/database_maintenance.py verify \
+     /app/data/timetracker.sqlite3 \
+     /run/secrets/sqlcipher_passphrase.new
+   ```
 
-[Back to top](#standalone-docker-compose-operations)
+7. Replace the active passphrase file.
 
-## Bootstrap Credential Generation
+   ```bash
+   mv -f -- \
+     secrets/sqlcipher_passphrase.new \
+     secrets/sqlcipher_passphrase
+   chmod 0600 secrets/sqlcipher_passphrase
+   ```
 
-Generate an Argon2id hash for an initial password without terminal echo:
+8. Recreate the container so the read-only secret mount uses the new file,
+   then verify health.
 
-```bash
-docker compose run --rm --no-deps timetracker python -c '
-from getpass import getpass
-from grayhaven_timetracker.auth import hash_password
-print(hash_password(getpass("Initial password: ")))
-'
-```
+   ```bash
+   docker compose up --detach --force-recreate timetracker
+   docker compose ps
+   curl --fail --silent --show-error http://127.0.0.1:8000/health
+   ```
 
-Generate an optional Base32 TOTP secret:
+9. Verify login, writes, and reports. Retain the rollback directory and old
+   passphrase until the rotation is accepted.
 
-```bash
-docker compose run --rm --no-deps timetracker \
-  python -c 'import pyotp; print(pyotp.random_base32())'
-```
+If rekeying fails, keep the application stopped. Restore the database,
+sidecars, and passphrase from the rollback directory before restarting it.
 
-Treat both outputs as credentials. Put them directly into the approved local
-secret workflow and deliver password and TOTP enrollment information through
-separate channels.
+[Back to top](#docker-compose-operations)
 
-[Back to top](#standalone-docker-compose-operations)
+## Update the Application
 
-## Timezone Changes
+1. Create and verify a current backup by following
+   [Create a Backup](#create-a-backup) and
+   [Verify a Backup](#verify-a-backup).
 
-Set `TZ` to an IANA timezone and recreate the service:
+2. Fetch the intended source revision and review it before changing the
+   running application.
 
-```bash
-TZ=America/Chicago docker compose up -d --force-recreate timetracker
-curl --fail http://127.0.0.1:8000/health
-```
+   ```bash
+   git fetch --prune origin
+   git status --short --branch
+   git log --show-signature -1 <approved-ref>
+   ```
 
-Timestamps remain stored in UTC. Validate representative time entry and report
-display after the change.
+3. Check out the approved revision.
 
-[Back to top](#standalone-docker-compose-operations)
+   ```bash
+   git switch --detach <approved-ref>
+   ```
+
+4. Validate the resolved Compose configuration and build the new image.
+
+   ```bash
+   docker compose config --quiet
+   APP_VERSION="<version>" docker compose build timetracker
+   ```
+
+5. Recreate the service with the new image.
+
+   ```bash
+   APP_VERSION="<version>" docker compose up --detach --force-recreate timetracker
+   ```
+
+6. Verify container health, the application endpoint, login, and a
+   representative read and write.
+
+   ```bash
+   docker compose ps
+   curl --fail --silent --show-error http://127.0.0.1:8000/health
+   ```
+
+If the update cannot be accepted, return to the previously recorded source
+revision and application version, rebuild and recreate the service, and restore
+the matching database and passphrase when the update changed persistent data.
+
+[Back to top](#docker-compose-operations)
+
+## Change the Timezone
+
+1. Set `TZ` to the required IANA timezone and recreate the service.
+
+   ```bash
+   TZ="<Area/Location>" docker compose up --detach --force-recreate timetracker
+   ```
+
+2. Verify health after the container is recreated.
+
+   ```bash
+   docker compose ps
+   curl --fail --silent --show-error http://127.0.0.1:8000/health
+   ```
+
+3. Verify a representative time entry and report in the application.
+
+Timestamps remain stored in UTC. Changing `TZ` changes display and entry
+interpretation without rewriting stored timestamps.
+
+[Back to top](#docker-compose-operations)

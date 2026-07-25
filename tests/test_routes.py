@@ -425,7 +425,7 @@ class SecurityAndErrorRouteTests(AppTestCase):
 
         self.assertNotIn("## Deployment", managed)
         self.assertNotIn("[Deployment](#deployment)", managed)
-        self.assertNotIn("docker compose", managed.lower())
+        self.assertNotRegex(managed.lower(), r"(?m)^\s*docker compose\s")
         for command in (
             "sudo grayhaven-backupctl backup",
             "sudo grayhaven-backupctl restore latest",
@@ -446,11 +446,15 @@ class SecurityAndErrorRouteTests(AppTestCase):
             "docs/operations.md#restoring-to-a-target-directory",
             managed,
         )
-        self.assertIn("docker compose up --build -d", compose)
+        self.assertIn("docker compose up --build --detach", compose)
         self.assertIn("docker compose exec timetracker", compose)
         self.assertIn("docker compose stop timetracker", compose)
         self.assertIn("docker compose run --rm --no-deps timetracker", compose)
-        self.assertIn("not the\nGrayhaven managed deployment", compose)
+        self.assertIn(
+            "not the Grayhaven Systems LLC managed deployment",
+            compose.replace("\n", " "),
+        )
+        self.assertNotIn("Managed Environment", readme)
         self.assertIn("docs/docker-compose.md", readme)
         self.assertIn("docs/docker-compose.md", contributing)
 

@@ -3,8 +3,8 @@
 Thank you for your interest in improving `grayhaven-timetracker`.
 
 The application is organization-specific. Development and local UI testing
-require separately supplied runtime branding, and deployment outside Grayhaven
-requires adaptation to the target environment.
+require separately supplied runtime branding, and deployment outside
+Grayhaven Systems LLC requires adaptation to the target environment.
 
 ## Table of Contents
 

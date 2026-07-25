@@ -3,8 +3,9 @@
 [Return to README](../README.md)
 
 This document describes the application boundaries and behavior of the
-Grayhaven Time Tracker. Host provisioning, reverse-proxy configuration, secret
-delivery, and backup scheduling belong to the managed deployment environment.
+Grayhaven Systems LLC Time Tracker. Host provisioning, reverse-proxy
+configuration, secret delivery, and backup scheduling belong to the managed
+deployment environment.
 
 ## Table of Contents
 
@@ -21,9 +22,10 @@ delivery, and backup scheduling belong to the managed deployment environment.
 
 ## System Context
 
-The application is a server-rendered Flask service for Grayhaven personnel. It
-stores operational state in one encrypted SQLCipher database and is designed to
-run as a single Gunicorn instance behind a trusted TLS reverse proxy.
+The application is a server-rendered Flask service for Grayhaven Systems LLC
+personnel. It stores operational state in one encrypted SQLCipher database and
+is designed to run as a single Gunicorn instance behind a trusted TLS reverse
+proxy.
 
 Browser requests pass through the reverse proxy to Gunicorn and Flask. Flask
 performs authentication, authorization, validation, and database transactions,
@@ -198,6 +200,6 @@ runtime interface. The managed environment owns:
 - Image promotion and deployment orchestration.
 
 These boundaries are intentional. Copying this repository alone does not
-reproduce Grayhaven's managed deployment.
+reproduce the Grayhaven Systems LLC managed deployment.
 
 [Back to top](#application-architecture)

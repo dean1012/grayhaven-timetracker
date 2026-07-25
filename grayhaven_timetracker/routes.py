@@ -592,8 +592,8 @@ def user_setup_mailto(
         [
             f"{escape(user.full_name)},",
             "",
-            f"Grayhaven Systems LLC has added you as {article} {role} in the Grayhaven "
-            "Systems LLC Time Tracker application.",
+            f"Grayhaven Systems LLC has added you as {article} {role} in the "
+            "Grayhaven Systems LLC Time Tracker application.",
             "",
             "<b>You can access the Time Tracker application at the URL below:</b>",
             f'<a href="{escape(application_url, quote=True)}">'
