@@ -353,6 +353,21 @@ class SecurityAndErrorRouteTests(AppTestCase):
             r"\.mobile-nav \{ display: none; \}",
         )
         self.assertIn(".responsive-table tbody > tr > td::before", app_stylesheet)
+        self.assertRegex(
+            app_stylesheet,
+            r"(?s)\.status-pill,\s*\.live-label \{[^}]*"
+            r"flex: 0 0 auto;[^}]*justify-self: start;[^}]*"
+            r"inline-size: fit-content;[^}]*max-inline-size: 100%;[^}]*"
+            r"text-align: left;[^}]*overflow-wrap: anywhere;",
+        )
+        self.assertNotRegex(
+            app_stylesheet,
+            r"\.audit-source\s*\{[^}]*(?:min-(?:inline-)?size|text-align: center)",
+        )
+        self.assertNotIn(
+            ".responsive-table.user-table .status-pill",
+            app_stylesheet,
+        )
         self.assertIn(
             ".active-timer-actions .timer-stop-form",
             app_stylesheet,
