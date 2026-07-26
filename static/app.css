@@ -281,6 +281,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 .status-running { display: inline-flex; align-items: center; gap: .35rem; background: color-mix(in srgb, var(--alert-success) 15%, transparent); }
 .status-running i { font-size: .42rem; }
 .contract-directory, .user-directory, .session-directory, .audit-directory { padding: 1.7rem; }
+.session-directory + .session-directory { margin-top: 1.5rem; }
 .share-panel { display: flex; align-items: end; justify-content: space-between; gap: 2rem; margin-bottom: 1.5rem; padding: 1.4rem 1.7rem; }
 .report-share-panel { margin-bottom: 1.5rem; padding: 1.4rem 1.7rem; }
 .report-link-row { display: flex; align-items: center; gap: .65rem; }

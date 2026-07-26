@@ -372,6 +372,11 @@ class SecurityAndErrorRouteTests(AppTestCase):
             ".active-timer-actions .timer-stop-form",
             app_stylesheet,
         )
+        self.assertRegex(
+            app_stylesheet,
+            r"\.session-directory \+ \.session-directory \{[^}]*"
+            r"margin-top: 1\.5rem;",
+        )
         self.assertIn("flex: 1 1 0", app_stylesheet)
         self.assertNotIn("overflow-x: auto", app_stylesheet)
         self.assertNotRegex(
