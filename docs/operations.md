@@ -16,7 +16,7 @@ Run these procedures on the managed web host unless a step says otherwise.
 - [Manage the Service](#manage-the-service)
 - [Create a Backup](#create-a-backup)
 - [Verify a Local Backup](#verify-a-local-backup)
-- [Test Backup and Restore](#test-backup-and-restore)
+- [Test Backup and Restore with grayhaven-backupctl](#test-backup-and-restore-with-grayhaven-backupctl)
 - [Restore a Local Backup](#restore-a-local-backup)
 - [Restore a Backup from Restic](#restore-a-backup-from-restic)
 - [Rotate the SQLCipher Passphrase](#rotate-the-sqlcipher-passphrase)
@@ -176,7 +176,7 @@ copy the live database as a substitute for this procedure.
 
 [Back to top](#operations)
 
-## Test Backup and Restore
+## Test Backup and Restore with `grayhaven-backupctl`
 
 Use a disposable recovery host or isolated container environment. Do not test
 a restore over the live database.
@@ -264,12 +264,15 @@ a restore over the live database.
      <approved-image>@sha256:<digest>
    ```
 
-7. Verify health, login, TOTP, representative records, billing metadata,
-   reports, shared-report access, audit history, and one controlled write.
+7. Query only the isolated container's loopback health endpoint.
 
    ```bash
    curl --fail --silent --show-error http://127.0.0.1:18000/health
    ```
+
+   A successful response confirms that the application started and loaded the
+   restored database with the supplied SQLCipher passphrase. Do not create a
+   temporary reverse proxy or use this isolated instance for application UAT.
 
 8. Stop the recovery container and remove the isolated recovery files after
    the exercise is accepted.
