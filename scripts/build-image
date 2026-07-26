@@ -11,7 +11,7 @@ if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
   exit 1
 fi
 revision="$(git rev-parse --short HEAD)"
-build_revision=0
+build_revision=-1
 while IFS= read -r tag; do
   candidate="${tag##*.}"
   if [[ "$candidate" =~ ^[0-9]+$ ]] && (( candidate > build_revision )); then

@@ -696,3 +696,50 @@ document.querySelectorAll("[data-totp-bubbles]").forEach((group) => {
     });
   });
 });
+
+document.querySelectorAll("[data-payment-status-form]").forEach((form) => {
+  const status = form.querySelector("select[name='billing_status']");
+  const reasonField = form.querySelector("[data-correction-reason-field]");
+  const reasonInput = reasonField?.querySelector("textarea[name='correction_reason']");
+  if (
+    !(status instanceof HTMLSelectElement) ||
+    !(reasonField instanceof HTMLElement) ||
+    !(reasonInput instanceof HTMLTextAreaElement)
+  ) {
+    return;
+  }
+  const statusOrder = ["pending_invoice", "invoiced", "client_paid", "disbursed"];
+  const financialInputs = Array.from(form.querySelectorAll("[data-original-value]"));
+  const updateCorrectionReason = () => {
+    const movingBackward =
+      statusOrder.indexOf(status.value) <
+      statusOrder.indexOf(form.dataset.currentPaymentStatus || "");
+    const existingDataChanged = financialInputs.some(
+      (input) =>
+        input.dataset.originalValue !== "" &&
+        input.value !== input.dataset.originalValue,
+    );
+    const required = movingBackward || existingDataChanged;
+    reasonField.hidden = !required;
+    reasonInput.disabled = !required;
+    reasonInput.required = required;
+  };
+  const updateFields = () => {
+    form.querySelectorAll("[data-payment-statuses]").forEach((field) => {
+      const visible = (field.dataset.paymentStatuses || "")
+        .split(" ")
+        .includes(status.value);
+      field.hidden = !visible;
+      field.querySelectorAll("input").forEach((input) => {
+        input.disabled = !visible;
+        input.required = visible && input.hasAttribute("data-payment-status-required");
+      });
+    });
+    updateCorrectionReason();
+  };
+  status.addEventListener("change", updateFields);
+  financialInputs.forEach((input) => {
+    input.addEventListener("input", updateCorrectionReason);
+  });
+  updateFields();
+});
