@@ -271,8 +271,7 @@ a restore over the live database.
    ```
 
    A successful response confirms that the application started and loaded the
-   restored database with the supplied SQLCipher passphrase. Do not create a
-   temporary reverse proxy or use this isolated instance for application UAT.
+   restored database with the supplied SQLCipher passphrase.
 
 8. Stop the recovery container and remove the isolated recovery files after
    the exercise is accepted.
@@ -362,11 +361,6 @@ Use this procedure when the selected artifact already exists under
      --format '{{.ImageName}} {{.ImageDigest}}' \
      grayhaven-timetracker
    ```
-
-8. Verify administrator login, TOTP, current records, billing metadata,
-   reports, shared-report access, audit history, and one controlled write.
-   Retain the rollback directory and prior SQLCipher passphrase until the
-   restore is accepted.
 
 [Back to top](#operations)
 
