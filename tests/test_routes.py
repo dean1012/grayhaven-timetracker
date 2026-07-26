@@ -421,6 +421,32 @@ class SecurityAndErrorRouteTests(AppTestCase):
         self.assertIn('class="icon-button timer-action"', active_timer_template)
         self.assertIn('class="timer-stop-form"', active_timer_template)
 
+        status_template = (
+            project_root / "templates" / "session_status_form.html"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(
+            status_template.count(
+                'data-payment-statuses="invoiced client_paid disbursed"'
+            ),
+            2,
+        )
+        self.assertEqual(
+            status_template.count('data-payment-statuses="client_paid disbursed"'),
+            1,
+        )
+        self.assertEqual(
+            status_template.count('data-payment-statuses="disbursed"'),
+            2,
+        )
+        app_script = (project_root / "static/app.js").read_text(encoding="utf-8")
+        for behavior in (
+            'select[name=\'billing_status\']',
+            'field.hidden = !visible',
+            'input.disabled = !visible',
+            'status.addEventListener("change", updateFields)',
+        ):
+            self.assertIn(behavior, app_script)
+
     def test_documentation_separates_managed_and_compose_operations(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         managed = (project_root / "docs/operations.md").read_text(encoding="utf-8")
@@ -2657,7 +2683,15 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.login()
         status_url = f"/sessions/{self.seed.entry_id}/status"
         self.authorize_sensitive_action(status_url)
-        self.assertEqual(self.client.get(status_url).status_code, 200)
+        status_form = self.client.get(status_url)
+        self.assertEqual(status_form.status_code, 200)
+        self.assertIn(b"data-payment-status-form", status_form.data)
+        self.assertIn(
+            b'data-payment-statuses="invoiced client_paid disbursed" hidden',
+            status_form.data,
+        )
+        self.assertIn(b'data-payment-statuses="client_paid disbursed" hidden', status_form.data)
+        self.assertIn(b'data-payment-statuses="disbursed" hidden', status_form.data)
         invalid_status = self.client.post(
             status_url,
             data={

@@ -696,3 +696,24 @@ document.querySelectorAll("[data-totp-bubbles]").forEach((group) => {
     });
   });
 });
+
+document.querySelectorAll("[data-payment-status-form]").forEach((form) => {
+  const status = form.querySelector("select[name='billing_status']");
+  if (!(status instanceof HTMLSelectElement)) {
+    return;
+  }
+  const updateFields = () => {
+    form.querySelectorAll("[data-payment-statuses]").forEach((field) => {
+      const visible = (field.dataset.paymentStatuses || "")
+        .split(" ")
+        .includes(status.value);
+      field.hidden = !visible;
+      field.querySelectorAll("input").forEach((input) => {
+        input.disabled = !visible;
+        input.required = visible && input.hasAttribute("data-payment-status-required");
+      });
+    });
+  };
+  status.addEventListener("change", updateFields);
+  updateFields();
+});
