@@ -336,6 +336,7 @@ class SecurityAndErrorRouteTests(AppTestCase):
         self.assertEqual(missing_icons, [])
 
         app_stylesheet = (project_root / "static/app.css").read_text(encoding="utf-8")
+        self.assertIn("[hidden] { display: none !important; }", app_stylesheet)
         for media_query in (
             "@media (width <=400px)",
             "@media (width <=575px)",
