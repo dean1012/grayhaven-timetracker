@@ -426,20 +426,76 @@ Use this procedure when the required artifact is not present under
      /run/secrets/sqlcipher_passphrase
    ```
 
-5. Follow steps 3 through 8 in
-   [Restore a Local Backup](#restore-a-local-backup), using this restored file
-   as the source:
+5. Set the restored artifact path and public hostname.
 
    ```bash
    BACKUP="/tmp/var/lib/grayhaven/timetracker/backups/<backup>"
+   TIMETRACKER_HOST="<configured-hostname>"
    ```
 
-6. Remove the temporary restore tree after the restored application and its
-   rollback window are accepted.
+6. Stop the systemd service and require it to be inactive.
 
    ```bash
-   sudo rm -f /tmp/var/lib/grayhaven/timetracker/backups/<backup>
+   sudo systemctl stop grayhaven-timetracker.service
+   test "$(sudo systemctl is-active grayhaven-timetracker.service)" = inactive
    ```
+
+7. Preserve the complete current database generation in a root-only rollback
+   directory.
+
+   ```bash
+   ROLLBACK_DIR="$(sudo mktemp -d \
+     /var/lib/grayhaven/timetracker/rollback.XXXXXXXX)"
+   sudo find /var/lib/grayhaven/timetracker/data \
+     -maxdepth 1 \
+     -type f \
+     \( -name 'timetracker.sqlite3' \
+        -o -name 'timetracker.sqlite3-wal' \
+        -o -name 'timetracker.sqlite3-shm' \) \
+     -exec cp -a -t "$ROLLBACK_DIR" -- {} +
+   printf 'Rollback directory: %s\n' "$ROLLBACK_DIR"
+   ```
+
+8. Remove the old database and sidecars, then install the restored artifact.
+
+   ```bash
+   sudo rm -f -- \
+     /var/lib/grayhaven/timetracker/data/timetracker.sqlite3 \
+     /var/lib/grayhaven/timetracker/data/timetracker.sqlite3-wal \
+     /var/lib/grayhaven/timetracker/data/timetracker.sqlite3-shm
+   sudo cp -a "$BACKUP" \
+     /var/lib/grayhaven/timetracker/data/timetracker.sqlite3
+   ```
+
+9. Restore the managed ownership, permissions, and SELinux context.
+
+   ```bash
+   sudo chown 777:777 \
+     /var/lib/grayhaven/timetracker/data/timetracker.sqlite3
+   sudo chmod 0600 \
+     /var/lib/grayhaven/timetracker/data/timetracker.sqlite3
+   sudo restorecon -RF /var/lib/grayhaven/timetracker/data
+   ```
+
+10. Start the service and verify its health and image digest.
+
+    ```bash
+    sudo systemctl start grayhaven-timetracker.service
+    sudo systemctl is-active --quiet grayhaven-timetracker.service
+    curl --fail --silent --show-error \
+      --header "Host: ${TIMETRACKER_HOST}" \
+      http://127.0.0.1:8000/health
+    sudo podman container inspect \
+      --format '{{.ImageName}} {{.ImageDigest}}' \
+      grayhaven-timetracker
+    ```
+
+11. Remove the temporary restored artifact after the restored application and
+    its rollback window are accepted.
+
+    ```bash
+    sudo rm -f /tmp/var/lib/grayhaven/timetracker/backups/<backup>
+    ```
 
 [Back to top](#operations)
 
