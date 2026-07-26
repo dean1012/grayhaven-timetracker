@@ -427,9 +427,10 @@ class SecurityAndErrorRouteTests(AppTestCase):
         ).read_text(encoding="utf-8")
         self.assertIn(
             "{{ entry.invoice_date }}{% if entry.invoice_number %}"
-            "<br><small>{{ entry.invoice_number }}</small>",
+            "<br><small>#{{ entry.invoice_number }}</small>",
             my_sessions_template,
         )
+        self.assertIn("<br><small>#{{ entry.transaction_number }}</small>", my_sessions_template)
         self.assertIn(
             'class="summary-grid session-summary panel"', my_sessions_template
         )
