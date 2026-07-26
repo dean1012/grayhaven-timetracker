@@ -2716,7 +2716,10 @@ class ReportAndSessionRouteTests(AppTestCase):
             b'data-payment-statuses="invoiced client_paid disbursed" hidden',
             status_form.data,
         )
-        self.assertIn(b'data-payment-statuses="client_paid disbursed" hidden', status_form.data)
+        self.assertIn(
+            b'data-payment-statuses="client_paid disbursed" hidden',
+            status_form.data,
+        )
         self.assertIn(b'data-payment-statuses="disbursed" hidden', status_form.data)
         invalid_status = self.client.post(
             status_url,
@@ -2870,6 +2873,18 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         self.assertEqual(invoiced.status_code, 302)
         self.authorize_sensitive_action(status_url, totp_secret="")
+        self.assertEqual(
+            self.client.post(
+                status_url,
+                data={
+                    **invoice_fields,
+                    "billing_status": "disbursed",
+                    "disbursement_date": "2026-07-19",
+                    "transaction_number": "TX-1",
+                },
+            ).status_code,
+            400,
+        )
         self.assertEqual(
             self.client.post(
                 status_url,
