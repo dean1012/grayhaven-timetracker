@@ -3,13 +3,13 @@
 {% block breadcrumbs %}<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li aria-current="page"><span class="breadcrumb-label" title="My Sessions">My Sessions</span></li></ol></nav>{% endblock %}
 {% block content %}
 <section class="page-heading"><div><p class="eyebrow">MY TIME</p><h1>My Sessions</h1></div></section>
-<section class="summary-grid session-summary" data-live-region="my-session-summary">
-  <div class="summary-card panel"><span>Pending Invoice · Total Time</span><strong>{{ format_duration(summary.pending_invoice.seconds) }}</strong></div>
-  <div class="summary-card panel"><span>Pending Invoice · Unbilled Cost</span><strong>{{ format_money(summary.pending_invoice.cost) }}</strong></div>
-  <div class="summary-card panel"><span>Invoiced · Total Time</span><strong>{{ format_duration(summary.invoiced.seconds) }}</strong></div>
-  <div class="summary-card panel"><span>Invoiced · Invoiced Cost</span><strong>{{ format_money(summary.invoiced.cost) }}</strong></div>
-  <div class="summary-card panel"><span>Client Paid · Total Time</span><strong>{{ format_duration(summary.client_paid.seconds) }}</strong></div>
-  <div class="summary-card panel"><span>Client Paid · Pending Disbursement</span><strong>{{ format_money(summary.client_paid.cost) }}</strong></div>
+<section class="summary-grid session-summary panel" data-live-region="my-session-summary">
+  <div class="summary-card"><span>Pending Invoice · Total Time</span><strong>{{ format_duration(summary.pending_invoice.seconds) }}</strong></div>
+  <div class="summary-card"><span>Pending Invoice · Unbilled Cost</span><strong>{{ format_money(summary.pending_invoice.cost) }}</strong></div>
+  <div class="summary-card"><span>Invoiced · Total Time</span><strong>{{ format_duration(summary.invoiced.seconds) }}</strong></div>
+  <div class="summary-card"><span>Invoiced · Invoiced Cost</span><strong>{{ format_money(summary.invoiced.cost) }}</strong></div>
+  <div class="summary-card"><span>Client Paid · Total Time</span><strong>{{ format_duration(summary.client_paid.seconds) }}</strong></div>
+  <div class="summary-card"><span>Client Paid · Pending Disbursement</span><strong>{{ format_money(summary.client_paid.cost) }}</strong></div>
 </section>
 <section class="panel session-directory" data-live-region="my-sessions">
   <div class="panel-heading"><div><p class="eyebrow">CURRENT</p><h2>Pending Invoice Sessions</h2></div><span class="muted">{{ pending_total }} session{{ '' if pending_total == 1 else 's' }}</span></div>
@@ -38,7 +38,7 @@
       <td data-label="Contract"><a class="external-link truncate-text" href="{{ url_for('main.contract', contract_id=entry.task.contract.id) }}" title="{{ entry.task.contract.name }}">{{ entry.task.contract.name }}</a></td>
       <td data-label="Task / Subtask">{{ entry.task.name }}{% if entry.subtask %} → {{ entry.subtask.name }}{% endif %}</td><td data-label="Start">{{ format_datetime(entry.started_at, timezone_info) }}</td><td data-label="End">{{ format_datetime(row.ended_at, timezone_info) }}</td>
       <td class="cell-status" data-label="Status"><span class="status-pill status-neutral">{{ entry.billing_status|replace('_', ' ')|title }}</span></td><td data-label="Duration">{{ format_duration(row.seconds) }}</td><td data-label="Rate">{{ format_money(entry.task.contract.hourly_rate) }}/hr</td><td data-label="Cost">{{ format_money(row.cost) }}</td>
-      <td data-label="Invoice">{% if entry.invoice_number %}{{ entry.invoice_number }}<br><small>{{ entry.invoice_date }}</small>{% else %}—{% endif %}</td><td data-label="Client Paid">{% if entry.client_paid_date %}{{ entry.client_paid_date }}{% else %}—{% endif %}</td><td data-label="Disbursement">{% if entry.disbursement_date %}{{ entry.disbursement_date }}{% if entry.transaction_number %}<br><small>{{ entry.transaction_number }}</small>{% endif %}{% else %}—{% endif %}</td>
+      <td data-label="Invoice">{% if entry.invoice_date %}{{ entry.invoice_date }}{% if entry.invoice_number %}<br><small>{{ entry.invoice_number }}</small>{% endif %}{% else %}—{% endif %}</td><td data-label="Client Paid">{% if entry.client_paid_date %}{{ entry.client_paid_date }}{% else %}—{% endif %}</td><td data-label="Disbursement">{% if entry.disbursement_date %}{{ entry.disbursement_date }}{% if entry.transaction_number %}<br><small>{{ entry.transaction_number }}</small>{% endif %}{% else %}—{% endif %}</td>
     </tr>{% else %}<tr class="empty-table-row"><td colspan="12">No finalized sessions have been recorded.</td></tr>{% endfor %}</tbody>
   </table></div>
   {% if finalized_previous_url or finalized_next_url %}<nav class="pagination" aria-label="Finalized session pages">{% if finalized_previous_url %}<a class="button button-secondary" href="{{ finalized_previous_url }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ finalized_page }} of {{ finalized_page_count }}</span>{% if finalized_next_url %}<a class="button button-secondary" href="{{ finalized_next_url }}">Next <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></a>{% else %}<span></span>{% endif %}</nav>{% endif %}

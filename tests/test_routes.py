@@ -422,6 +422,19 @@ class SecurityAndErrorRouteTests(AppTestCase):
         self.assertIn('class="icon-button timer-action"', active_timer_template)
         self.assertIn('class="timer-stop-form"', active_timer_template)
 
+        my_sessions_template = (
+            project_root / "templates" / "my_sessions.html"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "{{ entry.invoice_date }}{% if entry.invoice_number %}"
+            "<br><small>{{ entry.invoice_number }}</small>",
+            my_sessions_template,
+        )
+        self.assertIn(
+            'class="summary-grid session-summary panel"', my_sessions_template
+        )
+        self.assertNotIn('class="summary-card panel"', my_sessions_template)
+
         status_template = (
             project_root / "templates" / "session_status_form.html"
         ).read_text(encoding="utf-8")
