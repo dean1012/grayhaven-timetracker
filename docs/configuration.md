@@ -2,9 +2,10 @@
 
 [Return to README](../README.md)
 
-This document defines the runtime interface expected by the Grayhaven Time
-Tracker. Deployment automation should provide these values and files; it should
-not encode private environment data in this repository.
+This document defines the runtime interface expected by the
+Grayhaven Systems LLC Time Tracker. Deployment automation should provide these
+values and files; it should not encode private environment data in this
+repository.
 
 ## Table of Contents
 
@@ -22,7 +23,7 @@ not encode private environment data in this repository.
 | --- | --- | --- |
 | `APP_VERSION` | `unversioned` | Version displayed by the application. |
 | `BRANDING_PATH` | `/app/branding` | Required runtime branding directory. |
-| `CONTACT_URL` | Grayhaven URL | Shared-report HTTPS contact link. |
+| `CONTACT_URL` | Grayhaven Systems LLC URL | Shared-report link. |
 | `DATABASE_PATH` | `/app/data/timetracker.sqlite3` | SQLCipher database path. |
 | `PUBLIC_BASE_URL` | unset | Canonical external HTTPS origin. |
 | `SESSION_COOKIE_SECURE` | `false` | Restricts session cookies to HTTPS. |
@@ -106,8 +107,8 @@ to use and may need to adjust templates and styling for a different identity.
 The application image is intentionally unbranded. `.dockerignore` excludes the
 local `branding/` directory, and the Dockerfile creates an empty
 `/app/branding` mount point rather than copying private assets. This allows the
-MIT-licensed application image and proprietary Grayhaven identity files to be
-distributed under separate terms.
+MIT-licensed application image and proprietary Grayhaven Systems LLC identity
+files to be distributed under separate terms.
 
 Deployment automation installs the approved branding bundle on the target host
 and mounts it read-only at `/app/branding`. The application validates the

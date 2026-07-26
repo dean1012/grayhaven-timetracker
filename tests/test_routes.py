@@ -353,6 +353,21 @@ class SecurityAndErrorRouteTests(AppTestCase):
             r"\.mobile-nav \{ display: none; \}",
         )
         self.assertIn(".responsive-table tbody > tr > td::before", app_stylesheet)
+        self.assertRegex(
+            app_stylesheet,
+            r"(?s)\.status-pill,\s*\.live-label \{[^}]*"
+            r"flex: 0 0 auto;[^}]*justify-self: start;[^}]*"
+            r"inline-size: fit-content;[^}]*max-inline-size: 100%;[^}]*"
+            r"text-align: left;[^}]*overflow-wrap: anywhere;",
+        )
+        self.assertNotRegex(
+            app_stylesheet,
+            r"\.audit-source\s*\{[^}]*(?:min-(?:inline-)?size|text-align: center)",
+        )
+        self.assertNotIn(
+            ".responsive-table.user-table .status-pill",
+            app_stylesheet,
+        )
         self.assertIn(
             ".active-timer-actions .timer-stop-form",
             app_stylesheet,
@@ -400,6 +415,60 @@ class SecurityAndErrorRouteTests(AppTestCase):
         ).read_text(encoding="utf-8")
         self.assertIn('class="icon-button timer-action"', active_timer_template)
         self.assertIn('class="timer-stop-form"', active_timer_template)
+
+    def test_documentation_separates_managed_and_compose_operations(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        managed = (project_root / "docs/operations.md").read_text(encoding="utf-8")
+        compose = (project_root / "docs/docker-compose.md").read_text(encoding="utf-8")
+        readme = (project_root / "README.md").read_text(encoding="utf-8")
+        contributing = (project_root / "CONTRIBUTING.md").read_text(encoding="utf-8")
+
+        self.assertNotIn("## Deployment", managed)
+        self.assertNotIn("[Deployment](#deployment)", managed)
+        self.assertNotRegex(managed.lower(), r"(?m)^\s*docker compose\s")
+        for command in (
+            "sudo grayhaven-backupctl backup",
+            "sudo grayhaven-backupctl restore latest",
+            "sudo systemctl stop grayhaven-timetracker.service",
+            "sudo systemctl start grayhaven-timetracker.service",
+        ):
+            self.assertIn(command, managed)
+        self.assertIn(
+            "/var/lib/grayhaven/timetracker/backups/<backup>",
+            managed,
+        )
+        self.assertIn(
+            "/tmp/var/lib/grayhaven/timetracker/backups/<backup>",
+            managed,
+        )
+        self.assertIn(
+            "https://github.com/dean1012/grayhaven-backupctl/blob/main/"
+            "docs/operations.md#restoring-to-a-target-directory",
+            managed,
+        )
+        self.assertIn("docker compose up --build --detach", compose)
+        self.assertIn("docker compose exec timetracker", compose)
+        self.assertIn("docker compose stop timetracker", compose)
+        self.assertIn("docker compose run --rm --no-deps timetracker", compose)
+        self.assertIn(
+            "not the Grayhaven Systems LLC managed deployment",
+            compose.replace("\n", " "),
+        )
+        self.assertNotIn("Managed Environment", readme)
+        self.assertIn("docs/docker-compose.md", readme)
+        self.assertIn("docs/docker-compose.md", contributing)
+
+        markdown_paths = [
+            project_root / "README.md",
+            project_root / "CONTRIBUTING.md",
+            *(project_root / "docs").glob("*.md"),
+        ]
+        for markdown_path in markdown_paths:
+            with self.subTest(markdown=str(markdown_path.relative_to(project_root))):
+                self.assertNotIn(
+                    "operations.md#deployment",
+                    markdown_path.read_text(encoding="utf-8"),
+                )
 
     def test_security_headers_cache_policy_health_and_errors(self) -> None:
         response = self.client.get("/login", base_url="https://example.invalid")

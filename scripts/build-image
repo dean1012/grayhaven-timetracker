@@ -23,7 +23,7 @@ release="${series}.${build_revision}"
 
 export APP_VERSION="${release}-${revision}"
 docker compose build
-git tag --sign --message "Grayhaven Time Tracker build ${release}" \
+git tag --sign --message "Grayhaven Systems LLC Time Tracker build ${release}" \
   "build/${release}" HEAD
-printf 'Built Grayhaven Time Tracker %s and created tag build/%s\n' \
+printf 'Built Grayhaven Systems LLC Time Tracker %s and created tag build/%s\n' \
   "$APP_VERSION" "$release"

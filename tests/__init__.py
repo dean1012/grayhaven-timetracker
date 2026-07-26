@@ -1,1 +1,1 @@
-"""Grayhaven Time Tracker test suite."""
+"""Grayhaven Systems LLC Time Tracker test suite."""

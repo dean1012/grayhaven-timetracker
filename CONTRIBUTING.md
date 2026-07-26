@@ -3,8 +3,8 @@
 Thank you for your interest in improving `grayhaven-timetracker`.
 
 The application is organization-specific. Development and local UI testing
-require separately supplied runtime branding, and deployment outside Grayhaven
-requires adaptation to the target environment.
+require separately supplied runtime branding, and deployment outside
+Grayhaven Systems LLC requires adaptation to the target environment.
 
 ## Table of Contents
 
@@ -152,9 +152,10 @@ secrets.
 
 Keep the project overview in [README.md](README.md), application structure in
 [Application Architecture](docs/architecture.md), runtime settings in
-[Configuration](docs/configuration.md), deployment procedures in
-[Operations](docs/operations.md), and trust boundaries in
-[Security](docs/security.md).
+[Configuration](docs/configuration.md), managed-host procedures in
+[Operations](docs/operations.md), optional standalone procedures in
+[Standalone Docker Compose Operations](docs/docker-compose.md), and trust
+boundaries in [Security](docs/security.md).
 
 Use Python docstrings for module, class, and function responsibilities. Add
 comments for non-obvious implementation decisions, security boundaries, and
