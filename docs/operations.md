@@ -697,26 +697,15 @@ disbursed, and archived-contract time is excluded.
 
 ## Change the Timezone
 
-1. Change the environment's managed `TZ` value to the required IANA timezone
-   in the encrypted configuration source.
+Ansible manages the host timezone and the Time Tracker container's `TZ`
+setting from one configuration value. Do not change either value directly on
+the managed host.
 
-2. From the active control bastion, start normal configuration convergence.
-
-   ```bash
-   sudo systemctl start grayhaven-ansible-runner.service
-   ```
-
-3. Review the convergence log and require a successful recap.
-
-   ```bash
-   sudo tail -n 100 /var/run/grayhaven-ansible-runner/playbook.log
-   ```
-
-4. Verify application health with the procedure in
-   [Check Service Health](#check-service-health), then verify a representative
-   time entry and report in the application.
-
-Timestamps remain stored in UTC. Changing `TZ` changes display and entry
+Follow the authoritative
+[managed timezone procedure](https://github.com/dean1012/grayhaven-config-ansible/blob/main/docs/operations.md#changing-the-managed-timezone)
+in the `grayhaven-config-ansible` repository. After convergence, verify a
+representative time entry and report in the application. Timestamps remain
+stored in UTC; changing the managed timezone changes display and entry
 interpretation without rewriting stored timestamps.
 
 [Back to top](#operations)
