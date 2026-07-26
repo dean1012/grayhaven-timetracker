@@ -2980,30 +2980,37 @@ def edit_time_entry_status(entry_id: int) -> Any:
     if request.method != "POST":
         return render_template("session_status_form.html", **confirmation)
     try:
-        reason = correction_reason()
         target_status = request.form.get("billing_status", "").strip()
         if target_status not in status_labels:
             raise ValueError("Select a valid payment status.")
+        original_status = entry.billing_status
+        original_metadata = (
+            entry.invoice_number,
+            entry.invoice_date,
+            entry.client_paid_date,
+            entry.disbursement_date,
+            entry.transaction_number,
+        )
         old_values = {
-            "status": status_labels[entry.billing_status],
+            "status": status_labels[original_status],
             "invoice_number": entry.invoice_number or "None",
             "invoice_date": str(entry.invoice_date or "None"),
             "client_paid_date": str(entry.client_paid_date or "None"),
             "disbursement_date": str(entry.disbursement_date or "None"),
             "transaction_number": entry.transaction_number or "None",
         }
-        invoice_number = entry.invoice_number
-        invoice_date = entry.invoice_date
-        client_paid_date = entry.client_paid_date
-        disbursement_date = entry.disbursement_date
-        transaction_number = entry.transaction_number
-        if target_status == "pending_invoice":
-            invoice_number = None
-            invoice_date = None
-            client_paid_date = None
-            disbursement_date = None
-            transaction_number = None
-        elif target_status == "invoiced":
+        invoice_number = None
+        invoice_date = None
+        client_paid_date = None
+        disbursement_date = None
+        transaction_number = None
+        if target_status != "pending_invoice":
+            if target_status in {"client_paid", "disbursed"} and (
+                not entry.invoice_number or not entry.invoice_date
+            ):
+                raise ValueError(
+                    "The session must have invoice details before client payment."
+                )
             invoice_number = required_text(
                 request.form.get("invoice_number", ""), "Invoice Number", maximum=100
             )
@@ -3011,26 +3018,16 @@ def edit_time_entry_status(entry_id: int) -> Any:
             if not raw_invoice_date:
                 raise ValueError("Invoice Date is required.")
             invoice_date = date.fromisoformat(raw_invoice_date)
-            client_paid_date = None
-            disbursement_date = None
-            transaction_number = None
-        elif target_status == "client_paid":
-            if not invoice_number or not invoice_date:
+        if target_status in {"client_paid", "disbursed"}:
+            if target_status == "disbursed" and not entry.client_paid_date:
                 raise ValueError(
-                    "The session must have invoice details before client payment."
+                    "The session must have client payment details before disbursement."
                 )
             raw_client_paid_date = request.form.get("client_paid_date", "")
             if not raw_client_paid_date:
                 raise ValueError("Client Paid Date is required.")
             client_paid_date = date.fromisoformat(raw_client_paid_date)
-            disbursement_date = None
-            transaction_number = None
-        else:
-            if not invoice_number or not invoice_date or not client_paid_date:
-                raise ValueError(
-                    "The session must have invoice and client payment details "
-                    "before disbursement."
-                )
+        if target_status == "disbursed":
             raw_disbursement_date = request.form.get("disbursement_date", "")
             if not raw_disbursement_date:
                 raise ValueError("Disbursement Date is required.")
@@ -3040,6 +3037,25 @@ def edit_time_entry_status(entry_id: int) -> Any:
                 "Transaction Number",
                 maximum=100,
             )
+        candidate_metadata = (
+            invoice_number,
+            invoice_date,
+            client_paid_date,
+            disbursement_date,
+            transaction_number,
+        )
+        status_order = tuple(status_labels)
+        moving_backward = status_order.index(target_status) < status_order.index(
+            original_status
+        )
+        existing_metadata_changed = any(
+            original is not None and original != candidate
+            for original, candidate in zip(
+                original_metadata, candidate_metadata, strict=True
+            )
+        )
+        reason_required = moving_backward or existing_metadata_changed
+        reason = correction_reason() if reason_required else None
         entry.billing_status = target_status
         entry.invoice_number = invoice_number
         entry.invoice_date = invoice_date
@@ -3059,11 +3075,9 @@ def edit_time_entry_status(entry_id: int) -> Any:
         "disbursement_date": str(entry.disbursement_date or "None"),
         "transaction_number": entry.transaction_number or "None",
     }
-    audit(
-        "time_entry_status_updated",
-        actor_id=actor.id,
+    audit_details: dict[str, Any] = {
         **audit_time_entry_details(entry),
-        changes=audit_changes(
+        "changes": audit_changes(
             **{
                 "status": (old_values["status"], new_values["status"]),
                 "invoice_number": (
@@ -3088,8 +3102,10 @@ def edit_time_entry_status(entry_id: int) -> Any:
                 ),
             }
         ),
-        correction_reason=reason,
-    )
+    }
+    if reason is not None:
+        audit_details["correction_reason"] = reason
+    audit("time_entry_status_updated", actor_id=actor.id, **audit_details)
     consume_sensitive_action_authorization()
     flash("Session payment status updated.", "success")
     return redirect(

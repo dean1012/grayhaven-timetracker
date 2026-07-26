@@ -430,7 +430,10 @@ class SecurityAndErrorRouteTests(AppTestCase):
             "<br><small>#{{ entry.invoice_number }}</small>",
             my_sessions_template,
         )
-        self.assertIn("<br><small>#{{ entry.transaction_number }}</small>", my_sessions_template)
+        self.assertIn(
+            "<br><small>#{{ entry.transaction_number }}</small>",
+            my_sessions_template,
+        )
         self.assertIn(
             'class="summary-grid session-summary panel"', my_sessions_template
         )
@@ -459,6 +462,10 @@ class SecurityAndErrorRouteTests(AppTestCase):
             'field.hidden = !visible',
             'input.disabled = !visible',
             'status.addEventListener("change", updateFields)',
+            'form.dataset.currentPaymentStatus',
+            'input.dataset.originalValue !== ""',
+            'reasonField.hidden = !required',
+            'reasonInput.required = required',
         ):
             self.assertIn(behavior, app_script)
 
@@ -2702,6 +2709,10 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertEqual(status_form.status_code, 200)
         self.assertIn(b"data-payment-status-form", status_form.data)
         self.assertIn(
+            b'data-current-payment-status="pending_invoice"', status_form.data
+        )
+        self.assertIn(b"data-correction-reason-field hidden", status_form.data)
+        self.assertIn(
             b'data-payment-statuses="invoiced client_paid disbursed" hidden',
             status_form.data,
         )
@@ -2721,7 +2732,6 @@ class ReportAndSessionRouteTests(AppTestCase):
                 "billing_status": "invoiced",
                 "invoice_number": "INV-001",
                 "invoice_date": "2026-07-17",
-                "correction_reason": "Record invoice",
             },
         )
         self.assertEqual(invoiced.status_code, 302)
@@ -2731,6 +2741,33 @@ class ReportAndSessionRouteTests(AppTestCase):
             self.assertEqual(entry.billing_status, "invoiced")
             self.assertEqual(entry.invoice_number, "INV-001")
             self.assertEqual(entry.invoice_date, date(2026, 7, 17))
+            audit_events = database.scalars(
+                select(AuditEvent).where(
+                    AuditEvent.event == "time_entry_status_updated"
+                )
+            ).all()
+            self.assertNotIn("correction_reason", audit_events[-1].details)
+
+        self.authorize_sensitive_action(status_url)
+        corrected_without_reason = self.client.post(
+            status_url,
+            data={
+                "billing_status": "invoiced",
+                "invoice_number": "INV-002",
+                "invoice_date": "2026-07-17",
+            },
+        )
+        self.assertEqual(corrected_without_reason.status_code, 400)
+        corrected = self.client.post(
+            status_url,
+            data={
+                "billing_status": "invoiced",
+                "invoice_number": "INV-002",
+                "invoice_date": "2026-07-17",
+                "correction_reason": "Correct invoice number",
+            },
+        )
+        self.assertEqual(corrected.status_code, 302)
 
         self.assertEqual(
             self.client.get(f"/sessions/{self.seed.entry_id}/edit").status_code, 409
@@ -2743,6 +2780,11 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
 
         self.authorize_sensitive_action(status_url)
+        missing_reason = self.client.post(
+            status_url,
+            data={"billing_status": "pending_invoice"},
+        )
+        self.assertEqual(missing_reason.status_code, 400)
         pending = self.client.post(
             status_url,
             data={
@@ -2792,7 +2834,11 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         with session_scope(self.app) as database:
             database.delete(database.get(TimeEntry, active_id))
-        base = {"correction_reason": "Reject bad metadata"}
+        base: dict[str, str] = {}
+        invoice_fields = {
+            "invoice_number": "INV-2",
+            "invoice_date": "2026-07-17",
+        }
         self.authorize_sensitive_action(status_url, totp_secret="")
         invalid_cases = (
             {"billing_status": "invoiced"},
@@ -2819,8 +2865,7 @@ class ReportAndSessionRouteTests(AppTestCase):
             data={
                 **base,
                 "billing_status": "invoiced",
-                "invoice_number": "INV-2",
-                "invoice_date": "2026-07-17",
+                **invoice_fields,
             },
         )
         self.assertEqual(invoiced.status_code, 302)
@@ -2828,7 +2873,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertEqual(
             self.client.post(
                 status_url,
-                data={**base, "billing_status": "client_paid"},
+                data={**base, **invoice_fields, "billing_status": "client_paid"},
             ).status_code,
             400,
         )
@@ -2837,6 +2882,7 @@ class ReportAndSessionRouteTests(AppTestCase):
                 status_url,
                 data={
                     **base,
+                    **invoice_fields,
                     "billing_status": "client_paid",
                     "client_paid_date": "not-a-date",
                 },
@@ -2847,12 +2893,14 @@ class ReportAndSessionRouteTests(AppTestCase):
             status_url,
             data={
                 **base,
+                **invoice_fields,
                 "billing_status": "client_paid",
                 "client_paid_date": "2026-07-18",
             },
         )
         self.assertEqual(paid.status_code, 302)
         self.authorize_sensitive_action(status_url, totp_secret="")
+        paid_fields = {**invoice_fields, "client_paid_date": "2026-07-18"}
         for extra in (
             {"billing_status": "disbursed", "transaction_number": "TX-1"},
             {
@@ -2864,9 +2912,28 @@ class ReportAndSessionRouteTests(AppTestCase):
         ):
             with self.subTest(extra=extra):
                 self.assertEqual(
-                    self.client.post(status_url, data={**base, **extra}).status_code,
+                    self.client.post(
+                        status_url, data={**base, **paid_fields, **extra}
+                    ).status_code,
                     400,
                 )
+        disbursed = self.client.post(
+            status_url,
+            data={
+                **paid_fields,
+                "billing_status": "disbursed",
+                "disbursement_date": "2026-07-19",
+                "transaction_number": "TX-1",
+            },
+        )
+        self.assertEqual(disbursed.status_code, 302)
+        with session_scope(self.app) as database:
+            audit_events = database.scalars(
+                select(AuditEvent).where(
+                    AuditEvent.event == "time_entry_status_updated"
+                )
+            ).all()
+            self.assertNotIn("correction_reason", audit_events[-1].details)
 
     def test_admin_can_update_and_delete_a_pending_session_with_reason(self) -> None:
         self.login()
