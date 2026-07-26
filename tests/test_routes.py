@@ -2546,6 +2546,10 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertIn(report_url.encode(), client_page.data)
         self.assertIn(b"Copy report link", client_page.data)
         self.assertIn(b"Share report link by email", client_page.data)
+        self.assertIn(b'title="View Live Report"', client_page.data)
+        contract_page = self.client.get(f"/contracts/{self.seed.contract_id}")
+        self.assertEqual(contract_page.status_code, 200)
+        self.assertIn(b'title="View Live Report"', contract_page.data)
         mailto_body = parse_qs(
             urlsplit(routes.report_mailto(client, report_url)).query
         )["body"][0]
@@ -2559,7 +2563,10 @@ class ReportAndSessionRouteTests(AppTestCase):
             mailto_body,
         )
         anonymous = self.app.test_client()
-        self.assertEqual(anonymous.get(f"/shared/reports/{token}").status_code, 200)
+        password_prompt = anonymous.get(f"/shared/reports/{token}")
+        self.assertEqual(password_prompt.status_code, 200)
+        self.assertIn(b'data-protonpass-ignore="true"', password_prompt.data)
+        self.assertIn(b'autocomplete="off"', password_prompt.data)
         self.assertEqual(
             anonymous.get(f"/shared/reports/{token}/live").status_code, 302
         )
