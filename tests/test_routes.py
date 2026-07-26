@@ -458,14 +458,14 @@ class SecurityAndErrorRouteTests(AppTestCase):
         )
         app_script = (project_root / "static/app.js").read_text(encoding="utf-8")
         for behavior in (
-            'select[name=\'billing_status\']',
-            'field.hidden = !visible',
-            'input.disabled = !visible',
+            "select[name='billing_status']",
+            "field.hidden = !visible",
+            "input.disabled = !visible",
             'status.addEventListener("change", updateFields)',
-            'form.dataset.currentPaymentStatus',
+            "form.dataset.currentPaymentStatus",
             'input.dataset.originalValue !== ""',
-            'reasonField.hidden = !required',
-            'reasonInput.required = required',
+            "reasonField.hidden = !required",
+            "reasonInput.required = required",
         ):
             self.assertIn(behavior, app_script)
 
