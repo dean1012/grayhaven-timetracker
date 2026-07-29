@@ -81,6 +81,17 @@ explicitly sets WebAuthn RP ID `localhost` and origin
    Base32 TOTP secret is intentionally being supplied. The application rejects
    a manifest without an enabled administrator.
 
+   To supply an initial TOTP enrollment, generate a Base32 secret with the
+   application image and place the resulting value in `totp_secret`:
+
+   ```bash
+   docker compose run --rm --no-deps timetracker \
+     python -c 'import pyotp; print(pyotp.random_base32())'
+   ```
+
+   Store the secret in an authenticator before starting the application. Set
+   `totp_secret` to `null` when the administrator will enroll interactively.
+
 6. Copy an authorized branding bundle into `branding/`. Replace
    `<branding-source>` with the directory containing the assets.
 
@@ -155,7 +166,7 @@ explicitly sets WebAuthn RP ID `localhost` and origin
 5. Open the application in a browser.
 
    ```text
-   http://127.0.0.1:8000
+   http://localhost:8000
    ```
 
 The Compose definition binds only to `127.0.0.1:8000`. Do not expose this
@@ -485,6 +496,15 @@ sidecars, and passphrase from the rollback directory before restarting it.
    representative read and write.
 
    ```bash
+   docker compose ps
+   curl --fail --silent --show-error http://127.0.0.1:8000/health
+   ```
+
+7. Restart the same image and confirm that database initialization is
+   idempotent.
+
+   ```bash
+   docker compose restart timetracker
    docker compose ps
    curl --fail --silent --show-error http://127.0.0.1:8000/health
    ```

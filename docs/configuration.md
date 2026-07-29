@@ -140,10 +140,10 @@ deployment must set:
 - `WEBAUTHN_RP_ID` to the canonical Time Tracker hostname.
 - `WEBAUTHN_ORIGIN` to the exact canonical HTTPS origin.
 
-Use `timetracker.staging.grayhavensystems.com` with
-`https://timetracker.staging.grayhavensystems.com` for staging, and
-`timetracker.grayhavensystems.com` with
-`https://timetracker.grayhavensystems.com` for production.
+For example, a deployment using `timetracker.example.com` as its canonical
+hostname must use `timetracker.example.com` as the RP ID and
+`https://timetracker.example.com` as the origin. Deployment automation should
+derive both values from the same trusted canonical hostname.
 
 Do not expose Gunicorn directly to an untrusted network. Proxy headers are
 accepted only to the configured hop count, so that value must match the real
