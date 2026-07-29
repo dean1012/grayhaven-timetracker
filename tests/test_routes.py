@@ -13,7 +13,8 @@ from urllib.parse import parse_qs, urlsplit
 
 import pyotp
 from argon2 import PasswordHasher
-from flask import g
+from flask import g, request
+from flask_wtf.csrf import CSRFError
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from werkzeug.exceptions import Conflict, Forbidden
@@ -312,6 +313,40 @@ class AuthenticationRouteTests(AppTestCase):
             data={"email": ADMIN_EMAIL, "password": "x" * 1024},
         )
         self.assertEqual(response.status_code, 413)
+
+    def test_shared_report_csrf_fallback_requires_a_string_route_token(self) -> None:
+        handler = self.app.error_handler_spec[None][400][CSRFError]
+        for token in (None, 42):
+            with (
+                self.subTest(token=token),
+                self.app.test_request_context(
+                    "/shared/reports/example-token", method="POST"
+                ),
+            ):
+                rule = next(
+                    item
+                    for item in self.app.url_map.iter_rules()
+                    if item.endpoint == "main.shared_report"
+                )
+                request.url_rule = rule
+                request.view_args = {} if token is None else {"token": token}
+                response = self.app.make_response(handler(CSRFError("expired")))
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(b"form expired", response.data)
+
+        with self.app.test_request_context(
+            "/shared/reports/example-token", method="POST"
+        ):
+            rule = next(
+                item
+                for item in self.app.url_map.iter_rules()
+                if item.endpoint == "main.shared_report"
+            )
+            request.url_rule = rule
+            request.view_args = {"token": "example-token"}
+            response = self.app.make_response(handler(CSRFError("expired")))
+            self.assertEqual(response.status_code, 302)
+            self.assertEqual(response.location, "/shared/reports/example-token")
 
 
 class SecurityAndErrorRouteTests(AppTestCase):
@@ -2257,10 +2292,19 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         toggle_admin_path = f"/users/{user_id}/toggle-admin"
         toggle_enabled_path = f"/users/{user_id}/toggle-enabled"
         self.authorize_sensitive_action(toggle_admin_path)
+        promote_confirmation = self.client.get(toggle_admin_path)
+        self.assertEqual(promote_confirmation.status_code, 200)
+        self.assertIn(b"Promote User", promote_confirmation.data)
         self.assertEqual(self.client.post(toggle_admin_path).status_code, 302)
         self.authorize_sensitive_action(toggle_admin_path)
+        demote_confirmation = self.client.get(toggle_admin_path)
+        self.assertEqual(demote_confirmation.status_code, 200)
+        self.assertIn(b"Demote Administrator", demote_confirmation.data)
         self.assertEqual(self.client.post(toggle_admin_path).status_code, 302)
         self.authorize_sensitive_action(toggle_enabled_path)
+        disable_confirmation = self.client.get(toggle_enabled_path)
+        self.assertEqual(disable_confirmation.status_code, 200)
+        self.assertIn(b"Disable User", disable_confirmation.data)
         self.assertEqual(self.client.post(toggle_enabled_path).status_code, 302)
         with session_scope(self.app) as database:
             user = database.get(User, user_id)
@@ -2273,6 +2317,9 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         self.assertEqual(self.client.get(toggle_enabled_path).status_code, 302)
         self.assertEqual(self.client.get(toggle_admin_path).status_code, 302)
         self.authorize_sensitive_action(toggle_enabled_path)
+        enable_confirmation = self.client.get(toggle_enabled_path)
+        self.assertEqual(enable_confirmation.status_code, 200)
+        self.assertIn(b"Enable User", enable_confirmation.data)
         self.assertEqual(self.client.post(toggle_enabled_path).status_code, 302)
         with session_scope(self.app) as database:
             user = database.get(User, user_id)
