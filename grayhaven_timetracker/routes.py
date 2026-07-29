@@ -36,11 +36,12 @@ from flask import (
     url_for,
 )
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from sqlalchemy import case, func, or_, select, update
+from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
+from webauthn.helpers.exceptions import WebAuthnException
 
 from .audit import record_audit_event
 from .auth import (
@@ -70,10 +71,21 @@ from .models import (
     AuditEvent,
     Client,
     Contract,
+    PasskeyCredential,
+    PasskeyIdentity,
     Subtask,
     Task,
     TimeEntry,
     User,
+)
+from .passkeys import (
+    PasskeyError,
+    authentication_options,
+    consume_challenge,
+    credential_id_from_payload,
+    registration_options,
+    verify_authentication,
+    verify_registration,
 )
 from .permissions import (
     AUDIT_VIEW,
@@ -121,6 +133,7 @@ main = Blueprint("main", __name__)
 logger = logging.getLogger("grayhaven_timetracker.audit")
 login_limiter = LoginLimiter()
 login_ip_limiter = LoginLimiter(limit=50)
+passkey_options_limiter = LoginLimiter(limit=20, window_seconds=60)
 shared_report_limiter = LoginLimiter()
 sensitive_action_limiter = LoginLimiter()
 REPORT_PASSWORD_CONFIRMATION_TTL_SECONDS = 120
@@ -140,6 +153,7 @@ PENDING_LOGIN_SESSION_KEYS = (
     "pending_login_session_version",
     "pending_login_user_id",
 )
+PASSKEY_LOGIN_NEXT_KEY = "passkey_login_next"
 SHARED_REPORT_COOKIE_PREFIX = "grayhaven_timetracker_report_"
 SHARED_REPORT_COOKIE_PATH = "/shared/reports/"
 SHARED_REPORT_COOKIE_SALT = "shared-report-session-v1"
@@ -1125,8 +1139,8 @@ def pending_login_user() -> User | None:
     return user
 
 
-def complete_login(user: User, ip: str, next_url: str | None) -> Any:
-    """Promote a fully authenticated account into the application session."""
+def establish_login(user: User, ip: str, next_url: str | None) -> str:
+    """Promote a fully authenticated account and return its safe destination."""
     login_limiter.clear(f"{ip}|{user.email}")
     session.clear()
     session.permanent = True
@@ -1136,8 +1150,13 @@ def complete_login(user: User, ip: str, next_url: str | None) -> Any:
     session["user_role"] = user.role
     audit("login_succeeded", user_id=user.id, source_ip=ip)
     if user.password_change_required:
-        return redirect(url_for("main.required_password_change"))
-    return redirect(next_url or url_for("main.dashboard"))
+        return url_for("main.required_password_change")
+    return next_url or url_for("main.dashboard")
+
+
+def complete_login(user: User, ip: str, next_url: str | None) -> Any:
+    """Promote a fully authenticated account into the application session."""
+    return redirect(establish_login(user, ip, next_url))
 
 
 @main.route("/login", methods=["GET", "POST"])
@@ -1234,6 +1253,186 @@ def login_authenticator() -> Any:
     pending_next = session.get("pending_login_next")
     next_url = safe_next_url(pending_next if isinstance(pending_next, str) else None)
     return complete_login(user, ip, next_url)
+
+
+def passkey_json() -> tuple[dict[str, Any], object, object]:
+    """Return the bounded JSON ceremony envelope used by browser helpers."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise PasskeyError("The passkey response was not accepted.")
+    return body, body.get("challengeId"), body.get("credential")
+
+
+@main.post("/login/passkey/options")
+def login_passkey_options() -> Any:
+    """Issue an account-discoverable passkey login challenge."""
+    if current_user() is not None:
+        return jsonify({"redirect": url_for("main.dashboard")})
+    ip = request.remote_addr or "unknown"
+    if login_ip_limiter.blocked(ip):
+        audit("login_rate_limited", source_ip=ip, stage="passkey")
+        abort(429)
+    if passkey_options_limiter.blocked(ip):
+        audit("login_rate_limited", source_ip=ip, stage="passkey_options")
+        abort(429)
+    passkey_options_limiter.record_failure(ip)
+    clear_pending_login()
+    next_url = safe_next_url(request.args.get("next"))
+    session.pop(PASSKEY_LOGIN_NEXT_KEY, None)
+    if next_url:
+        session[PASSKEY_LOGIN_NEXT_KEY] = next_url
+    return jsonify(authentication_options(get_session()))
+
+
+@main.post("/login/passkey/verify")
+def login_passkey_verify() -> Any:
+    """Verify a discoverable passkey and establish a normal application session."""
+    ip = request.remote_addr or "unknown"
+    if login_ip_limiter.blocked(ip):
+        audit("login_rate_limited", source_ip=ip, stage="passkey")
+        abort(429)
+    try:
+        _, challenge_id, payload = passkey_json()
+        challenge = consume_challenge(
+            get_session(), challenge_id, ceremony="authentication", user_id=None
+        )
+        credential_id = credential_id_from_payload(payload)
+        credential = get_session().scalar(
+            select(PasskeyCredential).where(
+                PasskeyCredential.credential_id == credential_id
+            )
+        )
+        if credential is None:
+            raise PasskeyError("The passkey response was not accepted.")
+        user = get_session().get(User, credential.user_id)
+        identity = get_session().get(PasskeyIdentity, credential.user_id)
+        if user is None or identity is None or not user.is_enabled:
+            raise PasskeyError("The passkey response was not accepted.")
+        verification = verify_authentication(
+            payload,
+            credential,
+            identity,
+            expected_challenge=challenge,
+            require_user_handle=True,
+        )
+    except (PasskeyError, WebAuthnException, ValueError, TypeError):
+        login_ip_limiter.record_failure(ip)
+        audit(
+            "passkey_authentication_rejected",
+            source_ip=ip,
+            ceremony="login",
+        )
+        return jsonify({"error": "The passkey was not accepted."}), 401
+    credential.sign_count = verification.new_sign_count
+    credential.device_type = verification.credential_device_type.value
+    credential.backed_up = verification.credential_backed_up
+    credential.last_used_at = now_utc()
+    get_session().commit()
+    pending_next = session.get(PASSKEY_LOGIN_NEXT_KEY)
+    next_url = safe_next_url(pending_next if isinstance(pending_next, str) else None)
+    audit(
+        "passkey_authentication_succeeded",
+        user_id=user.id,
+        source_ip=ip,
+        ceremony="login",
+    )
+    return jsonify({"redirect": establish_login(user, ip, next_url)})
+
+
+@main.post("/reauthenticate/passkey/options")
+@login_required
+def sensitive_action_passkey_options() -> Any:
+    """Issue a user-bound passkey challenge for the pending sensitive action."""
+    user = cast(User, current_user())
+    if sensitive_action_limiter.blocked(sensitive_action_rate_key(user)):
+        audit(
+            "sensitive_action_reauthentication_rate_limited",
+            user_id=user.id,
+            source_ip=request.remote_addr,
+            stage="passkey",
+        )
+        abort(429)
+    pending = pending_sensitive_action(user)
+    if pending is None:
+        return jsonify({"error": "The authentication challenge expired."}), 400
+    next_url, _ = pending
+    try:
+        options = authentication_options(
+            get_session(),
+            user=user,
+            ceremony="reauthentication",
+            action_context=next_url,
+        )
+    except PasskeyError as exc:
+        return jsonify({"error": str(exc)}), 409
+    return jsonify(options)
+
+
+@main.post("/reauthenticate/passkey/verify")
+@login_required
+def sensitive_action_passkey_verify() -> Any:
+    """Authorize one sensitive action using a verified passkey alone."""
+    user = cast(User, current_user())
+    pending = pending_sensitive_action(user)
+    if pending is None:
+        return jsonify({"error": "The authentication challenge expired."}), 400
+    next_url, _ = pending
+    try:
+        _, challenge_id, payload = passkey_json()
+        challenge = consume_challenge(
+            get_session(),
+            challenge_id,
+            ceremony="reauthentication",
+            user_id=user.id,
+            action_context=next_url,
+        )
+        credential_id = credential_id_from_payload(payload)
+        credential = get_session().scalar(
+            select(PasskeyCredential).where(
+                PasskeyCredential.credential_id == credential_id,
+                PasskeyCredential.user_id == user.id,
+            )
+        )
+        identity = get_session().get(PasskeyIdentity, user.id)
+        if credential is None or identity is None or not user.is_enabled:
+            raise PasskeyError("The passkey response was not accepted.")
+        verification = verify_authentication(
+            payload,
+            credential,
+            identity,
+            expected_challenge=challenge,
+            require_user_handle=False,
+        )
+    except (PasskeyError, WebAuthnException, ValueError, TypeError):
+        sensitive_action_limiter.record_failure(sensitive_action_rate_key(user))
+        audit(
+            "passkey_authentication_rejected",
+            user_id=user.id,
+            source_ip=request.remote_addr,
+            ceremony="sensitive_action",
+        )
+        return jsonify({"error": "The passkey was not accepted."}), 401
+    credential.sign_count = verification.new_sign_count
+    credential.device_type = verification.credential_device_type.value
+    credential.backed_up = verification.credential_backed_up
+    credential.last_used_at = now_utc()
+    get_session().commit()
+    sensitive_action_limiter.clear(sensitive_action_rate_key(user))
+    authorize_sensitive_action(user, next_url)
+    audit(
+        "passkey_authentication_succeeded",
+        user_id=user.id,
+        source_ip=request.remote_addr,
+        ceremony="sensitive_action",
+    )
+    audit(
+        "sensitive_action_reauthentication_succeeded",
+        user_id=user.id,
+        source_ip=request.remote_addr,
+        action_path=next_url,
+        factor="passkey",
+    )
+    return jsonify({"redirect": next_url})
 
 
 @main.route("/reauthenticate", methods=["GET", "POST"])
@@ -3124,6 +3323,157 @@ def profile() -> str:
     return render_template("profile.html", user=cast(User, current_user()))
 
 
+@main.get("/profile/passkeys")
+@login_required
+def passkey_management() -> Any:
+    """Show only the current user's passkey names after reauthentication."""
+    user = cast(User, current_user())
+    if response := require_sensitive_action_authorization(
+        user, url_for("main.profile")
+    ):
+        return response
+    passkeys = (
+        get_session()
+        .scalars(
+            select(PasskeyCredential)
+            .where(PasskeyCredential.user_id == user.id)
+            .order_by(PasskeyCredential.created_at, PasskeyCredential.id)
+        )
+        .all()
+    )
+    timezone_info = ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"]))
+    return render_template(
+        "passkeys.html", passkeys=passkeys, timezone_info=timezone_info
+    )
+
+
+@main.post("/profile/passkeys/options")
+@login_required
+def passkey_registration_options() -> Any:
+    user = cast(User, current_user())
+    if not sensitive_action_authorized(user, url_for("main.passkey_management")):
+        return jsonify({"error": "Reauthentication is required."}), 403
+    return jsonify(registration_options(get_session(), user))
+
+
+@main.post("/profile/passkeys/verify")
+@login_required
+def passkey_registration_verify() -> Any:
+    user = cast(User, current_user())
+    if not sensitive_action_authorized(user, url_for("main.passkey_management")):
+        return jsonify({"error": "Reauthentication is required."}), 403
+    try:
+        body, challenge_id, payload = passkey_json()
+        name_value = body.get("name")
+        if not isinstance(name_value, str):
+            raise PasskeyError("Enter a name for this passkey.")
+        name = required_text(name_value, "Passkey name", maximum=100)
+        challenge = consume_challenge(
+            get_session(), challenge_id, ceremony="registration", user_id=user.id
+        )
+        verification = verify_registration(payload, expected_challenge=challenge)
+        if (
+            get_session().scalar(
+                select(PasskeyCredential.id).where(
+                    PasskeyCredential.credential_id == verification.credential_id
+                )
+            )
+            is not None
+        ):
+            raise PasskeyError("That passkey is already registered.")
+    except (PasskeyError, WebAuthnException, ValueError, TypeError) as exc:
+        audit(
+            "passkey_enrollment_rejected",
+            user_id=user.id,
+            source_ip=request.remote_addr,
+            reason="verification",
+        )
+        message = (
+            str(exc)
+            if isinstance(exc, PasskeyError)
+            else "The passkey was not accepted."
+        )
+        return jsonify({"error": message}), 400
+    credential = PasskeyCredential(
+        user_id=user.id,
+        credential_id=verification.credential_id,
+        public_key=verification.credential_public_key,
+        sign_count=verification.sign_count,
+        device_type=verification.credential_device_type.value,
+        backed_up=verification.credential_backed_up,
+        aaguid=verification.aaguid,
+        name=name,
+        rp_id=cast(str, current_app.config["WEBAUTHN_RP_ID"]),
+        created_at=now_utc(),
+        last_used_at=None,
+    )
+    get_session().add(credential)
+    try:
+        get_session().commit()
+    except IntegrityError:
+        get_session().rollback()
+        audit(
+            "passkey_enrollment_rejected",
+            user_id=user.id,
+            source_ip=request.remote_addr,
+            reason="duplicate",
+        )
+        return jsonify({"error": "That passkey is already registered."}), 409
+    audit(
+        "passkey_enrolled",
+        user_id=user.id,
+        source_ip=request.remote_addr,
+        passkey_name=name,
+        device_type=credential.device_type,
+        backed_up=credential.backed_up,
+    )
+    consume_sensitive_action_authorization()
+    return jsonify({"redirect": url_for("main.profile")})
+
+
+@main.route("/profile/passkeys/<int:passkey_id>/remove", methods=["GET", "POST"])
+@login_required
+def remove_passkey(passkey_id: int) -> Any:
+    user = cast(User, current_user())
+    credential = get_session().scalar(
+        select(PasskeyCredential).where(
+            PasskeyCredential.id == passkey_id,
+            PasskeyCredential.user_id == user.id,
+        )
+    )
+    if credential is None:
+        abort(404)
+    cancel_url = url_for("main.passkey_management")
+    if response := require_sensitive_action_authorization(user, cancel_url):
+        return response
+    confirmation = {
+        "breadcrumb_parent_url": cancel_url,
+        "breadcrumb_parent_label": "Passkeys",
+        "breadcrumb_label": "Remove Passkey",
+        "eyebrow": "ACCOUNT SECURITY",
+        "title": "Remove Passkey",
+        "description": f"Remove “{credential.name}” from your account?",
+        "cancel_url": cancel_url,
+        "submit_label": "Remove Passkey",
+        "submit_class": "button-danger",
+        "submit_icon": "fa-trash",
+    }
+    if request.method != "POST":
+        return render_template("sensitive_action_form.html", **confirmation)
+    name = credential.name
+    get_session().delete(credential)
+    get_session().commit()
+    audit(
+        "passkey_removed",
+        user_id=user.id,
+        source_ip=request.remote_addr,
+        passkey_name=name,
+    )
+    consume_sensitive_action_authorization()
+    flash("Passkey removed.", "success")
+    return redirect(url_for("main.profile"))
+
+
 @main.get("/profile/password/change-required")
 @login_required
 def required_password_change() -> Any:
@@ -3351,9 +3701,19 @@ def users() -> Any:
         .offset((page - 1) * USER_PAGE_SIZE)
         .limit(USER_PAGE_SIZE)
     ).all()
+    visible_user_ids = [user.id for user in user_list]
+    passkey_counts: dict[int, int] = {
+        user_id: int(count)
+        for user_id, count in database.execute(
+            select(PasskeyCredential.user_id, func.count(PasskeyCredential.id))
+            .where(PasskeyCredential.user_id.in_(visible_user_ids))
+            .group_by(PasskeyCredential.user_id)
+        )
+    }
     return render_template(
         "users.html",
         users=user_list,
+        passkey_counts=passkey_counts,
         total=total,
         page=page,
         page_count=page_count,
@@ -3690,6 +4050,64 @@ def disable_user_totp(user_id: int) -> Any:
     )
     consume_sensitive_action_authorization()
     flash("TOTP has been disabled for the user.", "success")
+    return redirect(url_for("main.users"))
+
+
+@main.route("/users/<int:user_id>/wipe-passkeys", methods=["GET", "POST"])
+@permission_required(USER_EDIT)
+def wipe_user_passkeys(user_id: int) -> Any:
+    """Let administrators wipe all passkeys without exposing their details."""
+    database = get_session()
+    actor = cast(User, current_user())
+    user = cast(User, get_or_404(User, user_id))
+    if user.id == actor.id:
+        abort(409, "Use the profile page to manage your own passkeys.")
+    count = int(
+        database.scalar(
+            select(func.count(PasskeyCredential.id)).where(
+                PasskeyCredential.user_id == user.id
+            )
+        )
+        or 0
+    )
+    if count == 0:
+        return redirect(url_for("main.users"))
+    confirmation = {
+        "eyebrow": "WIPE PASSKEYS",
+        "title": user.full_name,
+        "description": (
+            "This removes every passkey for the selected user and invalidates "
+            "all of their existing sessions. Passkey details are not disclosed."
+        ),
+        "submit_label": "Wipe All Passkeys",
+        "submit_class": "button-stop",
+        "submit_icon": "fa-ban",
+        "cancel_url": url_for("main.users"),
+        "breadcrumb_parent_label": "Users",
+        "breadcrumb_parent_url": url_for("main.users"),
+        "breadcrumb_label": "Wipe Passkeys",
+    }
+    if response := require_sensitive_action_authorization(
+        actor, confirmation["cancel_url"]
+    ):
+        return response
+    if request.method != "POST":
+        return render_template("sensitive_action_form.html", **confirmation)
+    database.execute(
+        delete(PasskeyCredential).where(PasskeyCredential.user_id == user.id)
+    )
+    user.session_version += 1
+    set_session_invalidation_notice(user, "passkeys_wiped")
+    database.commit()
+    audit(
+        "passkeys_wiped",
+        actor_id=actor.id,
+        user_id=user.id,
+        source_ip=request.remote_addr,
+        sessions_invalidated=True,
+    )
+    consume_sensitive_action_authorization()
+    flash("All passkeys were removed for the user.", "success")
     return redirect(url_for("main.users"))
 
 

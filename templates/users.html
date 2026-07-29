@@ -11,7 +11,7 @@
   <div class="table-scroll">
     <table class="data-table responsive-table user-table">
       <caption class="visually-hidden">Application users</caption>
-      <thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Role</th><th scope="col">TOTP</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+      <thead><tr><th scope="col">Name</th><th scope="col">Email</th><th scope="col">Role</th><th scope="col">TOTP</th><th scope="col">Passkeys</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
       <tbody>
       {% for user in users %}
         <tr>
@@ -19,6 +19,7 @@
           <td data-label="Email"><a class="user-contact-email external-link" href="mailto:{{ user.email }}?body={{ (user.full_name ~ ',')|urlencode }}" title="{{ user.email }}"><span class="truncate-text">{{ user.email }}</span></a></td>
           <td data-label="Role"><span class="status-pill {{ 'status-disabled' if user.is_admin else 'status-enabled' }}">{{ 'Administrator' if user.is_admin else 'User' }}</span></td>
           <td data-label="TOTP"><span class="user-totp-cell"><span class="status-pill {{ 'status-enabled' if user.totp_secret else 'status-neutral' }}">{{ 'Configured' if user.totp_secret else 'Not Configured' }}</span>{% if user.totp_secret and user.id != logged_user.id and can('user:edit') %}<a class="icon-button stop" href="{{ url_for('main.disable_user_totp', user_id=user.id) }}" title="Disable TOTP" aria-label="Disable TOTP"><i class="fa-solid fa-ban" aria-hidden="true"></i></a>{% endif %}</span></td>
+          <td data-label="Passkeys"><span class="user-totp-cell"><span class="status-pill {{ 'status-enabled' if passkey_counts.get(user.id, 0) else 'status-neutral' }}">{{ 'Configured' if passkey_counts.get(user.id, 0) else 'Not Configured' }}</span>{% if passkey_counts.get(user.id, 0) and user.id != logged_user.id and can('user:edit') %}<a class="icon-button stop" href="{{ url_for('main.wipe_user_passkeys', user_id=user.id) }}" title="Wipe All Passkeys" aria-label="Wipe All Passkeys"><i class="fa-solid fa-ban" aria-hidden="true"></i></a>{% endif %}</span></td>
           <td class="cell-status" data-label="Status"><span class="status-pill {{ 'status-enabled' if user.is_enabled else 'status-disabled' }}">{{ 'Enabled' if user.is_enabled else 'Disabled' }}</span></td>
           <td class="cell-actions" data-label="Actions">
             <div class="row-actions">

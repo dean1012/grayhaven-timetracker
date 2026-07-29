@@ -104,6 +104,7 @@ class AppTestCase(unittest.TestCase):
             admin.password_change_required = False
         routes.login_limiter = LoginLimiter()
         routes.login_ip_limiter = LoginLimiter(limit=50)
+        routes.passkey_options_limiter = LoginLimiter(limit=20, window_seconds=60)
         routes.shared_report_limiter = LoginLimiter()
         routes.sensitive_action_limiter = LoginLimiter()
         routes.report_password_confirmation_store = (

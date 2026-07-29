@@ -3,14 +3,15 @@
 {% block body_class %}auth-page{% endblock %}
 {% block content %}
 <section class="auth-layout">
-  {% if request.args.get('auth_notice') == 'privileges_updated' %}<div class="flash-stack"><div class="flash flash-warning" role="status">Your privileges were updated. Please sign in again.</div></div>{% elif request.args.get('auth_notice') == 'account_disabled' %}<div class="flash-stack"><div class="flash flash-warning" role="status">Your account was disabled. Please contact an administrator.</div></div>{% elif request.args.get('auth_notice') == 'password_reset' %}<div class="flash-stack"><div class="flash flash-warning" role="status">Your password was reset by an administrator. Please sign in again.</div></div>{% elif request.args.get('auth_notice') == 'totp_disabled' %}<div class="flash-stack"><div class="flash flash-warning" role="status">Your authenticator was disabled by an administrator. Please sign in again.</div></div>{% endif %}
+  {% if request.args.get('auth_notice') == 'privileges_updated' %}<div class="flash-stack"><div class="flash flash-warning" role="status">Your privileges were updated. Please sign in again.</div></div>{% elif request.args.get('auth_notice') == 'account_disabled' %}<div class="flash-stack"><div class="flash flash-warning" role="status">Your account was disabled. Please contact an administrator.</div></div>{% elif request.args.get('auth_notice') == 'password_reset' %}<div class="flash-stack"><div class="flash flash-warning" role="status">Your password was reset by an administrator. Please sign in again.</div></div>{% elif request.args.get('auth_notice') == 'totp_disabled' %}<div class="flash-stack"><div class="flash flash-warning" role="status">Your authenticator was disabled by an administrator. Please sign in again.</div></div>{% elif request.args.get('auth_notice') == 'passkeys_wiped' %}<div class="flash-stack"><div class="flash flash-warning" role="status">Your passkeys were removed by an administrator. Please sign in again.</div></div>{% endif %}
   <div class="auth-panel panel">
     <img class="auth-logo" src="{{ url_for('main.branding_asset', filename='grayhaven-logo-wordmark-dark.svg') }}" alt="Grayhaven Systems LLC">
-    <form method="post" class="form-stack">
+    <form method="post" class="form-stack" data-conditional-passkey-login data-options-url="{{ url_for('main.login_passkey_options', next=request.args.get('next')) }}" data-verify-url="{{ url_for('main.login_passkey_verify') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label>Email Address<span class="input-with-icon"><i class="fa-solid fa-envelope" aria-hidden="true"></i><input type="email" name="email" autocomplete="username" maxlength="255" required autofocus></span></label>
+      <label>Email Address<span class="input-with-icon"><i class="fa-solid fa-envelope" aria-hidden="true"></i><input type="email" name="email" autocomplete="username webauthn" maxlength="255" required autofocus></span></label>
       <label>Password<span class="input-with-icon"><i class="fa-solid fa-lock" aria-hidden="true"></i><input type="password" name="password" autocomplete="current-password" maxlength="1024" required></span></label>
       <button class="button button-primary" type="submit"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i> Sign In</button>
+      <p class="muted" role="status" data-conditional-passkey-status hidden></p>
     </form>
   </div>
 </section>

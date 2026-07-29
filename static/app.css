@@ -235,6 +235,13 @@ small { color: var(--cool-grey); font-weight: 400; }
 .narrow-content > .form-panel + .form-panel { margin-top: 1.5rem; }
 .form-stack { display: grid; gap: 1.25rem; margin-top: 1.5rem; }
 .form-actions { justify-content: flex-end; margin-top: .4rem; }
+.passkey-choice { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid color-mix(in srgb, var(--charcoal-border) 65%, transparent); }
+.passkey-choice .form-actions { justify-content: flex-start; }
+.plain-list { display: grid; gap: .75rem; margin: 1rem 0 0; padding: 0; list-style: none; }
+.plain-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .2rem 1rem; padding: 1rem; background: color-mix(in srgb, var(--background-mid) 65%, transparent); border: 1px solid color-mix(in srgb, var(--charcoal-border) 65%, transparent); border-radius: var(--border-radius-sm); }
+.plain-list strong { grid-column: 1; color: var(--soft-white); overflow-wrap: anywhere; }
+.plain-list .muted { grid-column: 1; font-size: .85rem; overflow-wrap: anywhere; }
+.plain-list .button { grid-row: 1 / span 2; grid-column: 2; }
 .datetime-control { display: grid; grid-template-columns: minmax(0, 1fr) 32px; align-items: center; gap: .5rem; }
 .datetime-control .icon-button { width: 32px; height: 32px; }
 .select-control { position: relative; display: block; }
@@ -464,6 +471,8 @@ small { color: var(--cool-grey); font-weight: 400; }
   .heading-actions .button { flex: 1 1 100%; }
   .form-actions { align-items: stretch; flex-direction: column-reverse; }
   .form-actions .button { width: 100%; }
+  .plain-list li { grid-template-columns: minmax(0, 1fr); }
+  .plain-list .button { grid-row: auto; grid-column: 1; width: 100%; margin-top: .5rem; }
   .active-timer-actions { display: flex; width: 100%; gap: .5rem; }
   .active-timer-actions .timer-elapsed { flex: 1 0 100%; width: 100%; min-width: 0; }
   .active-timer-actions .timer-action,
