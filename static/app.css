@@ -78,7 +78,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .mobile-nav { position: relative; display: block; flex: 0 0 auto; margin-left: auto; }
 .mobile-nav > summary { list-style: none; }
 .mobile-nav > summary::-webkit-details-marker { display: none; }
-.mobile-nav-toggle { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; min-width: 44px; min-height: 44px; padding: .55rem .75rem; color: var(--soft-white); border: 1px solid var(--charcoal-border); border-radius: var(--border-radius); cursor: pointer; }
+.mobile-nav-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; color: var(--soft-white); border: 1px solid var(--charcoal-border); border-radius: var(--border-radius); cursor: pointer; }
 .mobile-nav-toggle:focus-visible { outline: 2px solid var(--primary-accent); outline-offset: 3px; }
 .mobile-nav[open] .mobile-nav-toggle { color: var(--primary-accent); border-color: var(--primary-accent); }
 .mobile-nav-links { position: absolute; top: calc(100% + .65rem); right: 0; z-index: 20; display: grid; min-width: 220px; padding: .55rem; background: var(--navbar-bg); border: 1px solid var(--charcoal-border); border-radius: var(--border-radius); box-shadow: var(--panel-shadow); }
@@ -431,7 +431,6 @@ small { color: var(--cool-grey); font-weight: 400; }
 @media (width <768px) {
   h1 { font-size: 2rem; }
   .app-header-inner { height: 68px; }
-  .brand img { width: 170px; }
   .brand-product { padding-left: .75rem; font-size: .78rem; }
   .page-shell { padding: 2rem 0 3.5rem; }
   .page-heading { align-items: stretch; flex-direction: column; margin-bottom: 1.7rem; }
@@ -465,10 +464,7 @@ small { color: var(--cool-grey); font-weight: 400; }
 }
 
 @media (width <=575px) {
-  .brand img { width: 150px; }
   .brand-product { display: none; }
-  .mobile-nav-label { display: none; }
-  .mobile-nav-toggle { width: 44px; padding: 0; }
   .heading-actions .button { flex: 1 1 100%; }
   .form-actions { align-items: stretch; flex-direction: column-reverse; }
   .form-actions .button { width: 100%; }
@@ -510,7 +506,6 @@ small { color: var(--cool-grey); font-weight: 400; }
 
 @media (width >=768px) and (width <1120px) {
   .brand { gap: .75rem; }
-  .brand img { width: 172px; }
   .brand-product { padding-left: .75rem; font-size: .78rem; }
   .app-nav { gap: .85rem; }
   .app-nav a, .nav-button { font-size: .8rem; }

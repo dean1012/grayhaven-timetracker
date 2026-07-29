@@ -350,6 +350,47 @@ class AuthenticationRouteTests(AppTestCase):
 
 
 class SecurityAndErrorRouteTests(AppTestCase):
+    def test_responsive_navbar_keeps_fixed_logo_and_icon_only_trigger(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        stylesheet = (project_root / "static" / "app.css").read_text(encoding="utf-8")
+        template = (project_root / "templates" / "base.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(len(re.findall(r"\.brand img\s*\{", stylesheet)), 1)
+        self.assertIn(
+            ".brand img { width: 194px; height: auto; }",
+            stylesheet,
+        )
+        for report_width in (230, 185, 160, 145):
+            with self.subTest(report_width=report_width):
+                self.assertIn(
+                    f".report-header img {{ width: {report_width}px; }}",
+                    stylesheet,
+                )
+        self.assertNotIn(".mobile-nav-label", stylesheet)
+        self.assertIn(
+            ".mobile-nav-toggle { display: inline-flex; align-items: center; "
+            "justify-content: center; width: 44px; height: 44px; padding: 0;",
+            stylesheet,
+        )
+        self.assertEqual(
+            len(re.findall(r"(?m)^\.mobile-nav-toggle\s*\{", stylesheet)), 1
+        )
+        self.assertIn(
+            '<summary class="mobile-nav-toggle" aria-label="Application menu">'
+            '<i class="fa-solid fa-bars" aria-hidden="true"></i></summary>',
+            template,
+        )
+        self.assertNotIn("mobile-nav-label", template)
+        self.assertNotIn(">Menu</", template)
+        self.assertIn("@media (width >=1721px)", stylesheet)
+        self.assertRegex(
+            stylesheet,
+            r"(?s)@media \(width >=1721px\).*?"
+            r"\.desktop-nav \{ display: flex; \}.*?"
+            r"\.mobile-nav \{ display: none; \}",
+        )
+
     def test_application_header_glass_preserves_structure_and_navigation(
         self,
     ) -> None:
