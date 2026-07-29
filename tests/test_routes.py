@@ -350,6 +350,51 @@ class AuthenticationRouteTests(AppTestCase):
 
 
 class SecurityAndErrorRouteTests(AppTestCase):
+    def test_form_focus_keeps_borders_without_weakening_other_indicators(
+        self,
+    ) -> None:
+        stylesheet = (
+            Path(__file__).resolve().parents[1] / "static" / "app.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "input:focus-visible, select:focus-visible { "
+            "border-color: var(--charcoal-border); outline: none; }",
+            stylesheet,
+        )
+        self.assertIn(
+            ".money-input:focus-within { border-color: var(--charcoal-border); "
+            "outline: none; }",
+            stylesheet,
+        )
+        self.assertIn(
+            ".button:focus-visible, .icon-button:focus-visible, "
+            ".text-link:focus-visible, .nav-button:focus-visible { "
+            "outline: 2px solid var(--primary-accent); outline-offset: 3px; }",
+            stylesheet,
+        )
+        self.assertIn(
+            "a:focus-visible { outline: 2px solid var(--primary-accent); "
+            "outline-offset: 3px; }",
+            stylesheet,
+        )
+        self.assertIn(
+            ".mobile-nav-toggle:focus-visible { outline: 2px solid "
+            "var(--primary-accent); outline-offset: 3px; }",
+            stylesheet,
+        )
+        self.assertIn(
+            ".input-with-icon:focus-within > i { color: var(--primary-accent); }",
+            stylesheet,
+        )
+        self.assertNotRegex(
+            stylesheet,
+            r"(?:input|select):focus-visible[^{}]*\{[^}]*primary-accent",
+        )
+        self.assertNotRegex(
+            stylesheet,
+            r"\.money-input:focus-within\s*\{[^}]*primary-accent",
+        )
+
     def test_static_assets_cover_template_icons_and_branding_breakpoints(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         stylesheet = (project_root / "static/fontawesome.min.css").read_text(
