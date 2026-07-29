@@ -842,6 +842,62 @@ class AuditRouteTests(AppTestCase):
             )
             self.assertEqual(event.ip_address, "192.0.2.10")
 
+    def test_password_authentication_factors_persist_and_render(self) -> None:
+        password_only = self.create_user(
+            email="password-only-admin@example.invalid",
+            role="admin",
+            totp_secret="",
+        )
+        self.login(
+            email=password_only.email,
+            password="Standard-User-Test-Password-0001!",
+            totp_secret="",
+        )
+        self.authorize_sensitive_action(
+            "/profile/password/change",
+            password="Standard-User-Test-Password-0001!",
+            totp_secret="",
+        )
+        self.client.post("/logout")
+
+        self.login()
+        self.authorize_sensitive_action("/profile/password/change")
+
+        allowed_factors = {"passkey", "password", "password_totp"}
+        with session_scope(self.app) as database:
+            events = database.scalars(
+                select(AuditEvent)
+                .where(
+                    AuditEvent.event.in_(
+                        {
+                            "login_succeeded",
+                            "sensitive_action_reauthentication_succeeded",
+                        }
+                    )
+                )
+                .order_by(AuditEvent.id)
+            ).all()
+            login_factors = [
+                item.details.get("factor")
+                for item in events
+                if item.event == "login_succeeded"
+            ]
+            reauthentication_factors = [
+                item.details.get("factor")
+                for item in events
+                if item.event == "sensitive_action_reauthentication_succeeded"
+            ]
+        self.assertEqual(login_factors, ["password", "password_totp"])
+        self.assertEqual(reauthentication_factors, ["password", "password_totp"])
+        self.assertTrue(
+            all(item.details.get("factor") in allowed_factors for item in events)
+        )
+
+        audit_page = self.client.get("/audit")
+        self.assertEqual(audit_page.status_code, 200)
+        self.assertIn(b"<dt>factor</dt><dd>password</dd>", audit_page.data)
+        self.assertIn(b"<dt>factor</dt><dd>password_totp</dd>", audit_page.data)
+
     def test_stale_parent_helpers_resolve_matching_audit_details(self) -> None:
         self.login()
         seed = self.seed_contract()

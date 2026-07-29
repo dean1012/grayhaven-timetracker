@@ -14,7 +14,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
 from threading import Lock, Timer
-from typing import Any, cast
+from typing import Any, Literal, cast
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -178,6 +178,7 @@ SENSITIVE_ACTION_AUTHORIZATION_SESSION_KEYS = (
     "sensitive_action_authorized_session_version",
     "sensitive_action_authorized_until",
 )
+AuthenticationFactor = Literal["passkey", "password", "password_totp"]
 
 
 @dataclass(frozen=True)
@@ -1139,7 +1140,13 @@ def pending_login_user() -> User | None:
     return user
 
 
-def establish_login(user: User, ip: str, next_url: str | None) -> str:
+def establish_login(
+    user: User,
+    ip: str,
+    next_url: str | None,
+    *,
+    factor: AuthenticationFactor,
+) -> str:
     """Promote a fully authenticated account and return its safe destination."""
     login_limiter.clear(f"{ip}|{user.email}")
     session.clear()
@@ -1148,15 +1155,21 @@ def establish_login(user: User, ip: str, next_url: str | None) -> str:
     session["user_id"] = user.id
     session["session_version"] = user.session_version
     session["user_role"] = user.role
-    audit("login_succeeded", user_id=user.id, source_ip=ip)
+    audit("login_succeeded", user_id=user.id, source_ip=ip, factor=factor)
     if user.password_change_required:
         return url_for("main.required_password_change")
     return next_url or url_for("main.dashboard")
 
 
-def complete_login(user: User, ip: str, next_url: str | None) -> Any:
+def complete_login(
+    user: User,
+    ip: str,
+    next_url: str | None,
+    *,
+    factor: AuthenticationFactor,
+) -> Any:
     """Promote a fully authenticated account into the application session."""
-    return redirect(establish_login(user, ip, next_url))
+    return redirect(establish_login(user, ip, next_url, factor=factor))
 
 
 @main.route("/login", methods=["GET", "POST"])
@@ -1197,7 +1210,7 @@ def login() -> Any:
         get_session().commit()
     next_url = safe_next_url(request.args.get("next"))
     if not user.totp_secret:
-        return complete_login(user, ip, next_url)
+        return complete_login(user, ip, next_url, factor="password")
 
     session.clear()
     session.permanent = False
@@ -1252,7 +1265,7 @@ def login_authenticator() -> Any:
     get_session().commit()
     pending_next = session.get("pending_login_next")
     next_url = safe_next_url(pending_next if isinstance(pending_next, str) else None)
-    return complete_login(user, ip, next_url)
+    return complete_login(user, ip, next_url, factor="password_totp")
 
 
 def passkey_json() -> tuple[dict[str, Any], object, object]:
@@ -1336,7 +1349,7 @@ def login_passkey_verify() -> Any:
         source_ip=ip,
         ceremony="login",
     )
-    return jsonify({"redirect": establish_login(user, ip, next_url)})
+    return jsonify({"redirect": establish_login(user, ip, next_url, factor="passkey")})
 
 
 @main.post("/reauthenticate/passkey/options")
@@ -1502,6 +1515,7 @@ def authenticate_sensitive_action() -> Any:
         user_id=user.id,
         source_ip=request.remote_addr,
         action_path=next_url,
+        factor="password",
     )
     return redirect(next_url)
 
@@ -1556,6 +1570,7 @@ def authenticate_sensitive_action_totp() -> Any:
         user_id=user.id,
         source_ip=request.remote_addr,
         action_path=next_url,
+        factor="password_totp",
     )
     return redirect(next_url)
 

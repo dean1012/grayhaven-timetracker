@@ -148,6 +148,16 @@ class PasskeyRouteTests(AppTestCase):
             serialized = " ".join(event.details_json for event in events)
             self.assertNotIn(bytes_to_base64url(credential.credential_id), serialized)
             self.assertNotIn("public-key-data", serialized)
+            login_event = database.scalar(
+                select(AuditEvent)
+                .where(AuditEvent.event == "login_succeeded")
+                .order_by(AuditEvent.id.desc())
+            )
+            assert login_event is not None
+            self.assertEqual(login_event.details["factor"], "passkey")
+        audit_page = self.client.get("/audit")
+        self.assertEqual(audit_page.status_code, 200)
+        self.assertIn(b"<dt>factor</dt><dd>passkey</dd>", audit_page.data)
 
     def test_login_options_redirect_authenticated_users_and_honor_ip_limit(
         self,
@@ -321,6 +331,19 @@ class PasskeyRouteTests(AppTestCase):
                 browser_session["sensitive_action_authorized_path"],
                 "/profile/password/change",
             )
+        with session_scope(self.app) as database:
+            event = database.scalar(
+                select(AuditEvent)
+                .where(
+                    AuditEvent.event == "sensitive_action_reauthentication_succeeded"
+                )
+                .order_by(AuditEvent.id.desc())
+            )
+            assert event is not None
+            self.assertEqual(event.details["factor"], "passkey")
+        audit_page = self.client.get("/audit")
+        self.assertEqual(audit_page.status_code, 200)
+        self.assertIn(b"<dt>factor</dt><dd>passkey</dd>", audit_page.data)
 
     def test_sensitive_action_challenge_cannot_authorize_replacement_path(
         self,
