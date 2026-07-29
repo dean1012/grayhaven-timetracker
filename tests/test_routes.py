@@ -350,6 +350,49 @@ class AuthenticationRouteTests(AppTestCase):
 
 
 class SecurityAndErrorRouteTests(AppTestCase):
+    def test_application_header_glass_preserves_structure_and_navigation(
+        self,
+    ) -> None:
+        stylesheet = (
+            Path(__file__).resolve().parents[1] / "static" / "app.css"
+        ).read_text(encoding="utf-8")
+        match = re.search(r"\.app-header \{([^}]+)\}", stylesheet)
+        self.assertIsNotNone(match)
+        assert match is not None
+        header_rule = match.group(1)
+        for declaration in (
+            "position: sticky",
+            "top: 0",
+            "z-index: 5",
+            "flex: 0 0 auto",
+            "background: rgba(20, 20, 20, 0.35)",
+            "border-bottom: 1px solid var(--charcoal-border)",
+            "backdrop-filter: blur(22px)",
+            "-webkit-backdrop-filter: blur(22px)",
+            "box-shadow: 0 10px 40px rgba(0, 0, 0, .35), "
+            "inset 0 1px rgba(255, 255, 255, .08)",
+        ):
+            with self.subTest(declaration=declaration):
+                self.assertIn(declaration, header_rule)
+        self.assertEqual(
+            len(re.findall(r"(?<!-webkit-)backdrop-filter:", header_rule)), 1
+        )
+        self.assertEqual(header_rule.count("-webkit-backdrop-filter:"), 1)
+        self.assertEqual(stylesheet.count("background: rgba(20, 20, 20, 0.35)"), 1)
+        self.assertIn(
+            ".app-header-inner { display: flex; align-items: center; width: "
+            "min(1680px, calc(100% - var(--container-padding) - "
+            "var(--container-padding))); height: 76px; margin: auto; }",
+            stylesheet,
+        )
+        self.assertIn(
+            ".app-nav a:hover, .app-nav a[aria-current], .nav-button:hover { "
+            "color: var(--primary-accent); }",
+            stylesheet,
+        )
+        self.assertIn(".desktop-nav { display: none; }", stylesheet)
+        self.assertIn(".mobile-nav { position: relative; display: block;", stylesheet)
+
     def test_form_focus_keeps_borders_without_weakening_other_indicators(
         self,
     ) -> None:
