@@ -142,6 +142,111 @@ class DatabaseMaintenanceTests(unittest.TestCase):
         with self.assertRaises(DatabaseError):
             database_maintenance.verify_database(self.database, self.old_key_file)
 
+    def test_rekey_rejects_nonempty_cipher_integrity_result(self) -> None:
+        self.create_encrypted_database()
+        connection = MagicMock()
+
+        def execute(statement: str) -> MagicMock:
+            result = MagicMock()
+            result.fetchall.return_value = (
+                [("hmac check failed",)]
+                if statement == "PRAGMA cipher_integrity_check"
+                else []
+            )
+            result.fetchone.return_value = ("ok",)
+            return result
+
+        connection.execute.side_effect = execute
+        with (
+            patch.object(
+                database_maintenance,
+                "connect_sqlcipher",
+                return_value=connection,
+            ),
+            patch.object(database_maintenance, "verify_database"),
+            self.assertRaisesRegex(DatabaseError, "integrity failed after rekey"),
+        ):
+            database_maintenance.rotate_key(
+                self.database, self.old_key_file, self.new_key_file
+            )
+        self.assertTrue(connection.close.called)
+
+    def test_backup_rejects_nonempty_cipher_integrity_result(self) -> None:
+        self.create_encrypted_database()
+        source = MagicMock()
+        destination = MagicMock()
+
+        def destination_execute(statement: str) -> MagicMock:
+            result = MagicMock()
+            result.fetchall.return_value = (
+                [("page corruption",)]
+                if statement == "PRAGMA cipher_integrity_check"
+                else []
+            )
+            result.fetchone.return_value = ("delete",)
+            return result
+
+        destination.execute.side_effect = destination_execute
+        output = self.root / "failed-integrity.sqlite3"
+        with (
+            patch.object(
+                database_maintenance,
+                "connect_sqlcipher",
+                side_effect=(source, destination),
+            ),
+            self.assertRaisesRegex(DatabaseError, "integrity validation"),
+        ):
+            database_maintenance.create_backup(self.database, self.old_key_file, output)
+        source.close.assert_called_once_with()
+        destination.close.assert_called_once_with()
+        self.assertFalse(output.exists())
+        self.assertEqual(list(self.root.glob(".failed-integrity.sqlite3.*.tmp")), [])
+
+    def test_backup_closes_each_partially_initialized_connection(self) -> None:
+        self.create_encrypted_database()
+        output = self.root / "partial-connection.sqlite3"
+
+        source = MagicMock()
+        with (
+            patch.object(
+                database_maintenance,
+                "connect_sqlcipher",
+                side_effect=(source, DatabaseError("destination open failed")),
+            ),
+            self.assertRaisesRegex(DatabaseError, "destination open failed"),
+        ):
+            database_maintenance.create_backup(self.database, self.old_key_file, output)
+        source.close.assert_called_once_with()
+        self.assertFalse(output.exists())
+
+        destination = MagicMock()
+        source = MagicMock()
+        source.backup.side_effect = DatabaseError("source backup failed")
+        with (
+            patch.object(
+                database_maintenance,
+                "connect_sqlcipher",
+                side_effect=(source, destination),
+            ),
+            self.assertRaisesRegex(DatabaseError, "source backup failed"),
+        ):
+            database_maintenance.create_backup(self.database, self.old_key_file, output)
+        source.close.assert_called_once_with()
+        destination.close.assert_called_once_with()
+        self.assertFalse(output.exists())
+
+        with (
+            patch.object(
+                database_maintenance,
+                "connect_sqlcipher",
+                side_effect=DatabaseError("source open failed"),
+            ),
+            self.assertRaisesRegex(DatabaseError, "source open failed"),
+        ):
+            database_maintenance.create_backup(self.database, self.old_key_file, output)
+        self.assertFalse(output.exists())
+        self.assertEqual(list(self.root.glob(".partial-connection.sqlite3.*.tmp")), [])
+
     def test_maintenance_rejects_unsafe_sources_and_equal_keys(self) -> None:
         plaintext = sqlite3.connect(self.database)
         plaintext.execute("CREATE TABLE sample (value TEXT)")
