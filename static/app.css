@@ -179,10 +179,10 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .inline-form, .timer-form, .subtask-add { display: flex; align-items: center; gap: .5rem; }
 .inline-form input { width: 250px; }
 input, select { min-height: 42px; width: 100%; padding: .65rem .75rem; color: var(--soft-white); background: var(--deep-graphite); border: 1px solid var(--charcoal-border); border-radius: var(--border-radius); }
-input:focus-visible, select:focus-visible { border-color: var(--charcoal-border); outline: none; }
+input:focus-visible, select:focus-visible { border-color: var(--primary-accent); outline: none; }
 select { padding-right: 2.25rem; }
 .money-input { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; min-height: 42px; color: var(--soft-white); background: var(--deep-graphite); border: 1px solid var(--charcoal-border); border-radius: var(--border-radius); overflow: hidden; }
-.money-input:focus-within { border-color: var(--charcoal-border); outline: none; }
+.money-input:focus-within { border-color: var(--primary-accent); outline: none; }
 .money-prefix, .money-suffix { color: var(--cool-grey); }
 .money-prefix { padding-left: .75rem; }
 .money-suffix { padding-right: .9rem; white-space: nowrap; }

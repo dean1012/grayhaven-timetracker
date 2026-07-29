@@ -357,12 +357,18 @@ class SecurityAndErrorRouteTests(AppTestCase):
             Path(__file__).resolve().parents[1] / "static" / "app.css"
         ).read_text(encoding="utf-8")
         self.assertIn(
-            "input:focus-visible, select:focus-visible { "
-            "border-color: var(--charcoal-border); outline: none; }",
+            "input, select { min-height: 42px; width: 100%; padding: .65rem "
+            ".75rem; color: var(--soft-white); background: "
+            "var(--deep-graphite); border: 1px solid var(--charcoal-border);",
             stylesheet,
         )
         self.assertIn(
-            ".money-input:focus-within { border-color: var(--charcoal-border); "
+            "input:focus-visible, select:focus-visible { "
+            "border-color: var(--primary-accent); outline: none; }",
+            stylesheet,
+        )
+        self.assertIn(
+            ".money-input:focus-within { border-color: var(--primary-accent); "
             "outline: none; }",
             stylesheet,
         )
@@ -388,11 +394,21 @@ class SecurityAndErrorRouteTests(AppTestCase):
         )
         self.assertNotRegex(
             stylesheet,
-            r"(?:input|select):focus-visible[^{}]*\{[^}]*primary-accent",
+            r"(?:input|select):focus-visible[^{}]*\{[^}]*border-width",
         )
         self.assertNotRegex(
             stylesheet,
-            r"\.money-input:focus-within\s*\{[^}]*primary-accent",
+            r"\.money-input:focus-within\s*\{[^}]*border-width",
+        )
+        self.assertNotRegex(
+            stylesheet,
+            r"(?:input|select):focus-visible[^{}]*\{[^}]*"
+            r"outline:[^;}]*primary-accent",
+        )
+        self.assertNotRegex(
+            stylesheet,
+            r"\.money-input:focus-within\s*\{[^}]*"
+            r"outline:[^;}]*primary-accent",
         )
 
     def test_static_assets_cover_template_icons_and_branding_breakpoints(self) -> None:
