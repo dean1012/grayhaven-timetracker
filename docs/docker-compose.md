@@ -11,6 +11,10 @@ recovery testing.
 
 Run all commands from the repository root.
 
+Local passkey testing must open `http://localhost:8000`. The Compose definition
+explicitly sets WebAuthn RP ID `localhost` and origin
+`http://localhost:8000`; do not substitute `127.0.0.1`.
+
 ## Table of Contents
 
 - [Prepare the Installation](#prepare-the-installation)

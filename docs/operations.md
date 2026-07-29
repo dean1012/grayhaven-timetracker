@@ -14,6 +14,7 @@ Run these procedures on the managed web host unless a step says otherwise.
 
 - [Check Service Health](#check-service-health)
 - [Manage the Service](#manage-the-service)
+- [Upgrade the Database Schema](#upgrade-the-database-schema)
 - [Create a Backup](#create-a-backup)
 - [Verify a Local Backup](#verify-a-local-backup)
 - [Test Backup and Restore with grayhaven-backupctl](#test-backup-and-restore-with-grayhaven-backupctl)
@@ -94,6 +95,27 @@ Restart the application without changing its deployed configuration:
 sudo systemctl restart grayhaven-timetracker.service
 sudo systemctl is-active grayhaven-timetracker.service
 ```
+
+[Back to top](#operations)
+
+## Upgrade the Database Schema
+
+The application automatically applies supported schema migrations in order at
+startup. Before starting a newer image against an existing database:
+
+1. Record the current immutable image digest and installed schema version.
+2. Create and verify a current encrypted backup using the procedures below.
+3. Preserve that independently usable artifact for the complete rollback
+   window; do not overwrite it during post-upgrade backups.
+4. Start the reviewed target image once and verify application health, the new
+   schema marker, existing data, and authentication behavior.
+5. Restart the same image and confirm the migration is idempotent.
+
+If migration fails, the transaction retains the prior schema and the service
+fails closed. Do not repeatedly restart it without reviewing the error. Rolling
+the application image back after a successful schema migration can require
+stopping the service and restoring the pre-upgrade database snapshot; an older
+binary is not expected to open a newer schema.
 
 [Back to top](#operations)
 

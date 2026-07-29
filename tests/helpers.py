@@ -79,6 +79,8 @@ def test_config(root: Path, **overrides: object) -> dict[str, object]:
         "SQLCIPHER_PASSPHRASE": SQLCIPHER_PASSPHRASE,
         "TESTING": True,
         "TRUSTED_PROXY_COUNT": 0,
+        "WEBAUTHN_ORIGIN": "http://localhost:8000",
+        "WEBAUTHN_RP_ID": "localhost",
         "WTF_CSRF_ENABLED": False,
     }
     config.update(overrides)

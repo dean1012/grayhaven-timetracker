@@ -15,6 +15,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     text,
@@ -53,6 +54,12 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
     time_entries: Mapped[list[TimeEntry]] = relationship(back_populates="user")
+    passkey_identity: Mapped[PasskeyIdentity | None] = relationship(
+        back_populates="user", cascade="all, delete-orphan", uselist=False
+    )
+    passkeys: Mapped[list[PasskeyCredential]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
     @property
     def full_name(self) -> str:
@@ -243,6 +250,76 @@ class ApplicationMetadata(Base):
 
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
+
+
+class PasskeyIdentity(Base):
+    """Stable random WebAuthn user handle isolated from account identifiers."""
+
+    __tablename__ = "passkey_identity"
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_account.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_handle: Mapped[bytes] = mapped_column(LargeBinary(64), unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+    user: Mapped[User] = relationship(back_populates="passkey_identity")
+
+
+class PasskeyCredential(Base):
+    """One public WebAuthn credential registered by an application user."""
+
+    __tablename__ = "passkey_credential"
+    __table_args__ = (
+        CheckConstraint("sign_count >= 0", name="ck_passkey_sign_count"),
+        CheckConstraint("length(trim(name)) > 0", name="ck_passkey_name"),
+        CheckConstraint("length(trim(rp_id)) > 0", name="ck_passkey_rp_id"),
+        Index("ix_passkey_credential_user", "user_id"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_account.id", ondelete="CASCADE")
+    )
+    credential_id: Mapped[bytes] = mapped_column(LargeBinary, unique=True)
+    public_key: Mapped[bytes] = mapped_column(LargeBinary)
+    sign_count: Mapped[int] = mapped_column(Integer, default=0)
+    device_type: Mapped[str] = mapped_column(String(32))
+    backed_up: Mapped[bool] = mapped_column(Boolean, default=False)
+    aaguid: Mapped[str] = mapped_column(String(36))
+    name: Mapped[str] = mapped_column(String(100))
+    rp_id: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    user: Mapped[User] = relationship(back_populates="passkeys")
+
+
+class WebAuthnChallenge(Base):
+    """Single-use, expiring, session-bound state for one WebAuthn ceremony."""
+
+    __tablename__ = "webauthn_challenge"
+    __table_args__ = (
+        CheckConstraint(
+            "ceremony IN ('registration', 'authentication', 'reauthentication')",
+            name="ck_webauthn_challenge_ceremony",
+        ),
+        Index("ix_webauthn_challenge_expires", "expires_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    challenge: Mapped[bytes] = mapped_column(LargeBinary(64))
+    ceremony: Mapped[str] = mapped_column(String(24))
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_account.id", ondelete="CASCADE"), nullable=True
+    )
+    session_binding_hash: Mapped[bytes] = mapped_column(LargeBinary(32))
+    action_context_hash: Mapped[bytes | None] = mapped_column(
+        LargeBinary(32), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 class SchemaVersion(Base):
