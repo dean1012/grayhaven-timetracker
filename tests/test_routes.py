@@ -17,11 +17,12 @@ import pyotp
 from argon2 import PasswordHasher
 from flask import g, request
 from flask_wtf.csrf import CSRFError
+from itsdangerous import SignatureExpired
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from werkzeug.exceptions import Conflict, Forbidden
 
-from grayhaven_timetracker import routes
+from grayhaven_timetracker import auth, routes
 from grayhaven_timetracker.audit import record_audit_event
 from grayhaven_timetracker.auth import (
     AUTHENTICATED_APP_VERSION_SESSION_KEY,
@@ -132,6 +133,23 @@ class AuthenticationRouteTests(AppTestCase):
         anonymous = self.app.test_client()
         self.assertEqual(anonymous.get("/login").status_code, 200)
         self.assertEqual(anonymous.get("/health").status_code, 200)
+
+    def test_unestablished_session_invalidation_skips_lifecycle_audit(self) -> None:
+        client = self.app.test_client()
+        with client.session_transaction() as unestablished_session:
+            unestablished_session["user_id"] = 999999
+
+        response = client.get("/profile")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.location, "/login?next=/profile")
+        with session_scope(self.app) as database:
+            self.assertEqual(
+                database.scalars(
+                    select(AuditEvent).where(AuditEvent.event == "session_invalidated")
+                ).all(),
+                [],
+            )
 
     def test_live_refresh_observes_app_version_session_boundary(self) -> None:
         with session_scope(self.app) as database:
@@ -1058,6 +1076,20 @@ class AuditRouteTests(AppTestCase):
             side_effect=RuntimeError("simulated audit storage failure"),
         ):
             self.assertEqual(self.client.get("/").status_code, 200)
+
+    def test_session_invalidation_audit_failure_before_database_is_best_effort(
+        self,
+    ) -> None:
+        with self.app.test_request_context("/"):
+            with patch(
+                "grayhaven_timetracker.auth.get_session",
+                side_effect=RuntimeError("simulated database acquisition failure"),
+            ):
+                auth.audit_session_invalidation(
+                    None,
+                    reason="application_version_changed",
+                    user_id=999999,
+                )
 
     def test_audit_details_include_readable_labels_and_ignore_empty_changes(
         self,
@@ -3894,6 +3926,94 @@ class ReportAndSessionRouteTests(AppTestCase):
         client.report_password_version += 1
         with self.app.test_request_context("/", headers={"Cookie": cookie}):
             self.assertFalse(routes.shared_report_cookie_allowed(client))
+
+    def test_shared_report_cookie_rejects_invalid_configured_version(self) -> None:
+        seed = self.seed
+        with session_scope(self.app) as database:
+            client = database.get(Client, seed.client_id)
+            assert client is not None
+        with self.app.test_request_context("/"):
+            response = self.app.response_class()
+            routes.set_shared_report_cookie(response, client)
+            cookie = response.headers["Set-Cookie"].split(";", 1)[0]
+
+        original_version = self.app.config["APP_VERSION"]
+        self.app.config["APP_VERSION"] = ""
+        try:
+            with self.app.test_request_context("/", headers={"Cookie": cookie}):
+                validation = routes.validate_shared_report_cookie(client)
+            self.assertFalse(validation.allowed)
+            self.assertIsNone(validation.invalidation_reason)
+        finally:
+            self.app.config["APP_VERSION"] = original_version
+
+    def test_expired_shared_report_cookie_payload_failures_are_rejected(self) -> None:
+        seed = self.seed
+        with session_scope(self.app) as database:
+            client = database.get(Client, seed.client_id)
+            assert client is not None
+        cookie_name = routes.shared_report_cookie_name(client)
+
+        cases = (
+            ("non-bytes", "not-bytes"),
+            ("deserialization-failure", b"expired"),
+            ("non-dict", b"expired"),
+        )
+        for case, expired_payload in cases:
+            with self.subTest(case=case):
+                with self.app.test_request_context(
+                    "/", headers={"Cookie": f"{cookie_name}=expired"}
+                ):
+                    with patch(
+                        "grayhaven_timetracker.routes.shared_report_serializer"
+                    ) as serializer_factory:
+                        serializer = serializer_factory.return_value
+                        serializer.loads.side_effect = SignatureExpired(
+                            "expired", payload=expired_payload
+                        )
+                        if case == "deserialization-failure":
+                            serializer.load_payload.side_effect = RuntimeError(
+                                "invalid payload"
+                            )
+                        elif case == "non-dict":
+                            serializer.load_payload.return_value = []
+                        validation = routes.validate_shared_report_cookie(client)
+                self.assertFalse(validation.allowed)
+                self.assertIsNone(validation.invalidation_reason)
+
+    def test_replaced_shared_report_cookie_is_not_expired_after_invalidation(
+        self,
+    ) -> None:
+        with session_scope(self.app) as database:
+            client = database.get(Client, self.seed.client_id)
+            assert client is not None and client.report_token is not None
+            token = client.report_token
+            client.report_password_hash = routes.hash_password(
+                "Shared-Report-Password-For-Testing-0001!"
+            )
+        browser = self.app.test_client()
+        self.set_shared_report_cookie_value(
+            browser,
+            client,
+            self.signed_shared_report_cookie(client, app_version="previous-build"),
+        )
+
+        response = browser.post(
+            f"/shared/reports/{token}",
+            data={"report_password": "Shared-Report-Password-For-Testing-0001!"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        replacement = browser.get_cookie(
+            routes.shared_report_cookie_name(client),
+            path=routes.SHARED_REPORT_COOKIE_PATH,
+        )
+        self.assertIsNotNone(replacement)
+        assert replacement is not None
+        with self.app.test_request_context(
+            "/", headers={"Cookie": f"{replacement.key}={replacement.value}"}
+        ):
+            self.assertTrue(routes.shared_report_cookie_allowed(client))
 
     def test_shared_report_session_invalidation_lifecycle_reasons(self) -> None:
         with session_scope(self.app) as database:

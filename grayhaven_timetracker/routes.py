@@ -492,11 +492,6 @@ def schedule_shared_report_cookie_expiration(client: Client) -> None:
         return response
 
 
-def shared_report_access_allowed(client: Client) -> bool:
-    """Validate the isolated signed cookie for one client report."""
-    return shared_report_cookie_allowed(client)
-
-
 def shared_report_request_allowed(client: Client) -> bool:
     """Audit and expire a previously valid report authorization once."""
     validation = validate_shared_report_cookie(client)

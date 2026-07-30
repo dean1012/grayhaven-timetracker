@@ -362,27 +362,26 @@ def load_current_user() -> None:
     marker_present = AUTHENTICATED_APP_VERSION_SESSION_KEY in session
     previous_version = session.get(AUTHENTICATED_APP_VERSION_SESSION_KEY)
     if not marker_present or previous_version != current_version:
-        if established_session:
-            audit_session_invalidation(
-                user,
-                reason=(
-                    "application_version_marker_missing"
-                    if not marker_present
-                    else (
-                        "application_version_changed"
-                        if isinstance(previous_version, str)
-                        else "application_version_marker_invalid"
-                    )
-                ),
-                previous_version=(
-                    previous_version
+        audit_session_invalidation(
+            user,
+            reason=(
+                "application_version_marker_missing"
+                if not marker_present
+                else (
+                    "application_version_changed"
                     if isinstance(previous_version, str)
-                    else "missing"
-                    if not marker_present
-                    else "invalid"
-                ),
-                current_version=current_version,
-            )
+                    else "application_version_marker_invalid"
+                )
+            ),
+            previous_version=(
+                previous_version
+                if isinstance(previous_version, str)
+                else "missing"
+                if not marker_present
+                else "invalid"
+            ),
+            current_version=current_version,
+        )
         session.clear()
         g.current_user = None
         return
