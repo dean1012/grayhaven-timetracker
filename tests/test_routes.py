@@ -32,6 +32,7 @@ from grayhaven_timetracker.models import (
     AuditEvent,
     Client,
     Contract,
+    PasskeyCredential,
     Subtask,
     Task,
     TimeEntry,
@@ -2047,6 +2048,112 @@ class ProfileAndUserAdministrationTests(AppTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.login()
+
+    def test_users_pin_current_account_without_disrupting_pagination(self) -> None:
+        last_names = ("Zulu", "alpha", "Echo", "bravo", "Delta", "charlie")
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.totp_secret = None
+            users = [
+                User(
+                    email=f"pagination-{index:02d}@example.invalid",
+                    first_name=f"Person {(index * 7) % 13:02d}",
+                    last_name=last_names[index % len(last_names)],
+                    password_hash=admin.password_hash,
+                    totp_secret=None,
+                    pending_totp_secret=None,
+                    role="user",
+                    is_enabled=index % 4 != 0,
+                    password_change_required=False,
+                    session_version=1,
+                    created_at=datetime(2026, 7, 29, 12, 0, 0),
+                )
+                for index in range(55)
+            ]
+            database.add_all(users)
+            database.flush()
+            expected_others = sorted(
+                users,
+                key=lambda item: (
+                    not item.is_enabled,
+                    item.last_name.lower(),
+                    item.first_name.lower(),
+                    item.id,
+                ),
+            )
+            natural_order = sorted(
+                [admin, *users],
+                key=lambda item: (
+                    not item.is_enabled,
+                    item.last_name.lower(),
+                    item.first_name.lower(),
+                    item.id,
+                ),
+            )
+            self.assertNotEqual(natural_order[0].id, admin.id)
+            database.add_all(
+                [
+                    PasskeyCredential(
+                        user_id=user.id,
+                        credential_id=f"pagination-passkey-{user.id}".encode(),
+                        public_key=b"public-key-data",
+                        sign_count=1,
+                        device_type="single_device",
+                        backed_up=False,
+                        aaguid="00000000-0000-0000-0000-000000000000",
+                        name="Pagination test",
+                        rp_id="localhost",
+                        created_at=datetime(2026, 7, 29, 12, 0, 0),
+                        last_used_at=None,
+                    )
+                    for user in (admin, expected_others[24])
+                ]
+            )
+            expected_emails = [admin.email, *(user.email for user in expected_others)]
+
+        responses = [self.client.get(f"/users?page={page}") for page in range(1, 4)]
+        self.assertTrue(all(response.status_code == 200 for response in responses))
+        page_emails = [
+            [
+                value.decode()
+                for value in re.findall(rb'href="mailto:([^?"]+)\?body=', response.data)
+            ]
+            for response in responses
+        ]
+        self.assertEqual(
+            page_emails,
+            [
+                expected_emails[: routes.USER_PAGE_SIZE],
+                expected_emails[routes.USER_PAGE_SIZE : 2 * routes.USER_PAGE_SIZE],
+                expected_emails[2 * routes.USER_PAGE_SIZE :],
+            ],
+        )
+        flattened_emails = [email for page in page_emails for email in page]
+        self.assertEqual(flattened_emails, expected_emails)
+        self.assertEqual(len(flattened_emails), len(set(flattened_emails)))
+        self.assertEqual([len(page) for page in page_emails], [25, 25, 6])
+        self.assertTrue(all(len(page) <= routes.USER_PAGE_SIZE for page in page_emails))
+        self.assertEqual(page_emails[0][0], ADMIN_EMAIL)
+        self.assertNotIn(ADMIN_EMAIL, page_emails[1] + page_emails[2])
+
+        for page, response in enumerate(responses, start=1):
+            self.assertIn(b"56 users", response.data)
+            self.assertIn(f"Page {page} of 3".encode(), response.data)
+        self.assertNotIn(b">Previous</a>", responses[0].data)
+        self.assertIn(b'href="/users?page=2"', responses[0].data)
+        self.assertIn(b'href="/users?page=1"', responses[1].data)
+        self.assertIn(b'href="/users?page=3"', responses[1].data)
+        self.assertIn(b'href="/users?page=2"', responses[2].data)
+        self.assertNotIn(b">Next <i", responses[2].data)
+        self.assertEqual(responses[0].data.count(b"Current Account"), 1)
+        self.assertNotIn(b"Current Account", responses[1].data)
+        self.assertNotIn(b"Current Account", responses[2].data)
+        self.assertEqual(responses[0].data.count(b">Configured</span>"), 1)
+        self.assertEqual(responses[1].data.count(b">Configured</span>"), 1)
+        self.assertEqual(responses[2].data.count(b">Configured</span>"), 0)
+        self.assertNotIn(b"Wipe All Passkeys", responses[0].data)
+        self.assertIn(b"Wipe All Passkeys", responses[1].data)
 
     def test_profile_name_and_password_change_require_valid_inputs(self) -> None:
         profile = self.client.get("/profile")

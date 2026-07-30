@@ -3705,17 +3705,22 @@ def users() -> Any:
     page_count = max(1, (total + USER_PAGE_SIZE - 1) // USER_PAGE_SIZE)
     if page > page_count:
         return redirect(url_for("main.users", page=page_count))
-    user_list = database.scalars(
+    logged_user = cast(User, current_user())
+    other_user_offset = 0 if page == 1 else (page - 1) * USER_PAGE_SIZE - 1
+    other_user_limit = USER_PAGE_SIZE - 1 if page == 1 else USER_PAGE_SIZE
+    other_users = database.scalars(
         select(User)
+        .where(User.id != logged_user.id)
         .order_by(
             User.is_enabled.desc(),
             func.lower(User.last_name),
             func.lower(User.first_name),
             User.id,
         )
-        .offset((page - 1) * USER_PAGE_SIZE)
-        .limit(USER_PAGE_SIZE)
+        .offset(other_user_offset)
+        .limit(other_user_limit)
     ).all()
+    user_list = [logged_user, *other_users] if page == 1 else other_users
     visible_user_ids = [user.id for user in user_list]
     passkey_counts: dict[int, int] = {
         user_id: int(count)
