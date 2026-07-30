@@ -14,7 +14,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
 from threading import Lock, Timer
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypeGuard, cast
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -24,6 +24,7 @@ from flask import (
     Flask,
     Response,
     abort,
+    after_this_request,
     current_app,
     flash,
     g,
@@ -47,6 +48,7 @@ from .audit import record_audit_event
 from .auth import (
     AUTHENTICATED_APP_VERSION_SESSION_KEY,
     LoginLimiter,
+    audit_session_invalidation,
     consume_totp,
     current_user,
     find_user_by_email,
@@ -338,6 +340,28 @@ def shared_report_cookie_name(client: Client) -> str:
     return f"{SHARED_REPORT_COOKIE_PREFIX}{client.id}"
 
 
+@dataclass(frozen=True)
+class SharedReportCookieValidation:
+    """One signed report-cookie decision without exposing its credential."""
+
+    allowed: bool
+    invalidation_reason: str | None = None
+    previous_version: str | None = None
+    current_version: str | None = None
+    previous_report_version: int | None = None
+    current_report_version: int | None = None
+
+
+def is_positive_integer(value: object) -> TypeGuard[int]:
+    """Return whether a value is a strict, positive Python integer."""
+    return type(value) is int and value > 0
+
+
+def is_valid_app_version(value: object) -> TypeGuard[str]:
+    """Return whether a value matches the configured nonempty version shape."""
+    return isinstance(value, str) and bool(value)
+
+
 def shared_report_serializer() -> URLSafeTimedSerializer:
     """Build the isolated signer for report authorization cookies."""
     return URLSafeTimedSerializer(
@@ -364,32 +388,137 @@ def set_shared_report_cookie(response: Response, client: Client) -> Response:
         samesite="Lax",
         path=SHARED_REPORT_COOKIE_PATH,
     )
+    g.shared_report_cookie_replaced_for_client = client.id
     return response
+
+
+def validate_shared_report_cookie(client: Client) -> SharedReportCookieValidation:
+    """Classify only trusted version mismatches as session invalidations."""
+    value = request.cookies.get(shared_report_cookie_name(client))
+    if not value:
+        return SharedReportCookieValidation(False)
+    current_version = current_app.config.get("APP_VERSION")
+    if not is_valid_app_version(current_version):
+        return SharedReportCookieValidation(False)
+    serializer = shared_report_serializer()
+    try:
+        payload = serializer.loads(
+            value,
+            max_age=int(current_app.permanent_session_lifetime.total_seconds()),
+        )
+    except SignatureExpired as exc:
+        if not isinstance(exc.payload, bytes):
+            return SharedReportCookieValidation(False)
+        try:
+            payload = serializer.load_payload(exc.payload)
+        except Exception:
+            return SharedReportCookieValidation(False)
+        if not isinstance(payload, dict):
+            return SharedReportCookieValidation(False)
+        payload_client_id = payload.get("client_id")
+        password_version = payload.get("password_version")
+        if (
+            not is_positive_integer(payload_client_id)
+            or payload_client_id != client.id
+            or not is_positive_integer(password_version)
+            or (
+                "app_version" in payload
+                and not is_valid_app_version(payload.get("app_version"))
+            )
+        ):
+            return SharedReportCookieValidation(False)
+        return SharedReportCookieValidation(
+            False,
+            invalidation_reason="session_expired",
+        )
+    except BadSignature:
+        return SharedReportCookieValidation(False)
+    if not isinstance(payload, dict):
+        return SharedReportCookieValidation(False)
+    payload_client_id = payload.get("client_id")
+    password_version = payload.get("password_version")
+    if (
+        not is_positive_integer(payload_client_id)
+        or payload_client_id != client.id
+        or not is_positive_integer(password_version)
+    ):
+        return SharedReportCookieValidation(False)
+    if "app_version" not in payload:
+        return SharedReportCookieValidation(
+            False,
+            invalidation_reason="legacy_version_marker_missing",
+            previous_version="missing",
+            current_version=current_version,
+        )
+    previous_version = payload.get("app_version")
+    if not is_valid_app_version(previous_version):
+        return SharedReportCookieValidation(False)
+    if previous_version != current_version:
+        return SharedReportCookieValidation(
+            False,
+            invalidation_reason="application_version_changed",
+            previous_version=previous_version,
+            current_version=current_version,
+        )
+    previous_password_version = password_version
+    if previous_password_version != client.report_password_version:
+        return SharedReportCookieValidation(
+            False,
+            invalidation_reason="report_password_changed",
+            previous_report_version=previous_password_version,
+            current_report_version=client.report_password_version,
+        )
+    return SharedReportCookieValidation(True)
 
 
 def shared_report_cookie_allowed(client: Client) -> bool:
     """Validate the independent signed cookie for one client report."""
-    value = request.cookies.get(shared_report_cookie_name(client))
-    if not value:
-        return False
-    try:
-        payload = shared_report_serializer().loads(
-            value,
-            max_age=int(current_app.permanent_session_lifetime.total_seconds()),
-        )
-    except (BadSignature, SignatureExpired):
-        return False
-    return bool(
-        isinstance(payload, dict)
-        and payload.get("app_version") == current_app.config["APP_VERSION"]
-        and payload.get("client_id") == client.id
-        and payload.get("password_version") == client.report_password_version
-    )
+    return validate_shared_report_cookie(client).allowed
+
+
+def schedule_shared_report_cookie_expiration(client: Client) -> None:
+    """Delete one stale version-bound report cookie on the current response."""
+
+    @after_this_request
+    def expire_cookie(response: Response) -> Response:
+        if getattr(g, "shared_report_cookie_replaced_for_client", None) != client.id:
+            response.delete_cookie(
+                shared_report_cookie_name(client),
+                secure=bool(current_app.config["SESSION_COOKIE_SECURE"]),
+                httponly=True,
+                samesite="Lax",
+                path=SHARED_REPORT_COOKIE_PATH,
+            )
+        return response
 
 
 def shared_report_access_allowed(client: Client) -> bool:
     """Validate the isolated signed cookie for one client report."""
     return shared_report_cookie_allowed(client)
+
+
+def shared_report_request_allowed(client: Client) -> bool:
+    """Audit and expire a previously valid report authorization once."""
+    validation = validate_shared_report_cookie(client)
+    if validation.invalidation_reason is None:
+        return validation.allowed
+    fields: dict[str, Any] = {
+        "client_id": client.id,
+        "source_ip": request.remote_addr,
+        "reason": validation.invalidation_reason,
+    }
+    for field in (
+        "previous_version",
+        "current_version",
+        "previous_report_version",
+        "current_report_version",
+    ):
+        value = getattr(validation, field)
+        if value is not None:
+            fields[field] = value
+    audit("shared_report_session_invalidated", **fields)
+    schedule_shared_report_cookie_expiration(client)
+    return False
 
 
 def get_shared_report_client(token: str) -> Client:
@@ -3576,6 +3705,7 @@ def change_password() -> Any:
         user.password_hash = hash_password(new_password)
         user.password_change_required = False
         user.session_version += 1
+        set_session_invalidation_notice(user, "password_changed")
         get_session().commit()
         audit(
             "password_changed",
@@ -3583,6 +3713,7 @@ def change_password() -> Any:
             source_ip=request.remote_addr,
             sessions_invalidated=True,
         )
+        audit_session_invalidation(user, reason="password_changed")
         session.clear()
         flash("Password changed successfully. Please sign in again.", "success")
         return redirect(url_for("main.login"))
@@ -3650,6 +3781,7 @@ def confirm_totp() -> Any:
     user.pending_totp_secret = None
     session.pop(TOTP_SETUP_EXPIRES_AT_SESSION_KEY, None)
     user.session_version += 1
+    set_session_invalidation_notice(user, "totp_enabled")
     get_session().commit()
     audit(
         "totp_enabled",
@@ -3657,6 +3789,7 @@ def confirm_totp() -> Any:
         source_ip=request.remote_addr,
         sessions_invalidated=True,
     )
+    audit_session_invalidation(user, reason="totp_enabled")
     session.clear()
     flash(
         "Two-factor authentication has been enabled. Please sign in again.", "success"
@@ -3680,6 +3813,7 @@ def disable_totp() -> Any:
     user.pending_totp_secret = None
     reset_totp_replay_state(get_session(), user.id)
     user.session_version += 1
+    set_session_invalidation_notice(user, "totp_disabled")
     get_session().commit()
     audit(
         "totp_disabled",
@@ -3688,6 +3822,7 @@ def disable_totp() -> Any:
         sessions_invalidated=True,
     )
     consume_sensitive_action_authorization()
+    audit_session_invalidation(user, reason="totp_disabled")
     session.clear()
     flash(
         "Two-factor authentication has been disabled. Please sign in again.", "success"
@@ -4287,7 +4422,7 @@ def live_report_response(
 @main.route("/shared/reports/<token>", methods=["GET", "POST"])
 def shared_report(token: str) -> Any:
     client_item = get_shared_report_client(token)
-    if not shared_report_access_allowed(client_item):
+    if not shared_report_request_allowed(client_item):
         if request.method != "POST":
             return render_template("shared_report_login.html", client=client_item)
         ip = request.remote_addr or "unknown"
@@ -4347,7 +4482,7 @@ def shared_report(token: str) -> Any:
 @main.get("/shared/reports/<token>/live")
 def shared_report_live(token: str) -> Any:
     client_item = get_shared_report_client(token)
-    if not shared_report_access_allowed(client_item):
+    if not shared_report_request_allowed(client_item):
         return redirect(url_for("main.shared_report", token=token))
     report = build_client_report(
         get_session(), client_item, cast(str, current_app.config["DISPLAY_TIMEZONE"])

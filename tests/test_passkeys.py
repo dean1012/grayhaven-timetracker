@@ -841,6 +841,15 @@ class PasskeyRouteTests(AppTestCase):
             self.assertNotIn("passkey_count", details)
         invalidated = target_client.get("/clients/new")
         self.assertIn("auth_notice=passkeys_wiped", invalidated.location)
+        with session_scope(self.app) as database:
+            lifecycle = database.scalar(
+                select(AuditEvent).where(
+                    AuditEvent.event == "session_invalidated",
+                    AuditEvent.actor_user_id == target.id,
+                )
+            )
+            assert lifecycle is not None
+            self.assertEqual(lifecycle.details["reason"], "passkeys_wiped")
 
     def test_admin_wipe_rejects_self_and_skips_empty_accounts(self) -> None:
         self.seed_passkey()
