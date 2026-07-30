@@ -704,6 +704,13 @@ class SecurityAndErrorRouteTests(AppTestCase):
                     markdown_path.read_text(encoding="utf-8"),
                 )
 
+    def test_compose_uses_stable_local_image_name(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        compose = (project_root / "compose.yml").read_text(encoding="utf-8")
+
+        self.assertEqual(compose.count("image: grayhaven-timetracker:local"), 1)
+        self.assertNotIn("grayhaven-timetracker-timetracker", compose)
+
     def test_security_headers_cache_policy_health_and_errors(self) -> None:
         response = self.client.get("/login", base_url="https://example.invalid")
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")

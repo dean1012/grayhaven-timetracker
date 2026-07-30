@@ -1,5 +1,6 @@
 services:
   timetracker:
+    image: grayhaven-timetracker:local
     build:
       context: .
       args:
