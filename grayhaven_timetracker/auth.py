@@ -33,6 +33,7 @@ TEMPORARY_PASSWORD_LENGTH = 40
 TEMPORARY_PASSWORD_SPECIALS = "!#$%&*+-=?@^_"  # noqa: S105
 TOTP_REPLAY_KEY_PREFIX = "totp_last_counter:"
 SESSION_NOTICE_KEY_PREFIX = "session_invalidation_notice:"
+AUTHENTICATED_APP_VERSION_SESSION_KEY = "authenticated_app_version"
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 password_hasher = PasswordHasher(
     time_cost=3,
@@ -227,6 +228,13 @@ def load_current_user() -> None:
         return
     user_id = session.get("user_id")
     if not isinstance(user_id, int):
+        g.current_user = None
+        return
+    if (
+        session.get(AUTHENTICATED_APP_VERSION_SESSION_KEY)
+        != current_app.config["APP_VERSION"]
+    ):
+        session.clear()
         g.current_user = None
         return
     authenticated_at = session.get("authenticated_at")

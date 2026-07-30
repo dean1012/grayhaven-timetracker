@@ -22,6 +22,7 @@ from werkzeug.exceptions import Conflict, Forbidden
 from grayhaven_timetracker import routes
 from grayhaven_timetracker.audit import record_audit_event
 from grayhaven_timetracker.auth import (
+    AUTHENTICATED_APP_VERSION_SESSION_KEY,
     LoginLimiter,
     reset_totp_replay_state,
     set_session_invalidation_notice,
@@ -91,6 +92,66 @@ class AuthenticationRouteTests(AppTestCase):
                 response = client.get("/")
                 self.assertEqual(response.status_code, 302)
                 self.assertTrue(response.location.startswith("/login"))
+
+    def test_authenticated_sessions_are_bound_to_app_version(self) -> None:
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.totp_secret = None
+            reset_totp_replay_state(database, admin.id)
+
+        original_version = self.app.config["APP_VERSION"]
+        current = self.app.test_client()
+        self.login(current, totp_secret="")
+        with current.session_transaction() as authenticated_session:
+            self.assertEqual(
+                authenticated_session[AUTHENTICATED_APP_VERSION_SESSION_KEY],
+                original_version,
+            )
+        self.assertEqual(current.get("/profile").status_code, 200)
+
+        self.app.config["APP_VERSION"] = "next-build"
+        changed = current.get("/profile")
+        self.assertEqual(changed.status_code, 302)
+        self.assertEqual(changed.location, "/login?next=/profile")
+        with current.session_transaction() as invalidated_session:
+            self.assertNotIn("user_id", invalidated_session)
+            self.assertNotIn(AUTHENTICATED_APP_VERSION_SESSION_KEY, invalidated_session)
+
+        self.app.config["APP_VERSION"] = original_version
+        legacy = self.app.test_client()
+        self.login(legacy, totp_secret="")
+        with legacy.session_transaction() as legacy_session:
+            legacy_session.pop(AUTHENTICATED_APP_VERSION_SESSION_KEY)
+        rejected_legacy = legacy.get("/profile")
+        self.assertEqual(rejected_legacy.status_code, 302)
+        self.assertEqual(rejected_legacy.location, "/login?next=/profile")
+
+        anonymous = self.app.test_client()
+        self.assertEqual(anonymous.get("/login").status_code, 200)
+        self.assertEqual(anonymous.get("/health").status_code, 200)
+
+    def test_live_refresh_observes_app_version_session_boundary(self) -> None:
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.totp_secret = None
+            reset_totp_replay_state(database, admin.id)
+
+        self.login(totp_secret="")
+        self.app.config["APP_VERSION"] = "next-build"
+        response = self.client.get(
+            "/profile",
+            headers={"X-Grayhaven-Live-Refresh": "1"},
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.history), 1)
+        self.assertEqual(response.history[0].status_code, 302)
+        self.assertEqual(response.history[0].location, "/login?next=/profile")
+        self.assertEqual(response.request.path, "/login")
+        self.assertIn(b"Sign In", response.data)
+        self.assertIn(b"Build next-build", response.data)
 
     def test_session_invalidation_notices_cover_disabled_password_and_privilege_changes(
         self,
@@ -2944,6 +3005,7 @@ class ReportAndSessionRouteTests(AppTestCase):
 
     def test_live_client_report_is_permanent_and_admin_shared(self) -> None:
         self.login()
+        original_version = self.app.config["APP_VERSION"]
         self.app.config["PUBLIC_BASE_URL"] = "https://time.example.invalid"
         with session_scope(self.app) as database:
             client = database.get(Client, self.seed.client_id)
@@ -3058,6 +3120,55 @@ class ReportAndSessionRouteTests(AppTestCase):
             ).status_code,
             304,
         )
+
+        self.app.config["APP_VERSION"] = "next-build"
+        version_rejected = anonymous.get(f"/shared/reports/{token}")
+        self.assertEqual(version_rejected.status_code, 200)
+        self.assertIn(b"CLIENT REPORT ACCESS", version_rejected.data)
+        self.assertNotIn(b"Live Client Report", version_rejected.data)
+        version_live = anonymous.get(f"/shared/reports/{token}/live")
+        self.assertEqual(version_live.status_code, 302)
+        self.assertEqual(version_live.location, f"/shared/reports/{token}")
+        followed_version_live = anonymous.get(
+            f"/shared/reports/{token}/live", follow_redirects=True
+        )
+        self.assertEqual(len(followed_version_live.history), 1)
+        self.assertEqual(
+            followed_version_live.history[0].location, f"/shared/reports/{token}"
+        )
+        self.assertEqual(followed_version_live.request.path, f"/shared/reports/{token}")
+        self.assertIn(b"CLIENT REPORT ACCESS", followed_version_live.data)
+        self.assertIn(b"?v=next-build", followed_version_live.data)
+
+        with self.app.test_request_context("/"):
+            legacy_value = routes.shared_report_serializer().dumps(
+                {
+                    "client_id": client.id,
+                    "password_version": client.report_password_version,
+                }
+            )
+        legacy = self.app.test_client()
+        legacy.set_cookie(
+            routes.shared_report_cookie_name(client),
+            legacy_value,
+            path=routes.SHARED_REPORT_COOKIE_PATH,
+        )
+        legacy_prompt = legacy.get(f"/shared/reports/{token}")
+        self.assertEqual(legacy_prompt.status_code, 200)
+        self.assertIn(b"CLIENT REPORT ACCESS", legacy_prompt.data)
+        legacy_live = legacy.get(f"/shared/reports/{token}/live")
+        self.assertEqual(legacy_live.status_code, 302)
+        self.assertEqual(legacy_live.location, f"/shared/reports/{token}")
+
+        renewed = anonymous.post(
+            f"/shared/reports/{token}", data={"report_password": report_password}
+        )
+        self.assertEqual(renewed.status_code, 302)
+        self.assertEqual(renewed.location, f"/shared/reports/{token}")
+        self.assertIn(
+            b"Live Client Report", anonymous.get(f"/shared/reports/{token}").data
+        )
+        self.app.config["APP_VERSION"] = original_version
         self.assertEqual(
             self.client.post(f"/clients/{self.seed.client_id}/report-link").status_code,
             404,
@@ -3524,6 +3635,21 @@ class ReportAndSessionRouteTests(AppTestCase):
             cookie = response.headers["Set-Cookie"].split(";", 1)[0]
         with self.app.test_request_context("/", headers={"Cookie": cookie}):
             self.assertTrue(routes.shared_report_cookie_allowed(client))
+        original_version = self.app.config["APP_VERSION"]
+        self.app.config["APP_VERSION"] = "next-build"
+        with self.app.test_request_context("/", headers={"Cookie": cookie}):
+            self.assertFalse(routes.shared_report_cookie_allowed(client))
+        self.app.config["APP_VERSION"] = original_version
+        with self.app.test_request_context("/"):
+            legacy_value = routes.shared_report_serializer().dumps(
+                {
+                    "client_id": client.id,
+                    "password_version": client.report_password_version,
+                }
+            )
+        legacy_cookie = f"{routes.shared_report_cookie_name(client)}={legacy_value}"
+        with self.app.test_request_context("/", headers={"Cookie": legacy_cookie}):
+            self.assertFalse(routes.shared_report_cookie_allowed(client))
         with self.app.test_request_context(
             "/", headers={"Cookie": f"{cookie}tampered"}
         ):

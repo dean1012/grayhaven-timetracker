@@ -45,6 +45,7 @@ from webauthn.helpers.exceptions import WebAuthnException
 
 from .audit import record_audit_event
 from .auth import (
+    AUTHENTICATED_APP_VERSION_SESSION_KEY,
     LoginLimiter,
     consume_totp,
     current_user,
@@ -349,6 +350,7 @@ def set_shared_report_cookie(response: Response, client: Client) -> Response:
     """Attach a signed report-only authorization cookie to a response."""
     value = shared_report_serializer().dumps(
         {
+            "app_version": current_app.config["APP_VERSION"],
             "client_id": client.id,
             "password_version": client.report_password_version,
         }
@@ -379,6 +381,7 @@ def shared_report_cookie_allowed(client: Client) -> bool:
         return False
     return bool(
         isinstance(payload, dict)
+        and payload.get("app_version") == current_app.config["APP_VERSION"]
         and payload.get("client_id") == client.id
         and payload.get("password_version") == client.report_password_version
     )
@@ -1152,6 +1155,7 @@ def establish_login(
     session.clear()
     session.permanent = True
     session["authenticated_at"] = now_utc_timestamp()
+    session[AUTHENTICATED_APP_VERSION_SESSION_KEY] = current_app.config["APP_VERSION"]
     session["user_id"] = user.id
     session["session_version"] = user.session_version
     session["user_role"] = user.role
