@@ -188,10 +188,9 @@ def installed_schema_version(connection: Any) -> int | None:
     ).scalar_one_or_none()
     if value is None:
         raise DatabaseError("Database schema version marker is missing")
-    try:
-        return int(value)
-    except (TypeError, ValueError) as exc:
-        raise DatabaseError("Database schema version marker is invalid") from exc
+    if not isinstance(value, int):
+        raise DatabaseError("Database schema version marker is invalid")
+    return value
 
 
 def migrate_database(engine: Engine, installed_version: int) -> None:

@@ -775,8 +775,11 @@ To remove one of your passkeys:
 3. Select **Remove** beside the intended passkey and confirm the action.
 4. Confirm that the passkey no longer appears in the registered list.
 
-If a browser starts a passkey prompt unexpectedly, cancel the browser prompt
-and select **Cancel Passkey**. The password and TOTP form remains available.
+If a browser starts a passkey prompt automatically during login or a
+sensitive action, cancel the browser prompt itself; these flows do not provide
+an in-page **Cancel Passkey** control. The password and TOTP form remains
+available as a fallback. The explicit **Cancel Passkey** control applies to
+passkey enrollment only.
 If a passkey is lost, sign in with the account password and TOTP enrollment,
 then remove the lost credential. If password or TOTP access is unavailable but
 a registered passkey remains, use that passkey to sign in and authorize the

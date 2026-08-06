@@ -474,6 +474,54 @@ class DatabaseAndModelTests(AppTestCase):
                 2,
             )
 
+    def test_non_integral_schema_marker_fails_closed_before_migration(self) -> None:
+        engine = self.app.extensions["database_engine"]
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE webauthn_challenge"))
+            connection.execute(text("DROP TABLE passkey_credential"))
+            connection.execute(text("DROP TABLE passkey_identity"))
+            connection.execute(
+                text(
+                    "UPDATE user_account SET first_name = 'Schema Sentinel' "
+                    "WHERE email = :email"
+                ),
+                {"email": ADMIN_EMAIL},
+            )
+            connection.execute(
+                text("UPDATE schema_version SET version = 2.5 WHERE id = 1")
+            )
+        with self.assertRaisesRegex(DatabaseError, "marker is invalid"):
+            initialize_database(engine)
+        with engine.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    text("SELECT version FROM schema_version WHERE id = 1")
+                ).scalar_one(),
+                2.5,
+            )
+            self.assertEqual(
+                connection.execute(
+                    text("SELECT first_name FROM user_account WHERE email = :email"),
+                    {"email": ADMIN_EMAIL},
+                ).scalar_one(),
+                "Schema Sentinel",
+            )
+            for table in (
+                "webauthn_challenge",
+                "passkey_credential",
+                "passkey_identity",
+            ):
+                with self.subTest(table=table):
+                    self.assertIsNone(
+                        connection.execute(
+                            text(
+                                "SELECT 1 FROM sqlite_master "
+                                "WHERE type = 'table' AND name = :table"
+                            ),
+                            {"table": table},
+                        ).scalar_one_or_none()
+                    )
+
     def test_migration_database_error_is_re_raised_unchanged_and_rolled_back(
         self,
     ) -> None:
