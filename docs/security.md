@@ -17,7 +17,8 @@ is suitable for an arbitrary environment.
 
 ## Protected Assets
 
-- Password hashes, TOTP secrets, and authenticated sessions.
+- Password hashes, TOTP secrets, passkey public credentials, and authenticated
+  sessions.
 - Client, contract, task, rate, time, and billing data.
 - Permanent shared-report tokens, password hashes, and report sessions.
 - Append-only audit records and structured operational logs.
@@ -58,7 +59,14 @@ authenticated application sessions.
   change. Administrator-assisted TOTP disablement requires recent
   reauthentication.
 - Sensitive administrator actions require the administrator's current password
-  and a new TOTP code.
+  and a new TOTP code, or a verified passkey with user verification.
+- Passkeys are optional and never replace password/TOTP recovery. WebAuthn uses
+  only the explicitly configured RP ID and exact expected origin. Registration,
+  authentication, removal, rejection, and wipe-all events omit credential
+  identifiers, public keys, challenges, and authenticator responses.
+- WebAuthn challenges are random, server-side, browser-session-bound,
+  single-use, and expire after five minutes. Authentication updates signature
+  counters and retained device/backup state.
 - Session cookies are HTTP-only, SameSite Lax, host-only, and fixed-lifetime.
   External deployments must enable Secure cookies.
 - State-changing browser requests use POST and CSRF protection. The same-origin
@@ -68,6 +76,13 @@ authenticated application sessions.
   server.
 - Browser Host values use an explicit allowlist. A configured public origin
   must be HTTPS and match that allowlist.
+- Passkey credential creation/get are limited to the same origin by browser
+  policy. The normal login page offers discoverable passkeys through quiet
+  conditional autofill when the browser supports it; cancellation or
+  unavailability leaves password/TOTP sign-in untouched. Enrollment retains
+  explicit passkey controls. Sensitive-action reauthentication starts passkey
+  authorization automatically and quietly; canceling that browser prompt
+  leaves the password/TOTP fallback available.
 - SQLCipher encrypts database pages and connections enable defensive SQLite
   settings, secure deletion, foreign keys, and integrity checks.
 - Database constraints protect timer uniqueness, work assignment integrity,

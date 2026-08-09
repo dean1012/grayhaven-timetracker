@@ -10,10 +10,9 @@ Grayhaven Systems LLC.
 This is a real internal tool published for transparency and as an operational
 example. The repository contains the application source but excludes
 Grayhaven Systems LLC branding, secrets, private data, and
-deployment-specific configuration. It is
-not a turnkey time-tracking platform. Another organization would need to adapt
-the branding, deployment integration, security model, and operating procedures
-for its own environment.
+deployment-specific configuration. It is not a turnkey time-tracking platform.
+Another organization would need to adapt the branding, deployment integration,
+security model, and operating procedures for its own environment.
 
 ## Table of Contents
 
@@ -27,8 +26,8 @@ for its own environment.
 
 The application provides:
 
-- Role-based administration and user access with TOTP multi-factor
-  authentication.
+- Role-based administration and user access with password/TOTP authentication
+  and optional passkeys.
 - Clients, contracts, tasks, and optional subtasks.
 - One active timer per user, manual time entries, and administrative time
   reassignment.

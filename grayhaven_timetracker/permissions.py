@@ -116,6 +116,7 @@ def permission_required(permission: str) -> Callable[[Callable[P, R]], Callable[
                     "account_disabled",
                     "password_reset",
                     "totp_disabled",
+                    "passkeys_wiped",
                 }:
                     login_values["auth_notice"] = session["auth_notice"]
                 return cast(R, redirect(url_for("main.login", **login_values)))

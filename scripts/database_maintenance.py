@@ -11,6 +11,7 @@ import tempfile
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from sqlcipher3 import dbapi2 as sqlcipher
 
@@ -181,19 +182,17 @@ def create_backup(database: Path, key_file: Path, output: Path) -> None:
     source = None
     destination = None
     try:
-        source = connect_sqlcipher(database, passphrase)
-        destination = connect_sqlcipher(temporary, passphrase)
         try:
+            source = connect_sqlcipher(database, passphrase)
+            destination = connect_sqlcipher(temporary, passphrase)
             destination.execute("PRAGMA journal_mode = DELETE").fetchone()
             source.backup(destination)
             destination.commit()
             if destination.execute("PRAGMA cipher_integrity_check").fetchall():
                 raise DatabaseError("Encrypted backup failed integrity validation")
         finally:
-            if destination is not None:
-                destination.close()
-            if source is not None:
-                source.close()
+            close_connection(destination)
+            close_connection(source)
 
         verify_database(temporary, key_file)
         temporary_connection = connect_sqlcipher(temporary, passphrase)
@@ -207,6 +206,12 @@ def create_backup(database: Path, key_file: Path, output: Path) -> None:
         os.chmod(output, 0o600)
     finally:
         discard_database_file(temporary)
+
+
+def close_connection(connection: Any | None) -> None:
+    """Close one partially initialized maintenance connection when present."""
+    if connection is not None:
+        connection.close()
 
 
 # ---------------------------------------------------------------------------

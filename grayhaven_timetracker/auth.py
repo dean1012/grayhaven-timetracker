@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
+import math
 import re
 import secrets
 import string
@@ -12,6 +14,7 @@ import time
 import unicodedata
 from collections import OrderedDict, deque
 from collections.abc import Callable
+from contextlib import suppress
 from functools import wraps
 from typing import ParamSpec, TypeVar, cast
 from urllib.parse import unquote, urlsplit
@@ -24,6 +27,7 @@ from flask import current_app, g, redirect, request, session, url_for
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from .audit import record_audit_event
 from .database import get_session
 from .models import ApplicationMetadata, User
 
@@ -33,6 +37,16 @@ TEMPORARY_PASSWORD_LENGTH = 40
 TEMPORARY_PASSWORD_SPECIALS = "!#$%&*+-=?@^_"  # noqa: S105
 TOTP_REPLAY_KEY_PREFIX = "totp_last_counter:"
 SESSION_NOTICE_KEY_PREFIX = "session_invalidation_notice:"
+AUTHENTICATED_APP_VERSION_SESSION_KEY = "authenticated_app_version"
+SESSION_INVALIDATION_NOTICE_REASONS = frozenset(
+    {
+        "passkeys_wiped",
+        "password_changed",
+        "password_reset",
+        "totp_disabled",
+        "totp_enabled",
+    }
+)
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 password_hasher = PasswordHasher(
     time_cost=3,
@@ -42,6 +56,7 @@ password_hasher = PasswordHasher(
     salt_len=16,
     type=Type.ID,
 )
+logger = logging.getLogger("grayhaven_timetracker.audit")
 dummy_password_hash = password_hasher.hash(secrets.token_urlsafe(48))
 
 P = ParamSpec("P")
@@ -221,6 +236,54 @@ def set_session_invalidation_notice(user: User, notice: str) -> None:
         item.value = notice
 
 
+def audit_session_invalidation(
+    user: User | None,
+    *,
+    reason: str,
+    user_id: int | None = None,
+    previous_version: str | None = None,
+    current_version: str | None = None,
+) -> None:
+    """Best-effort audit one established employee session termination."""
+    database: Session | None = None
+    try:
+        database = get_session()
+        details: dict[str, object] = {
+            "reason": reason,
+            "request_source": "Web Application",
+        }
+        if previous_version is not None:
+            details["previous_version"] = previous_version
+        if current_version is not None:
+            details["current_version"] = current_version
+        if user is None and user_id is not None:
+            details["user_id"] = user_id
+        stored_role = session.get("user_role")
+        record_audit_event(
+            database,
+            "session_invalidated",
+            source=(
+                user.role
+                if user is not None
+                else stored_role
+                if stored_role in {"admin", "user"}
+                else "system"
+            ),
+            actor=user,
+            ip_address=request.remote_addr,
+            details=details,
+        )
+        database.commit()
+    except Exception:
+        if database is not None:
+            with suppress(Exception):
+                database.rollback()
+        logger.exception(
+            "audit persistence failed",
+            extra={"event": "audit_persistence_failed"},
+        )
+
+
 def load_current_user() -> None:
     if request.endpoint in {"main.shared_report", "main.shared_report_live"}:
         g.current_user = None
@@ -229,6 +292,15 @@ def load_current_user() -> None:
     if not isinstance(user_id, int):
         g.current_user = None
         return
+    established_session = any(
+        key in session
+        for key in (
+            "authenticated_at",
+            AUTHENTICATED_APP_VERSION_SESSION_KEY,
+            "session_version",
+            "user_role",
+        )
+    )
     authenticated_at = session.get("authenticated_at")
     now = now_utc_timestamp()
     maximum_age = current_app.permanent_session_lifetime.total_seconds()
@@ -246,14 +318,37 @@ def load_current_user() -> None:
         and session.get("user_role") != user.role
     )
     account_disabled = user is not None and not user.is_enabled
-    if (
-        user is None
-        or not user.is_enabled
-        or not isinstance(authenticated_at, (int, float))
-        or authenticated_at > now + 60
-        or now - authenticated_at > maximum_age
-        or session.get("session_version") != user.session_version
+    invalidation_reason = None
+    if user is None:
+        invalidation_reason = "user_missing"
+    elif account_disabled:
+        invalidation_reason = "account_disabled"
+    elif "authenticated_at" not in session:
+        invalidation_reason = "authenticated_at_missing"
+    elif (
+        not isinstance(authenticated_at, (int, float))
+        or isinstance(authenticated_at, bool)
+        or not math.isfinite(authenticated_at)
     ):
+        invalidation_reason = "authenticated_at_invalid"
+    elif authenticated_at > now + 60:
+        invalidation_reason = "authenticated_at_future"
+    elif now - authenticated_at > maximum_age:
+        invalidation_reason = "absolute_session_expired"
+    elif session.get("session_version") != user.session_version:
+        if privileges_updated:
+            invalidation_reason = "privileges_updated"
+        elif invalidation_notice in SESSION_INVALIDATION_NOTICE_REASONS:
+            invalidation_reason = invalidation_notice
+        else:
+            invalidation_reason = "session_version_changed"
+    if invalidation_reason is not None:
+        if established_session:
+            audit_session_invalidation(
+                user,
+                reason=invalidation_reason,
+                user_id=user_id,
+            )
         session.clear()
         if account_disabled:
             session["auth_notice"] = "account_disabled"
@@ -261,6 +356,33 @@ def load_current_user() -> None:
             session["auth_notice"] = invalidation_notice
         elif privileges_updated:
             session["auth_notice"] = "privileges_updated"
+        g.current_user = None
+        return
+    current_version = cast(str, current_app.config["APP_VERSION"])
+    marker_present = AUTHENTICATED_APP_VERSION_SESSION_KEY in session
+    previous_version = session.get(AUTHENTICATED_APP_VERSION_SESSION_KEY)
+    if not marker_present or previous_version != current_version:
+        audit_session_invalidation(
+            user,
+            reason=(
+                "application_version_marker_missing"
+                if not marker_present
+                else (
+                    "application_version_changed"
+                    if isinstance(previous_version, str)
+                    else "application_version_marker_invalid"
+                )
+            ),
+            previous_version=(
+                previous_version
+                if isinstance(previous_version, str)
+                else "missing"
+                if not marker_present
+                else "invalid"
+            ),
+            current_version=current_version,
+        )
+        session.clear()
         g.current_user = None
         return
     g.current_user = user
