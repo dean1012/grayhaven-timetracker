@@ -14,6 +14,7 @@ Run these procedures on the managed web host unless a step says otherwise.
 
 - [Check Service Health](#check-service-health)
 - [Manage the Service](#manage-the-service)
+- [Verify a Database Schema Upgrade](#verify-a-database-schema-upgrade)
 - [Create a Backup](#create-a-backup)
 - [Verify a Local Backup](#verify-a-local-backup)
 - [Test Backup and Restore with grayhaven-backupctl](#test-backup-and-restore-with-grayhaven-backupctl)
@@ -21,6 +22,7 @@ Run these procedures on the managed web host unless a step says otherwise.
 - [Restore a Backup from Restic](#restore-a-backup-from-restic)
 - [Rotate the SQLCipher Passphrase](#rotate-the-sqlcipher-passphrase)
 - [Provision and Recover Users](#provision-and-recover-users)
+- [Manage and Recover Passkeys](#manage-and-recover-passkeys)
 - [Correct Contract and Billing Records](#correct-contract-and-billing-records)
 - [Manage Shared Client Reports](#manage-shared-client-reports)
 - [Change the Timezone](#change-the-timezone)
@@ -94,6 +96,99 @@ Restart the application without changing its deployed configuration:
 sudo systemctl restart grayhaven-timetracker.service
 sudo systemctl is-active grayhaven-timetracker.service
 ```
+
+[Back to top](#operations)
+
+## Verify a Database Schema Upgrade
+
+The application applies supported schema migrations during normal startup.
+Image selection and deployment remain controlled by the managed configuration
+system; this procedure verifies the application-specific database result.
+
+1. Before deployment, record the current image digest and schema version.
+
+   ```bash
+   sudo podman container inspect \
+     --format '{{.ImageName}} {{.ImageDigest}}' \
+     grayhaven-timetracker
+   sudo podman exec -i grayhaven-timetracker python - <<'PY'
+   from pathlib import Path
+
+   from grayhaven_timetracker.database import connect_sqlcipher
+
+   key = Path("/run/secrets/sqlcipher_passphrase").read_text().rstrip("\r\n")
+   connection = connect_sqlcipher(
+       Path("/app/data/timetracker.sqlite3"), key
+   )
+   try:
+       row = connection.execute(
+           "SELECT version FROM schema_version WHERE id = 1"
+       ).fetchone()
+       if row is None:
+           raise SystemExit("Schema version marker is missing")
+       print(row[0])
+   finally:
+       connection.close()
+   PY
+   ```
+
+2. Create and verify a current encrypted recovery artifact by following
+   [Create a Backup](#create-a-backup) and
+   [Verify a Local Backup](#verify-a-local-backup). Preserve its checksum,
+   image digest, schema version, and SQLCipher key version for the complete
+   rollback window.
+
+3. After the managed deployment completes, confirm the service, target image,
+   application health, and new schema version.
+
+   ```bash
+   TIMETRACKER_HOST="<configured-hostname>"
+   sudo systemctl is-active --quiet grayhaven-timetracker.service
+   sudo podman container inspect \
+     --format '{{.ImageName}} {{.ImageDigest}}' \
+     grayhaven-timetracker
+   curl --fail --silent --show-error \
+     --header "Host: ${TIMETRACKER_HOST}" \
+     http://127.0.0.1:8000/health
+   sudo podman exec -i grayhaven-timetracker python - <<'PY'
+   from pathlib import Path
+
+   from grayhaven_timetracker.database import connect_sqlcipher
+
+   key = Path("/run/secrets/sqlcipher_passphrase").read_text().rstrip("\r\n")
+   connection = connect_sqlcipher(
+       Path("/app/data/timetracker.sqlite3"), key
+   )
+   try:
+       row = connection.execute(
+           "SELECT version FROM schema_version WHERE id = 1"
+       ).fetchone()
+       if row is None:
+           raise SystemExit("Schema version marker is missing")
+       print(row[0])
+   finally:
+       connection.close()
+   PY
+   ```
+
+4. Sign in and verify existing users, representative work records, billing
+   metadata, reports, shared-report access, and audit history. Complete one
+   controlled write and confirm its audit event.
+
+5. Restart the same image and prove startup is idempotent.
+
+   ```bash
+   sudo systemctl restart grayhaven-timetracker.service
+   sudo systemctl is-active --quiet grayhaven-timetracker.service
+   curl --fail --silent --show-error \
+     --header "Host: ${TIMETRACKER_HOST}" \
+     http://127.0.0.1:8000/health
+   ```
+
+If migration fails, keep the service stopped and review its logs. Do not
+repeatedly restart it. A migration transaction retains the prior schema when it
+fails, while successful migration may require restoring the recorded
+pre-upgrade artifact before an older image can run.
 
 [Back to top](#operations)
 
@@ -655,6 +750,53 @@ To recover an account whose user also lost TOTP access:
 
 Deliver passwords and TOTP provisioning information through separate approved
 channels. The application has no email recovery flow.
+
+[Back to top](#operations)
+
+## Manage and Recover Passkeys
+
+Passkeys are optional. Password and TOTP authentication remain available as a
+fallback and cannot be disabled.
+
+To register a passkey:
+
+1. Sign in and open **Profile**.
+2. Select **Manage Passkeys**.
+3. Reauthenticate with the current password and TOTP code, or use an existing
+   passkey.
+4. Enter a name that identifies the device or credential provider.
+5. Select **Add Passkey** and complete the browser or operating-system prompt.
+6. Confirm that the named passkey appears under **Registered Passkeys**.
+
+To remove one of your passkeys:
+
+1. Open **Profile** and select **Manage Passkeys**.
+2. Reauthenticate when prompted.
+3. Select **Remove** beside the intended passkey and confirm the action.
+4. Confirm that the passkey no longer appears in the registered list.
+
+If a browser starts a passkey prompt automatically during login or a
+sensitive action, cancel the browser prompt itself; these flows do not provide
+an in-page **Cancel Passkey** control. The password and TOTP form remains
+available as a fallback. The explicit **Cancel Passkey** control applies to
+passkey enrollment only.
+If a passkey is lost, sign in with the account password and TOTP enrollment,
+then remove the lost credential. If password or TOTP access is unavailable but
+a registered passkey remains, use that passkey to sign in and authorize the
+corresponding profile recovery action.
+
+To remove every passkey from another user's account:
+
+1. Sign in as an administrator and open **Users**.
+2. Select **Wipe All Passkeys** for the affected account.
+3. Reauthenticate with password and TOTP or a passkey.
+4. Confirm the destructive action.
+5. Verify that the account reports **Not Configured** under **Passkeys**.
+
+Wiping all passkeys invalidates every existing session for the affected user.
+If the user has lost all authentication factors, reset the password, disable
+TOTP, and wipe the passkeys through the separate administrator controls, then
+deliver the temporary password through the approved recovery channel.
 
 [Back to top](#operations)
 

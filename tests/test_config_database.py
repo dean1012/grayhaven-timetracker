@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from datetime import date, datetime
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pyotp
@@ -32,6 +32,7 @@ from grayhaven_timetracker.config import (
     validate_public_base_url,
     validate_public_deployment,
     validate_timezone,
+    validate_webauthn_config,
 )
 from grayhaven_timetracker.database import (
     CURRENT_SCHEMA_VERSION,
@@ -39,6 +40,7 @@ from grayhaven_timetracker.database import (
     connect_sqlcipher,
     database_is_encrypted,
     dispose_app_database,
+    initialize_database,
     rollback_request_session,
     session_scope,
     sql_literal,
@@ -47,6 +49,8 @@ from grayhaven_timetracker.database import (
 from grayhaven_timetracker.models import (
     ApplicationMetadata,
     AuditEvent,
+    PasskeyCredential,
+    PasskeyIdentity,
     SchemaVersion,
     Subtask,
     Task,
@@ -81,6 +85,8 @@ class ConfigurationTests(unittest.TestCase):
             ),
             "SECRET_KEY": "Configuration-test-secret-key-at-least-32!",
             "SQLCIPHER_PASSPHRASE": "Configuration-test-passphrase-at-least-32!",
+            "WEBAUTHN_ORIGIN": "https://time.example.invalid",
+            "WEBAUTHN_RP_ID": "time.example.invalid",
         }
 
     def test_environment_config_reads_values_and_defaults(self) -> None:
@@ -101,6 +107,8 @@ class ConfigurationTests(unittest.TestCase):
         self.assertTrue(config["SESSION_COOKIE_SECURE"])
         self.assertEqual(config["DATABASE_PATH"], "/app/data/timetracker.sqlite3")
         self.assertEqual(config["PUBLIC_BASE_URL"], "https://time.example.invalid")
+        self.assertEqual(config["WEBAUTHN_RP_ID"], "time.example.invalid")
+        self.assertEqual(config["WEBAUTHN_ORIGIN"], "https://time.example.invalid")
         self.assertEqual(
             config["TRUSTED_HOSTS"],
             ["time.example.invalid", ".internal.example.invalid"],
@@ -225,6 +233,21 @@ class ConfigurationTests(unittest.TestCase):
             "https://time.example.invalid", True, [".example.invalid"]
         )
         validate_public_deployment(None, False, None)
+        validate_webauthn_config("localhost", "http://localhost:8000")
+        validate_webauthn_config(
+            "timetracker.staging.grayhavensystems.com",
+            "https://timetracker.staging.grayhavensystems.com",
+        )
+        validate_webauthn_config(
+            "timetracker.grayhavensystems.com",
+            "https://timetracker.grayhavensystems.com",
+        )
+        with self.assertRaises(ConfigurationError):
+            validate_webauthn_config(
+                "time.example.invalid",
+                "https://time.example.invalid",
+                "https://other.example.invalid",
+            )
         with self.assertRaises(ConfigurationError):
             validate_timezone("Not/A-Timezone")
         for url in (
@@ -258,6 +281,36 @@ class ConfigurationTests(unittest.TestCase):
             )
         with self.assertRaises(ConfigurationError):
             validate_public_deployment("https:///", True, [])
+        for rp_id, origin in (
+            (None, None),
+            ("localhost", None),
+            ("https://localhost", "http://localhost:8000"),
+            ("localhost:8000", "http://localhost:8000"),
+            ("LOCALHOST", "http://localhost:8000"),
+            ("127.0.0.1", "https://127.0.0.1"),
+            ("192.0.2.1", "https://192.0.2.1"),
+            ("example", "https://example"),
+            (".example.invalid", "https://.example.invalid"),
+            ("example..invalid", "https://example..invalid"),
+            ("-time.example.invalid", "https://-time.example.invalid"),
+            ("time-.example.invalid", "https://time-.example.invalid"),
+            ("time_tracker.example.invalid", "https://time_tracker.example.invalid"),
+            ("tíme.example.invalid", "https://tíme.example.invalid"),
+            ("localhost", "http://127.0.0.1:8000"),
+            ("localhost", "http://localhost:9000"),
+            ("localhost", "https://localhost"),
+            ("localhost", "http://localhost:8000/"),
+            ("time.example.invalid", "http://time.example.invalid"),
+            ("time.example.invalid", "https://time.example.invalid/path"),
+            ("time.example.invalid", "https://time.example.invalid:8443"),
+            ("time.example.invalid", "https://time.example.invalid:443"),
+            ("time.example.invalid", "https://TIME.example.invalid"),
+        ):
+            with (
+                self.subTest(rp_id=rp_id, origin=origin),
+                self.assertRaises(ConfigurationError),
+            ):
+                validate_webauthn_config(rp_id, origin)
 
     def test_branding_validation_requires_every_runtime_asset(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -345,6 +398,360 @@ class DatabaseAndModelTests(AppTestCase):
             assert marker is not None
             self.assertEqual(marker.version, CURRENT_SCHEMA_VERSION)
 
+    def test_existing_database_requires_a_valid_schema_marker(self) -> None:
+        engine = self.app.extensions["database_engine"]
+        cases = (
+            ("DROP TABLE schema_version", "no schema version marker"),
+            ("DELETE FROM schema_version WHERE id = 1", "marker is missing"),
+            (
+                "UPDATE schema_version SET version = 'not-an-integer' WHERE id = 1",
+                "marker is invalid",
+            ),
+        )
+        for statement, message in cases:
+            with self.subTest(statement=statement), engine.begin() as connection:
+                connection.execute(text(statement))
+            with (
+                self.subTest(statement=statement),
+                self.assertRaisesRegex(DatabaseError, message),
+            ):
+                initialize_database(engine)
+            if statement.startswith("DROP"):
+                with engine.begin() as connection:
+                    connection.execute(
+                        text(
+                            "CREATE TABLE schema_version "
+                            "(id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
+                        )
+                    )
+            with engine.begin() as connection:
+                connection.execute(text("DELETE FROM schema_version"))
+                connection.execute(
+                    text(
+                        "INSERT INTO schema_version (id, version) VALUES (1, :version)"
+                    ),
+                    {"version": CURRENT_SCHEMA_VERSION},
+                )
+
+    def test_migration_registry_and_concurrent_marker_changes_fail_closed(self) -> None:
+        from grayhaven_timetracker import database as database_module
+
+        engine = self.app.extensions["database_engine"]
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE webauthn_challenge"))
+            connection.execute(text("DROP TABLE passkey_credential"))
+            connection.execute(text("DROP TABLE passkey_identity"))
+            connection.execute(
+                text("UPDATE schema_version SET version = 2 WHERE id = 1")
+            )
+        with (
+            patch.dict(database_module.MIGRATIONS, {}, clear=True),
+            self.assertRaisesRegex(DatabaseError, "No database migration"),
+        ):
+            initialize_database(engine)
+        with engine.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    text("SELECT version FROM schema_version WHERE id = 1")
+                ).scalar_one(),
+                2,
+            )
+
+        with (
+            patch.object(
+                database_module,
+                "installed_schema_version",
+                side_effect=(2, CURRENT_SCHEMA_VERSION),
+            ),
+            self.assertRaisesRegex(DatabaseError, "schema changed"),
+        ):
+            initialize_database(engine)
+        with engine.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    text("SELECT version FROM schema_version WHERE id = 1")
+                ).scalar_one(),
+                2,
+            )
+
+    def test_non_integral_schema_marker_fails_closed_before_migration(self) -> None:
+        engine = self.app.extensions["database_engine"]
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE webauthn_challenge"))
+            connection.execute(text("DROP TABLE passkey_credential"))
+            connection.execute(text("DROP TABLE passkey_identity"))
+            connection.execute(
+                text(
+                    "UPDATE user_account SET first_name = 'Schema Sentinel' "
+                    "WHERE email = :email"
+                ),
+                {"email": ADMIN_EMAIL},
+            )
+            connection.execute(
+                text("UPDATE schema_version SET version = 2.5 WHERE id = 1")
+            )
+        with self.assertRaisesRegex(DatabaseError, "marker is invalid"):
+            initialize_database(engine)
+        with engine.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    text("SELECT version FROM schema_version WHERE id = 1")
+                ).scalar_one(),
+                2.5,
+            )
+            self.assertEqual(
+                connection.execute(
+                    text("SELECT first_name FROM user_account WHERE email = :email"),
+                    {"email": ADMIN_EMAIL},
+                ).scalar_one(),
+                "Schema Sentinel",
+            )
+            for table in (
+                "webauthn_challenge",
+                "passkey_credential",
+                "passkey_identity",
+            ):
+                with self.subTest(table=table):
+                    self.assertIsNone(
+                        connection.execute(
+                            text(
+                                "SELECT 1 FROM sqlite_master "
+                                "WHERE type = 'table' AND name = :table"
+                            ),
+                            {"table": table},
+                        ).scalar_one_or_none()
+                    )
+
+    def test_migration_database_error_is_re_raised_unchanged_and_rolled_back(
+        self,
+    ) -> None:
+        from grayhaven_timetracker import database as database_module
+
+        engine = self.app.extensions["database_engine"]
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE webauthn_challenge"))
+            connection.execute(text("DROP TABLE passkey_credential"))
+            connection.execute(text("DROP TABLE passkey_identity"))
+            connection.execute(
+                text("UPDATE schema_version SET version = 2 WHERE id = 1")
+            )
+        expected = DatabaseError("synthetic migration rejection")
+
+        def reject_migration(connection: Any) -> None:
+            connection.execute(text("CREATE TABLE rejected_migration (id INTEGER)"))
+            raise expected
+
+        caught: DatabaseError | None = None
+        try:
+            with patch.dict(database_module.MIGRATIONS, {2: reject_migration}):
+                initialize_database(engine)
+        except DatabaseError as exc:
+            caught = exc
+        self.assertIs(caught, expected)
+        with engine.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    text("SELECT version FROM schema_version WHERE id = 1")
+                ).scalar_one(),
+                2,
+            )
+            self.assertIsNone(
+                connection.execute(
+                    text(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type = 'table' AND name = 'rejected_migration'"
+                    )
+                ).scalar_one_or_none()
+            )
+
+    def test_schema_two_migrates_transactionally_and_idempotently(self) -> None:
+        engine = self.app.extensions["database_engine"]
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE webauthn_challenge"))
+            connection.execute(text("DROP TABLE passkey_credential"))
+            connection.execute(text("DROP TABLE passkey_identity"))
+            connection.execute(
+                text("UPDATE schema_version SET version = 2 WHERE id = 1")
+            )
+        initialize_database(engine)
+        initialize_database(engine)
+        with engine.connect() as connection:
+            challenge_columns = set(
+                connection.execute(
+                    text("SELECT name FROM pragma_table_info('webauthn_challenge')")
+                ).scalars()
+            )
+            self.assertIn("action_context_hash", challenge_columns)
+        with session_scope(self.app) as database:
+            marker = database.get(SchemaVersion, 1)
+            self.assertIsNotNone(marker)
+            assert marker is not None
+            self.assertEqual(marker.version, CURRENT_SCHEMA_VERSION)
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            self.assertIsNotNone(admin)
+            self.assertEqual(database.scalars(select(PasskeyIdentity)).all(), [])
+            self.assertEqual(database.scalars(select(PasskeyCredential)).all(), [])
+
+    def test_failed_migration_retains_prior_schema_marker_and_data(self) -> None:
+        from grayhaven_timetracker import database as database_module
+
+        engine = self.app.extensions["database_engine"]
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE webauthn_challenge"))
+            connection.execute(text("DROP TABLE passkey_credential"))
+            connection.execute(text("DROP TABLE passkey_identity"))
+            connection.execute(
+                text("UPDATE schema_version SET version = 2 WHERE id = 1")
+            )
+
+        def fail_after_write(connection: Any) -> None:
+            connection.execute(
+                text("CREATE TABLE migration_should_rollback (id INTEGER)")
+            )
+            raise RuntimeError("synthetic migration failure")
+
+        with (
+            patch.dict(database_module.MIGRATIONS, {2: fail_after_write}),
+            self.assertRaisesRegex(DatabaseError, "prior schema was retained"),
+        ):
+            initialize_database(engine)
+        with engine.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    text("SELECT version FROM schema_version WHERE id = 1")
+                ).scalar_one(),
+                2,
+            )
+            self.assertIsNone(
+                connection.execute(
+                    text(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type = 'table' AND name = 'migration_should_rollback'"
+                    )
+                ).scalar_one_or_none()
+            )
+
+    def test_schema_two_conflict_rolls_back_all_new_migration_objects(self) -> None:
+        engine = self.app.extensions["database_engine"]
+        with engine.begin() as connection:
+            connection.execute(text("DROP TABLE webauthn_challenge"))
+            connection.execute(text("DROP TABLE passkey_credential"))
+            connection.execute(text("DROP TABLE passkey_identity"))
+            connection.execute(
+                text(
+                    "UPDATE user_account SET first_name = 'Migration Sentinel' "
+                    "WHERE email = :email"
+                ),
+                {"email": ADMIN_EMAIL},
+            )
+            connection.execute(
+                text("CREATE TABLE passkey_credential (id INTEGER PRIMARY KEY)")
+            )
+            connection.execute(
+                text("UPDATE schema_version SET version = 2 WHERE id = 1")
+            )
+        with self.assertRaisesRegex(DatabaseError, "prior schema was retained"):
+            initialize_database(engine)
+        with engine.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    text("SELECT version FROM schema_version WHERE id = 1")
+                ).scalar_one(),
+                2,
+            )
+            self.assertEqual(
+                connection.execute(
+                    text("SELECT first_name FROM user_account WHERE email = :email"),
+                    {"email": ADMIN_EMAIL},
+                ).scalar_one(),
+                "Migration Sentinel",
+            )
+            objects = set(
+                connection.execute(
+                    text(
+                        "SELECT name FROM sqlite_master "
+                        "WHERE name LIKE 'passkey_%' "
+                        "OR name LIKE 'webauthn_%'"
+                    )
+                ).scalars()
+            )
+            self.assertEqual(objects, {"passkey_credential"})
+
+    def test_newer_schema_fails_before_touching_data_or_schema(self) -> None:
+        engine = self.app.extensions["database_engine"]
+        future_version = CURRENT_SCHEMA_VERSION + 1
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE user_account SET first_name = 'Future Sentinel' "
+                    "WHERE email = :email"
+                ),
+                {"email": ADMIN_EMAIL},
+            )
+            connection.execute(
+                text(
+                    "CREATE TABLE future_schema_guard "
+                    "(id INTEGER PRIMARY KEY, value TEXT NOT NULL)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO future_schema_guard (id, value) "
+                    "VALUES (1, 'untouched')"
+                )
+            )
+            connection.execute(
+                text(
+                    "CREATE INDEX future_schema_guard_value "
+                    "ON future_schema_guard (value)"
+                )
+            )
+            connection.execute(
+                text("UPDATE schema_version SET version = :version WHERE id = 1"),
+                {"version": future_version},
+            )
+        with engine.connect() as connection:
+            before_schema = connection.execute(
+                text(
+                    "SELECT type, name, tbl_name, sql FROM sqlite_master "
+                    "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+                )
+            ).all()
+        with self.assertRaisesRegex(
+            DatabaseError,
+            f"Unsupported database schema version {future_version}",
+        ):
+            initialize_database(engine)
+        with engine.connect() as connection:
+            self.assertEqual(
+                connection.execute(
+                    text("SELECT version FROM schema_version WHERE id = 1")
+                ).scalar_one(),
+                future_version,
+            )
+            self.assertEqual(
+                connection.execute(
+                    text("SELECT value FROM future_schema_guard WHERE id = 1")
+                ).scalar_one(),
+                "untouched",
+            )
+            self.assertEqual(
+                connection.execute(
+                    text("SELECT first_name FROM user_account WHERE email = :email"),
+                    {"email": ADMIN_EMAIL},
+                ).scalar_one(),
+                "Future Sentinel",
+            )
+            self.assertEqual(
+                connection.execute(
+                    text(
+                        "SELECT type, name, tbl_name, sql FROM sqlite_master "
+                        "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+                    )
+                ).all(),
+                before_schema,
+            )
+
     def test_database_does_not_reuse_hard_deleted_identifiers(self) -> None:
         seed = self.seed_contract()
         with session_scope(self.app) as database:
@@ -366,10 +773,10 @@ class DatabaseAndModelTests(AppTestCase):
         with session_scope(self.app) as database:
             database.execute(
                 text("UPDATE schema_version SET version = :version WHERE id = 1"),
-                {"version": CURRENT_SCHEMA_VERSION - 1},
+                {"version": 1},
             )
         with self.assertRaisesRegex(
-            DatabaseError, "Unsupported database schema version"
+            DatabaseError, "Unsupported database schema version 1"
         ):
             initialize_database(self.app.extensions["database_engine"])
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import unicodedata
 from pathlib import Path
@@ -134,6 +135,8 @@ def environment_config() -> dict[str, Any]:
         "SQLCIPHER_PASSPHRASE": sqlcipher_passphrase,
         "TRUSTED_PROXY_COUNT": _read_int("TRUSTED_PROXY_COUNT", 0),
         "TRUSTED_HOSTS": _read_trusted_hosts(),
+        "WEBAUTHN_ORIGIN": os.environ.get("WEBAUTHN_ORIGIN"),
+        "WEBAUTHN_RP_ID": os.environ.get("WEBAUTHN_RP_ID"),
         "WTF_CSRF_TIME_LIMIT": 3600,
     }
 
@@ -238,4 +241,51 @@ def validate_public_deployment(
     if not matches_host:
         raise ConfigurationError(
             "PUBLIC_BASE_URL hostname must be included in TRUSTED_HOSTS"
+        )
+
+
+def validate_webauthn_config(
+    rp_id: str | None,
+    origin: str | None,
+    public_base_url: str | None = None,
+) -> None:
+    """Require one explicit, internally consistent WebAuthn relying party."""
+    if not rp_id or not origin:
+        raise ConfigurationError("WEBAUTHN_RP_ID and WEBAUTHN_ORIGIN are required")
+    labels = rp_id.split(".")
+    valid_labels = all(
+        1 <= len(label) <= 63
+        and label[0].isalnum()
+        and label[-1].isalnum()
+        and all(character.isalnum() or character == "-" for character in label)
+        for label in labels
+    )
+    try:
+        ipaddress.ip_address(rp_id)
+    except ValueError:
+        is_ip_literal = False
+    else:
+        is_ip_literal = True
+    if (
+        not rp_id.isascii()
+        or rp_id != rp_id.lower()
+        or len(rp_id) > 253
+        or not valid_labels
+        or (rp_id != "localhost" and len(labels) < 2)
+        or is_ip_literal
+    ):
+        raise ConfigurationError("WEBAUTHN_RP_ID must be a lowercase hostname")
+    expected_origin = (
+        "http://localhost:8000" if rp_id == "localhost" else f"https://{rp_id}"
+    )
+    if origin != expected_origin:
+        raise ConfigurationError(
+            "WEBAUTHN_ORIGIN must exactly match the RP ID; only "
+            "http://localhost:8000 may use HTTP"
+        )
+    if public_base_url is not None and public_base_url.rstrip("/") != origin.rstrip(
+        "/"
+    ):
+        raise ConfigurationError(
+            "WEBAUTHN_ORIGIN must match PUBLIC_BASE_URL when it is configured"
         )

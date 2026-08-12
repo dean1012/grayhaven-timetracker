@@ -30,6 +30,7 @@ from .config import (
     validate_public_base_url,
     validate_public_deployment,
     validate_timezone,
+    validate_webauthn_config,
 )
 from .database import init_app as init_database
 from .database import rollback_request_session, session_scope
@@ -55,6 +56,11 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         app.config.get("PUBLIC_BASE_URL"),
         bool(app.config.get("SESSION_COOKIE_SECURE")),
         app.config.get("TRUSTED_HOSTS"),
+    )
+    validate_webauthn_config(
+        app.config.get("WEBAUTHN_RP_ID"),
+        app.config.get("WEBAUTHN_ORIGIN"),
+        app.config.get("PUBLIC_BASE_URL"),
     )
     if not app.config.get("SKIP_BRANDING_VALIDATION"):
         validate_branding(str(app.config["BRANDING_PATH"]))
@@ -159,7 +165,8 @@ def register_security_headers(app: Flask) -> None:
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
         response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
         response.headers["Permissions-Policy"] = (
-            "camera=(), microphone=(), geolocation=(), payment=()"
+            "camera=(), microphone=(), geolocation=(), payment=(), "
+            "publickey-credentials-create=(self), publickey-credentials-get=(self)"
         )
         # Flask-WTF's HTTPS CSRF check requires a same-origin Referer. Keep
         # cross-origin requests private while allowing protected forms to send

@@ -3,15 +3,16 @@
 {% block breadcrumbs %}<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li aria-current="page"><span class="breadcrumb-label" title="Confirm Your Identity">Confirm Your Identity</span></li></ol></nav>{% endblock %}
 {% block content %}
 <section class="narrow-content">
-  <div class="panel form-panel">
+  <div class="panel form-panel" data-account-scoped-passkey-authentication data-options-url="{{ url_for('main.sensitive_action_passkey_options') }}" data-verify-url="{{ url_for('main.sensitive_action_passkey_verify') }}">
     <p class="eyebrow">SECURITY CHECK</p>
     <h1>Confirm Your Identity</h1>
-    <p class="muted">Enter your password to continue.</p>
+    <p class="muted">Use your passkey or enter your password to continue.</p>
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label>Password<span class="input-with-icon"><i class="fa-solid fa-lock" aria-hidden="true"></i><input type="password" name="password" autocomplete="current-password" maxlength="1024" required autofocus></span></label>
+      <label>Password<span class="input-with-icon"><i class="fa-solid fa-lock" aria-hidden="true"></i><input type="password" name="password" autocomplete="current-password" maxlength="1024" required></span></label>
       <div class="form-actions"><button class="button button-secondary" type="submit" name="cancel" value="1" formnovalidate>Cancel</button><button class="button button-primary" type="submit"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Continue</button></div>
     </form>
+    <p class="muted" role="status" data-account-passkey-status hidden></p>
   </div>
 </section>
 {% endblock %}

@@ -31,9 +31,20 @@ repository.
 | `TRUSTED_HOSTS` | `localhost,127.0.0.1` | Browser Host allowlist. |
 | `TRUSTED_PROXY_COUNT` | `0` | Number of trusted reverse proxies. |
 | `TZ` | `America/Chicago` | IANA timezone used for display and entry. |
+| `WEBAUTHN_ORIGIN` | required | Trusted WebAuthn ceremony origin. |
+| `WEBAUTHN_RP_ID` | required | Hostname-only WebAuthn RP identifier. |
 
 `PUBLIC_BASE_URL`, when set, must be an HTTPS origin whose hostname is allowed
 by `TRUSTED_HOSTS`. It also requires `SESSION_COOKIE_SECURE=true`.
+
+`WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN` are independent trusted inputs. They are
+never derived from `Host`, `X-Forwarded-Host`, or another request header. The RP
+ID must be a lowercase hostname without a scheme, port, or path, and the
+origin's hostname must match it exactly. Public deployments require HTTPS on
+the default port. The supported local pair is exactly `localhost` and
+`http://localhost:8000`; an IP address is not interchangeable with localhost.
+Changing the RP ID makes credentials registered for the former RP unusable and
+is an explicit compatibility event.
 
 [Back to top](#configuration)
 
@@ -126,6 +137,13 @@ deployment must set:
 - `SESSION_COOKIE_SECURE=true`.
 - `TRUSTED_HOSTS` to the exact public hostnames.
 - `TRUSTED_PROXY_COUNT` to the number of controlled proxy hops.
+- `WEBAUTHN_RP_ID` to the canonical Time Tracker hostname.
+- `WEBAUTHN_ORIGIN` to the exact canonical HTTPS origin.
+
+For example, a deployment using `timetracker.example.com` as its canonical
+hostname must use `timetracker.example.com` as the RP ID and
+`https://timetracker.example.com` as the origin. Deployment automation should
+derive both values from the same trusted canonical hostname.
 
 Do not expose Gunicorn directly to an untrusted network. Proxy headers are
 accepted only to the configured hop count, so that value must match the real
@@ -142,5 +160,8 @@ processes, and provides a `/health` check.
 
 The local definition defaults secure cookies off because it serves plain HTTP
 on loopback. Do not carry that value into an HTTPS deployment.
+It explicitly supplies RP ID `localhost` and origin
+`http://localhost:8000`; open that hostname rather than `127.0.0.1` when
+testing passkeys.
 
 [Back to top](#configuration)
