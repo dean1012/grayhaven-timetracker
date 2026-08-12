@@ -1,5 +1,6 @@
 services:
   timetracker:
+    image: grayhaven-timetracker:local
     build:
       context: .
       args:
@@ -16,6 +17,8 @@ services:
       SQLCIPHER_PASSPHRASE_FILE: /run/secrets/sqlcipher_passphrase
       TRUSTED_HOSTS: "${TRUSTED_HOSTS:-localhost,127.0.0.1}"
       TRUSTED_PROXY_COUNT: "${TRUSTED_PROXY_COUNT:-0}"
+      WEBAUTHN_ORIGIN: "${WEBAUTHN_ORIGIN:-http://localhost:8000}"
+      WEBAUTHN_RP_ID: "${WEBAUTHN_RP_ID:-localhost}"
       TZ: ${TZ:-America/Chicago}
     user: "${UID:-1000}:${GID:-1000}"
     cap_drop:

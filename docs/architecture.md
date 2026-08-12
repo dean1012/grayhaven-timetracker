@@ -43,11 +43,14 @@ The primary modules are:
 - `config.py`: environment, secret, branding, hostname, proxy, and public-origin
   validation.
 - `auth.py`: password, session, TOTP, reauthentication, and rate-limit helpers.
+- `passkeys.py`: trusted WebAuthn options, session-bound challenge state, and
+  registration/authentication verification.
 - `permissions.py`: centralized role and object-state checks.
 - `routes.py`: authenticated workflows and shared-report endpoints.
 - `reports.py`: report queries and summaries.
 - `models.py`: SQLAlchemy entities and database constraints.
-- `database.py`: SQLCipher connection policy and schema compatibility checks.
+- `database.py`: SQLCipher connection policy, schema initialization, and
+  ordered migrations.
 - `audit.py` and `logging_config.py`: audit persistence and structured logging.
 - `scripts/database_maintenance.py`: encrypted backup, verification, restore
   support, and key rotation.
@@ -68,7 +71,7 @@ The application has two roles:
 | Manage clients, contracts, tasks, and subtasks | No | Yes |
 | Move another user's pending time | No | Yes |
 | Advance or reverse billing state | No | Yes |
-| Manage users and TOTP recovery | No | Yes |
+| Manage users, TOTP recovery, and passkey wipe-all | No | Yes |
 | Create internal and shared reports | No | Yes |
 | Review the audit log | No | Yes |
 
@@ -77,7 +80,11 @@ and account changes can invalidate existing browser sessions. Passwords use
 Argon2id. Accounts can enroll TOTP, and configured TOTP is required at login.
 Bootstrap provisioning may supply an initial TOTP secret, and administrators
 have an assisted recovery path. Sensitive administrator actions require recent
-password and TOTP reauthentication.
+password and TOTP reauthentication or a verified passkey. Passkeys are
+optional: password and TOTP sign-in remain permanently available. Users can
+name, add, and remove their own passkeys after reauthentication. Administrators
+can see only whether an account has passkeys and can wipe all of them; they
+cannot inspect credential details. Bootstrap remains password/TOTP based.
 
 [Back to top](#application-architecture)
 
@@ -175,12 +182,18 @@ access control.
 
 SQLAlchemy maps the domain model to one SQLCipher-encrypted SQLite database.
 Connections enforce encryption and defensive SQLite settings. The application
-stores a schema version and refuses to open an incompatible database rather
-than attempting an implicit migration.
+stores a schema version and applies supported migrations in order. Each
+migration runs in an explicit transaction and advances the version marker only
+after its schema changes succeed. Re-running initialization at the current
+version is idempotent. Unsupported, missing, or newer markers fail closed.
 
-This project does not maintain legacy schema migrations. A deployment that
-changes to an incompatible schema starts with a clean database after preserving
-any records required by the business through an explicitly reviewed process.
+Passkey persistence keeps a random per-user WebAuthn handle, public credential
+key and identifier, signature counter, device and backup metadata,
+relying-party identity, user-visible name, and timestamps. Ceremony challenges
+are expiring, single-use, and bound to the initiating browser session.
+Deployment must create and verify a pre-upgrade encrypted backup before
+allowing an automatic migration. Application rollback across a schema change
+can require restoring that pre-upgrade snapshot.
 
 The single-instance design is deliberate. SQLite and the process-local security
 controls are not intended for horizontally scaled application workers.

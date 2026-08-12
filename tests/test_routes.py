@@ -6,21 +6,26 @@ import logging
 import re
 import time
 import unittest
+from contextlib import nullcontext
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
 import pyotp
 from argon2 import PasswordHasher
-from flask import g
+from flask import g, request
+from flask_wtf.csrf import CSRFError
+from itsdangerous import SignatureExpired
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from werkzeug.exceptions import Conflict, Forbidden
 
-from grayhaven_timetracker import routes
+from grayhaven_timetracker import auth, routes
 from grayhaven_timetracker.audit import record_audit_event
 from grayhaven_timetracker.auth import (
+    AUTHENTICATED_APP_VERSION_SESSION_KEY,
     LoginLimiter,
     reset_totp_replay_state,
     set_session_invalidation_notice,
@@ -31,6 +36,7 @@ from grayhaven_timetracker.models import (
     AuditEvent,
     Client,
     Contract,
+    PasskeyCredential,
     Subtask,
     Task,
     TimeEntry,
@@ -89,6 +95,261 @@ class AuthenticationRouteTests(AppTestCase):
                 response = client.get("/")
                 self.assertEqual(response.status_code, 302)
                 self.assertTrue(response.location.startswith("/login"))
+
+    def test_authenticated_sessions_are_bound_to_app_version(self) -> None:
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.totp_secret = None
+            reset_totp_replay_state(database, admin.id)
+
+        original_version = self.app.config["APP_VERSION"]
+        current = self.app.test_client()
+        self.login(current, totp_secret="")
+        with current.session_transaction() as authenticated_session:
+            self.assertEqual(
+                authenticated_session[AUTHENTICATED_APP_VERSION_SESSION_KEY],
+                original_version,
+            )
+        self.assertEqual(current.get("/profile").status_code, 200)
+
+        self.app.config["APP_VERSION"] = "next-build"
+        changed = current.get("/profile")
+        self.assertEqual(changed.status_code, 302)
+        self.assertEqual(changed.location, "/login?next=/profile")
+        with current.session_transaction() as invalidated_session:
+            self.assertNotIn("user_id", invalidated_session)
+            self.assertNotIn(AUTHENTICATED_APP_VERSION_SESSION_KEY, invalidated_session)
+
+        self.app.config["APP_VERSION"] = original_version
+        legacy = self.app.test_client()
+        self.login(legacy, totp_secret="")
+        with legacy.session_transaction() as legacy_session:
+            legacy_session.pop(AUTHENTICATED_APP_VERSION_SESSION_KEY)
+        rejected_legacy = legacy.get("/profile")
+        self.assertEqual(rejected_legacy.status_code, 302)
+        self.assertEqual(rejected_legacy.location, "/login?next=/profile")
+
+        anonymous = self.app.test_client()
+        self.assertEqual(anonymous.get("/login").status_code, 200)
+        self.assertEqual(anonymous.get("/health").status_code, 200)
+
+    def test_unestablished_session_invalidation_skips_lifecycle_audit(self) -> None:
+        client = self.app.test_client()
+        with client.session_transaction() as unestablished_session:
+            unestablished_session["user_id"] = 999999
+
+        response = client.get("/profile")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.location, "/login?next=/profile")
+        with session_scope(self.app) as database:
+            self.assertEqual(
+                database.scalars(
+                    select(AuditEvent).where(AuditEvent.event == "session_invalidated")
+                ).all(),
+                [],
+            )
+
+    def test_live_refresh_observes_app_version_session_boundary(self) -> None:
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.totp_secret = None
+            reset_totp_replay_state(database, admin.id)
+
+        self.login(totp_secret="")
+        self.app.config["APP_VERSION"] = "next-build"
+        response = self.client.get(
+            "/profile",
+            headers={"X-Grayhaven-Live-Refresh": "1"},
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.history), 1)
+        self.assertEqual(response.history[0].status_code, 302)
+        self.assertEqual(response.history[0].location, "/login?next=/profile")
+        self.assertEqual(response.request.path, "/login")
+        self.assertIn(b"Sign In", response.data)
+        self.assertIn(b"Build next-build", response.data)
+
+    def test_employee_session_invalidation_reasons_are_normalized(self) -> None:
+        original_version = self.app.config["APP_VERSION"]
+        maximum_age = self.app.permanent_session_lifetime.total_seconds()
+        scenarios = (
+            ("version-changed", "application_version_changed"),
+            ("version-missing", "application_version_marker_missing"),
+            ("version-invalid", "application_version_marker_invalid"),
+            ("password-changed", "password_changed"),
+            ("password-reset", "password_reset"),
+            ("totp-enabled", "totp_enabled"),
+            ("totp-disabled", "totp_disabled"),
+            ("passkeys-wiped", "passkeys_wiped"),
+            ("account-disabled", "account_disabled"),
+            ("privileges-updated", "privileges_updated"),
+            ("session-version", "session_version_changed"),
+            ("unknown-notice", "session_version_changed"),
+            ("session-version-missing", "session_version_changed"),
+            ("session-version-invalid", "session_version_changed"),
+            ("authenticated-at-missing", "authenticated_at_missing"),
+            ("authenticated-at-invalid", "authenticated_at_invalid"),
+            ("authenticated-at-boolean", "authenticated_at_invalid"),
+            ("authenticated-at-nonfinite", "authenticated_at_invalid"),
+            ("authenticated-at-future", "authenticated_at_future"),
+            ("absolute-expiry", "absolute_session_expired"),
+            ("user-missing", "user_missing"),
+        )
+
+        for index, (scenario, expected_reason) in enumerate(scenarios):
+            with self.subTest(scenario=scenario):
+                user = self.create_user(
+                    email=f"session-audit-{index}@example.invalid",
+                    totp_secret="",
+                )
+                client = self.app.test_client()
+                self.login(
+                    client,
+                    email=user.email,
+                    password="Standard-User-Test-Password-0001!",
+                    totp_secret="",
+                )
+                self.app.config["APP_VERSION"] = original_version
+
+                with client.session_transaction() as established_session:
+                    if scenario == "version-changed":
+                        established_session[AUTHENTICATED_APP_VERSION_SESSION_KEY] = (
+                            "previous-build"
+                        )
+                    elif scenario == "version-missing":
+                        established_session.pop(AUTHENTICATED_APP_VERSION_SESSION_KEY)
+                    elif scenario == "version-invalid":
+                        established_session[AUTHENTICATED_APP_VERSION_SESSION_KEY] = 42
+                    elif scenario == "session-version-invalid":
+                        established_session["session_version"] = "invalid"
+                    elif scenario == "session-version-missing":
+                        established_session.pop("session_version")
+                    elif scenario == "authenticated-at-missing":
+                        established_session.pop("authenticated_at")
+                    elif scenario == "authenticated-at-invalid":
+                        established_session["authenticated_at"] = "invalid"
+                    elif scenario == "authenticated-at-boolean":
+                        established_session["authenticated_at"] = True
+                    elif scenario == "authenticated-at-nonfinite":
+                        established_session["authenticated_at"] = float("inf")
+                    elif scenario == "authenticated-at-future":
+                        established_session["authenticated_at"] = time.time() + 3600
+                    elif scenario == "absolute-expiry":
+                        established_session["authenticated_at"] = (
+                            time.time() - maximum_age - 1
+                        )
+
+                with self.app.app_context(), session_scope(self.app) as database:
+                    g.database_session = database
+                    stored_user = database.get(User, user.id)
+                    assert stored_user is not None
+                    if scenario in {
+                        "password-changed",
+                        "password-reset",
+                        "totp-enabled",
+                        "totp-disabled",
+                        "passkeys-wiped",
+                    }:
+                        stored_user.session_version += 1
+                        set_session_invalidation_notice(stored_user, expected_reason)
+                    elif scenario == "account-disabled":
+                        stored_user.is_enabled = False
+                        stored_user.session_version += 1
+                    elif scenario == "privileges-updated":
+                        stored_user.role = "admin"
+                        stored_user.session_version += 1
+                    elif scenario in {"session-version", "unknown-notice"}:
+                        stored_user.session_version += 1
+                        if scenario == "unknown-notice":
+                            set_session_invalidation_notice(
+                                stored_user, "unrecognized_reason"
+                            )
+                    elif scenario == "user-missing":
+                        database.delete(stored_user)
+                    before_id = int(
+                        database.scalar(select(func.max(AuditEvent.id))) or 0
+                    )
+
+                rejected = client.get("/profile")
+                self.assertEqual(rejected.status_code, 302)
+                self.assertEqual(rejected.location, "/login?next=/profile")
+                client.get("/profile")
+
+                with session_scope(self.app) as database:
+                    events = database.scalars(
+                        select(AuditEvent)
+                        .where(
+                            AuditEvent.id > before_id,
+                            AuditEvent.event == "session_invalidated",
+                        )
+                        .order_by(AuditEvent.id)
+                    ).all()
+                    self.assertEqual(len(events), 1)
+                    event = events[0]
+                    self.assertEqual(event.details["reason"], expected_reason)
+                    self.assertEqual(event.details["request_source"], "Web Application")
+                    self.assertEqual(event.ip_address, "127.0.0.1")
+                    if scenario == "version-changed":
+                        self.assertEqual(
+                            event.details["previous_version"], "previous-build"
+                        )
+                        self.assertEqual(
+                            event.details["current_version"], original_version
+                        )
+                    elif scenario == "version-missing":
+                        self.assertEqual(event.details["previous_version"], "missing")
+                    elif scenario == "version-invalid":
+                        self.assertEqual(event.details["previous_version"], "invalid")
+                    if scenario == "user-missing":
+                        self.assertIsNone(event.actor_user_id)
+                        self.assertEqual(event.details["user_id"], user.id)
+                    else:
+                        self.assertEqual(event.actor_user_id, user.id)
+                    self.assertNotIn("credential", event.details_json)
+                    self.assertNotIn("cookie", event.details_json)
+                    self.assertNotIn("token", event.details_json)
+
+        self.login()
+        audit_page = self.client.get("/audit?event=session_invalidated")
+        self.assertEqual(audit_page.status_code, 200)
+        self.assertIn(b"Session Invalidated", audit_page.data)
+        self.assertIn(b"Web Application", audit_page.data)
+        self.assertIn(b"application_version_changed", audit_page.data)
+        self.assertIn(b"absolute_session_expired", audit_page.data)
+
+    def test_session_invalidation_audit_failure_never_blocks_termination(self) -> None:
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.totp_secret = None
+        self.login(totp_secret="")
+        self.app.config["APP_VERSION"] = "next-build"
+        with patch(
+            "grayhaven_timetracker.auth.record_audit_event",
+            side_effect=RuntimeError("simulated invalidation audit failure"),
+        ):
+            response = self.client.get("/profile")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.location, "/login?next=/profile")
+        with self.client.session_transaction() as invalidated_session:
+            self.assertNotIn("user_id", invalidated_session)
+
+    def test_logout_and_anonymous_requests_do_not_emit_session_invalidation(
+        self,
+    ) -> None:
+        anonymous = self.app.test_client()
+        self.assertEqual(anonymous.get("/login").status_code, 200)
+        self.login()
+        self.assertEqual(self.client.post("/logout").status_code, 302)
+        with session_scope(self.app) as database:
+            events = database.scalars(
+                select(AuditEvent).where(AuditEvent.event == "session_invalidated")
+            ).all()
+            self.assertEqual(events, [])
 
     def test_session_invalidation_notices_cover_disabled_password_and_privilege_changes(
         self,
@@ -313,8 +574,187 @@ class AuthenticationRouteTests(AppTestCase):
         )
         self.assertEqual(response.status_code, 413)
 
+    def test_shared_report_csrf_fallback_requires_a_string_route_token(self) -> None:
+        handler = self.app.error_handler_spec[None][400][CSRFError]
+        for token in (None, 42):
+            with (
+                self.subTest(token=token),
+                self.app.test_request_context(
+                    "/shared/reports/example-token", method="POST"
+                ),
+            ):
+                rule = next(
+                    item
+                    for item in self.app.url_map.iter_rules()
+                    if item.endpoint == "main.shared_report"
+                )
+                request.url_rule = rule
+                request.view_args = {} if token is None else {"token": token}
+                response = self.app.make_response(handler(CSRFError("expired")))
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(b"form expired", response.data)
+
+        with self.app.test_request_context(
+            "/shared/reports/example-token", method="POST"
+        ):
+            rule = next(
+                item
+                for item in self.app.url_map.iter_rules()
+                if item.endpoint == "main.shared_report"
+            )
+            request.url_rule = rule
+            request.view_args = {"token": "example-token"}
+            response = self.app.make_response(handler(CSRFError("expired")))
+            self.assertEqual(response.status_code, 302)
+            self.assertEqual(response.location, "/shared/reports/example-token")
+
 
 class SecurityAndErrorRouteTests(AppTestCase):
+    def test_responsive_navbar_keeps_fixed_logo_and_icon_only_trigger(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        stylesheet = (project_root / "static" / "app.css").read_text(encoding="utf-8")
+        template = (project_root / "templates" / "base.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(len(re.findall(r"\.brand img\s*\{", stylesheet)), 1)
+        self.assertIn(
+            ".brand img { width: 194px; height: auto; }",
+            stylesheet,
+        )
+        for report_width in (230, 185, 160, 145):
+            with self.subTest(report_width=report_width):
+                self.assertIn(
+                    f".report-header img {{ width: {report_width}px; }}",
+                    stylesheet,
+                )
+        self.assertNotIn(".mobile-nav-label", stylesheet)
+        self.assertIn(
+            ".mobile-nav-toggle { display: inline-flex; align-items: center; "
+            "justify-content: center; width: 44px; height: 44px; padding: 0;",
+            stylesheet,
+        )
+        self.assertEqual(
+            len(re.findall(r"(?m)^\.mobile-nav-toggle\s*\{", stylesheet)), 1
+        )
+        self.assertIn(
+            '<summary class="mobile-nav-toggle" aria-label="Application menu">'
+            '<i class="fa-solid fa-bars" aria-hidden="true"></i></summary>',
+            template,
+        )
+        self.assertNotIn("mobile-nav-label", template)
+        self.assertNotIn(">Menu</", template)
+        self.assertIn("@media (width >=1721px)", stylesheet)
+        self.assertRegex(
+            stylesheet,
+            r"(?s)@media \(width >=1721px\).*?"
+            r"\.desktop-nav \{ display: flex; \}.*?"
+            r"\.mobile-nav \{ display: none; \}",
+        )
+
+    def test_application_header_glass_preserves_structure_and_navigation(
+        self,
+    ) -> None:
+        stylesheet = (
+            Path(__file__).resolve().parents[1] / "static" / "app.css"
+        ).read_text(encoding="utf-8")
+        match = re.search(r"\.app-header \{([^}]+)\}", stylesheet)
+        self.assertIsNotNone(match)
+        assert match is not None
+        header_rule = match.group(1)
+        for declaration in (
+            "position: sticky",
+            "top: 0",
+            "z-index: 5",
+            "flex: 0 0 auto",
+            "background: rgba(20, 20, 20, 0.35)",
+            "border-bottom: 1px solid var(--charcoal-border)",
+            "backdrop-filter: blur(22px)",
+            "-webkit-backdrop-filter: blur(22px)",
+            "box-shadow: 0 10px 40px rgba(0, 0, 0, .35), "
+            "inset 0 1px rgba(255, 255, 255, .08)",
+        ):
+            with self.subTest(declaration=declaration):
+                self.assertIn(declaration, header_rule)
+        self.assertEqual(
+            len(re.findall(r"(?<!-webkit-)backdrop-filter:", header_rule)), 1
+        )
+        self.assertEqual(header_rule.count("-webkit-backdrop-filter:"), 1)
+        self.assertEqual(stylesheet.count("background: rgba(20, 20, 20, 0.35)"), 1)
+        self.assertIn(
+            ".app-header-inner { display: flex; align-items: center; width: "
+            "min(1680px, calc(100% - var(--container-padding) - "
+            "var(--container-padding))); height: 76px; margin: auto; }",
+            stylesheet,
+        )
+        self.assertIn(
+            ".app-nav a:hover, .app-nav a[aria-current], .nav-button:hover { "
+            "color: var(--primary-accent); }",
+            stylesheet,
+        )
+        self.assertIn(".desktop-nav { display: none; }", stylesheet)
+        self.assertIn(".mobile-nav { position: relative; display: block;", stylesheet)
+
+    def test_form_focus_keeps_borders_without_weakening_other_indicators(
+        self,
+    ) -> None:
+        stylesheet = (
+            Path(__file__).resolve().parents[1] / "static" / "app.css"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "input, select { min-height: 42px; width: 100%; padding: .65rem "
+            ".75rem; color: var(--soft-white); background: "
+            "var(--deep-graphite); border: 1px solid var(--charcoal-border);",
+            stylesheet,
+        )
+        self.assertIn(
+            "input:focus-visible, select:focus-visible { "
+            "border-color: var(--primary-accent); outline: none; }",
+            stylesheet,
+        )
+        self.assertIn(
+            ".money-input:focus-within { border-color: var(--primary-accent); "
+            "outline: none; }",
+            stylesheet,
+        )
+        self.assertIn(
+            ".button:focus-visible, .icon-button:focus-visible, "
+            ".text-link:focus-visible, .nav-button:focus-visible { "
+            "outline: 2px solid var(--primary-accent); outline-offset: 3px; }",
+            stylesheet,
+        )
+        self.assertIn(
+            "a:focus-visible { outline: 2px solid var(--primary-accent); "
+            "outline-offset: 3px; }",
+            stylesheet,
+        )
+        self.assertIn(
+            ".mobile-nav-toggle:focus-visible { outline: 2px solid "
+            "var(--primary-accent); outline-offset: 3px; }",
+            stylesheet,
+        )
+        self.assertIn(
+            ".input-with-icon:focus-within > i { color: var(--primary-accent); }",
+            stylesheet,
+        )
+        self.assertNotRegex(
+            stylesheet,
+            r"(?:input|select):focus-visible[^{}]*\{[^}]*border-width",
+        )
+        self.assertNotRegex(
+            stylesheet,
+            r"\.money-input:focus-within\s*\{[^}]*border-width",
+        )
+        self.assertNotRegex(
+            stylesheet,
+            r"(?:input|select):focus-visible[^{}]*\{[^}]*"
+            r"outline:[^;}]*primary-accent",
+        )
+        self.assertNotRegex(
+            stylesheet,
+            r"\.money-input:focus-within\s*\{[^}]*"
+            r"outline:[^;}]*primary-accent",
+        )
+
     def test_static_assets_cover_template_icons_and_branding_breakpoints(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         stylesheet = (project_root / "static/fontawesome.min.css").read_text(
@@ -523,6 +963,13 @@ class SecurityAndErrorRouteTests(AppTestCase):
                     markdown_path.read_text(encoding="utf-8"),
                 )
 
+    def test_compose_uses_stable_local_image_name(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        compose = (project_root / "compose.yml").read_text(encoding="utf-8")
+
+        self.assertEqual(compose.count("image: grayhaven-timetracker:local"), 1)
+        self.assertNotIn("grayhaven-timetracker-timetracker", compose)
+
     def test_security_headers_cache_policy_health_and_errors(self) -> None:
         response = self.client.get("/login", base_url="https://example.invalid")
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
@@ -630,6 +1077,20 @@ class AuditRouteTests(AppTestCase):
         ):
             self.assertEqual(self.client.get("/").status_code, 200)
 
+    def test_session_invalidation_audit_failure_before_database_is_best_effort(
+        self,
+    ) -> None:
+        with self.app.test_request_context("/"):
+            with patch(
+                "grayhaven_timetracker.auth.get_session",
+                side_effect=RuntimeError("simulated database acquisition failure"),
+            ):
+                auth.audit_session_invalidation(
+                    None,
+                    reason="application_version_changed",
+                    user_id=999999,
+                )
+
     def test_audit_details_include_readable_labels_and_ignore_empty_changes(
         self,
     ) -> None:
@@ -661,6 +1122,62 @@ class AuditRouteTests(AppTestCase):
                 event.details["time_entry"], f"Time entry (ID: {seed.entry_id})"
             )
             self.assertEqual(event.ip_address, "192.0.2.10")
+
+    def test_password_authentication_factors_persist_and_render(self) -> None:
+        password_only = self.create_user(
+            email="password-only-admin@example.invalid",
+            role="admin",
+            totp_secret="",
+        )
+        self.login(
+            email=password_only.email,
+            password="Standard-User-Test-Password-0001!",
+            totp_secret="",
+        )
+        self.authorize_sensitive_action(
+            "/profile/password/change",
+            password="Standard-User-Test-Password-0001!",
+            totp_secret="",
+        )
+        self.client.post("/logout")
+
+        self.login()
+        self.authorize_sensitive_action("/profile/password/change")
+
+        allowed_factors = {"passkey", "password", "password_totp"}
+        with session_scope(self.app) as database:
+            events = database.scalars(
+                select(AuditEvent)
+                .where(
+                    AuditEvent.event.in_(
+                        {
+                            "login_succeeded",
+                            "sensitive_action_reauthentication_succeeded",
+                        }
+                    )
+                )
+                .order_by(AuditEvent.id)
+            ).all()
+            login_factors = [
+                item.details.get("factor")
+                for item in events
+                if item.event == "login_succeeded"
+            ]
+            reauthentication_factors = [
+                item.details.get("factor")
+                for item in events
+                if item.event == "sensitive_action_reauthentication_succeeded"
+            ]
+        self.assertEqual(login_factors, ["password", "password_totp"])
+        self.assertEqual(reauthentication_factors, ["password", "password_totp"])
+        self.assertTrue(
+            all(item.details.get("factor") in allowed_factors for item in events)
+        )
+
+        audit_page = self.client.get("/audit")
+        self.assertEqual(audit_page.status_code, 200)
+        self.assertIn(b"<dt>factor</dt><dd>password</dd>", audit_page.data)
+        self.assertIn(b"<dt>factor</dt><dd>password_totp</dd>", audit_page.data)
 
     def test_stale_parent_helpers_resolve_matching_audit_details(self) -> None:
         self.login()
@@ -1812,6 +2329,112 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         super().setUp()
         self.login()
 
+    def test_users_pin_current_account_without_disrupting_pagination(self) -> None:
+        last_names = ("Zulu", "alpha", "Echo", "bravo", "Delta", "charlie")
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin.totp_secret = None
+            users = [
+                User(
+                    email=f"pagination-{index:02d}@example.invalid",
+                    first_name=f"Person {(index * 7) % 13:02d}",
+                    last_name=last_names[index % len(last_names)],
+                    password_hash=admin.password_hash,
+                    totp_secret=None,
+                    pending_totp_secret=None,
+                    role="user",
+                    is_enabled=index % 4 != 0,
+                    password_change_required=False,
+                    session_version=1,
+                    created_at=datetime(2026, 7, 29, 12, 0, 0),
+                )
+                for index in range(55)
+            ]
+            database.add_all(users)
+            database.flush()
+            expected_others = sorted(
+                users,
+                key=lambda item: (
+                    not item.is_enabled,
+                    item.last_name.lower(),
+                    item.first_name.lower(),
+                    item.id,
+                ),
+            )
+            natural_order = sorted(
+                [admin, *users],
+                key=lambda item: (
+                    not item.is_enabled,
+                    item.last_name.lower(),
+                    item.first_name.lower(),
+                    item.id,
+                ),
+            )
+            self.assertNotEqual(natural_order[0].id, admin.id)
+            database.add_all(
+                [
+                    PasskeyCredential(
+                        user_id=user.id,
+                        credential_id=f"pagination-passkey-{user.id}".encode(),
+                        public_key=b"public-key-data",
+                        sign_count=1,
+                        device_type="single_device",
+                        backed_up=False,
+                        aaguid="00000000-0000-0000-0000-000000000000",
+                        name="Pagination test",
+                        rp_id="localhost",
+                        created_at=datetime(2026, 7, 29, 12, 0, 0),
+                        last_used_at=None,
+                    )
+                    for user in (admin, expected_others[24])
+                ]
+            )
+            expected_emails = [admin.email, *(user.email for user in expected_others)]
+
+        responses = [self.client.get(f"/users?page={page}") for page in range(1, 4)]
+        self.assertTrue(all(response.status_code == 200 for response in responses))
+        page_emails = [
+            [
+                value.decode()
+                for value in re.findall(rb'href="mailto:([^?"]+)\?body=', response.data)
+            ]
+            for response in responses
+        ]
+        self.assertEqual(
+            page_emails,
+            [
+                expected_emails[: routes.USER_PAGE_SIZE],
+                expected_emails[routes.USER_PAGE_SIZE : 2 * routes.USER_PAGE_SIZE],
+                expected_emails[2 * routes.USER_PAGE_SIZE :],
+            ],
+        )
+        flattened_emails = [email for page in page_emails for email in page]
+        self.assertEqual(flattened_emails, expected_emails)
+        self.assertEqual(len(flattened_emails), len(set(flattened_emails)))
+        self.assertEqual([len(page) for page in page_emails], [25, 25, 6])
+        self.assertTrue(all(len(page) <= routes.USER_PAGE_SIZE for page in page_emails))
+        self.assertEqual(page_emails[0][0], ADMIN_EMAIL)
+        self.assertNotIn(ADMIN_EMAIL, page_emails[1] + page_emails[2])
+
+        for page, response in enumerate(responses, start=1):
+            self.assertIn(b"56 users", response.data)
+            self.assertIn(f"Page {page} of 3".encode(), response.data)
+        self.assertNotIn(b">Previous</a>", responses[0].data)
+        self.assertIn(b'href="/users?page=2"', responses[0].data)
+        self.assertIn(b'href="/users?page=1"', responses[1].data)
+        self.assertIn(b'href="/users?page=3"', responses[1].data)
+        self.assertIn(b'href="/users?page=2"', responses[2].data)
+        self.assertNotIn(b">Next <i", responses[2].data)
+        self.assertEqual(responses[0].data.count(b"Current Account"), 1)
+        self.assertNotIn(b"Current Account", responses[1].data)
+        self.assertNotIn(b"Current Account", responses[2].data)
+        self.assertEqual(responses[0].data.count(b">Configured</span>"), 1)
+        self.assertEqual(responses[1].data.count(b">Configured</span>"), 1)
+        self.assertEqual(responses[2].data.count(b">Configured</span>"), 0)
+        self.assertNotIn(b"Wipe All Passkeys", responses[0].data)
+        self.assertIn(b"Wipe All Passkeys", responses[1].data)
+
     def test_profile_name_and_password_change_require_valid_inputs(self) -> None:
         profile = self.client.get("/profile")
         self.assertEqual(profile.status_code, 200)
@@ -1914,6 +2537,12 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         )
         self.assertEqual(changed.status_code, 302)
         self.assertEqual(changed.location, "/login")
+        with session_scope(self.app) as database:
+            invalidation = database.scalar(
+                select(AuditEvent).where(AuditEvent.event == "session_invalidated")
+            )
+            assert invalidation is not None
+            self.assertEqual(invalidation.details["reason"], "password_changed")
         with patch(
             "grayhaven_timetracker.auth.now_utc_timestamp",
             return_value=time.time() + 30,
@@ -2124,6 +2753,14 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             totp_token=next_totp(pending),
         )
         self.assertEqual(self.client.post("/profile/totp/disable").status_code, 302)
+        with session_scope(self.app) as database:
+            reasons = database.scalars(
+                select(AuditEvent.details_json).where(
+                    AuditEvent.event == "session_invalidated"
+                )
+            ).all()
+            self.assertTrue(any('"reason":"totp_enabled"' in item for item in reasons))
+            self.assertTrue(any('"reason":"totp_disabled"' in item for item in reasons))
         self.login(totp_secret="")
         self.assertEqual(
             self.client.post("/profile/totp/disable").location,
@@ -2257,10 +2894,19 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         toggle_admin_path = f"/users/{user_id}/toggle-admin"
         toggle_enabled_path = f"/users/{user_id}/toggle-enabled"
         self.authorize_sensitive_action(toggle_admin_path)
+        promote_confirmation = self.client.get(toggle_admin_path)
+        self.assertEqual(promote_confirmation.status_code, 200)
+        self.assertIn(b"Promote User", promote_confirmation.data)
         self.assertEqual(self.client.post(toggle_admin_path).status_code, 302)
         self.authorize_sensitive_action(toggle_admin_path)
+        demote_confirmation = self.client.get(toggle_admin_path)
+        self.assertEqual(demote_confirmation.status_code, 200)
+        self.assertIn(b"Demote Administrator", demote_confirmation.data)
         self.assertEqual(self.client.post(toggle_admin_path).status_code, 302)
         self.authorize_sensitive_action(toggle_enabled_path)
+        disable_confirmation = self.client.get(toggle_enabled_path)
+        self.assertEqual(disable_confirmation.status_code, 200)
+        self.assertIn(b"Disable User", disable_confirmation.data)
         self.assertEqual(self.client.post(toggle_enabled_path).status_code, 302)
         with session_scope(self.app) as database:
             user = database.get(User, user_id)
@@ -2273,6 +2919,9 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         self.assertEqual(self.client.get(toggle_enabled_path).status_code, 302)
         self.assertEqual(self.client.get(toggle_admin_path).status_code, 302)
         self.authorize_sensitive_action(toggle_enabled_path)
+        enable_confirmation = self.client.get(toggle_enabled_path)
+        self.assertEqual(enable_confirmation.status_code, 200)
+        self.assertIn(b"Enable User", enable_confirmation.data)
         self.assertEqual(self.client.post(toggle_enabled_path).status_code, 302)
         with session_scope(self.app) as database:
             user = database.get(User, user_id)
@@ -2451,6 +3100,15 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         self.assertEqual(reset.status_code, 200)
         self.assertIn(temporary_password.encode(), reset.data)
         self.assertIn("/login", existing_session.get("/").location)
+        with session_scope(self.app) as database:
+            invalidation = database.scalar(
+                select(AuditEvent).where(
+                    AuditEvent.event == "session_invalidated",
+                    AuditEvent.actor_user_id == user.id,
+                )
+            )
+            assert invalidation is not None
+            self.assertEqual(invalidation.details["reason"], "password_reset")
         self.assertEqual(self.client.post("/users/1/reset-password").status_code, 409)
         self.assertEqual(
             self.client.get(f"/users/{user.id}/reset-password/confirmation").location,
@@ -2525,6 +3183,40 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         self.seed = self.seed_contract(entry_user_id=self.user.id)
 
+    def set_shared_report_cookie_value(
+        self, browser: Any, client: Client, value: str
+    ) -> None:
+        browser.set_cookie(
+            routes.shared_report_cookie_name(client),
+            value,
+            path=routes.SHARED_REPORT_COOKIE_PATH,
+        )
+
+    def signed_shared_report_cookie(
+        self,
+        client: Client,
+        *,
+        client_id: object | None = None,
+        app_version: object = "current",
+        password_version: object | None = None,
+    ) -> str:
+        payload: dict[str, object] = {
+            "client_id": client.id if client_id is None else client_id,
+            "password_version": (
+                client.report_password_version
+                if password_version is None
+                else password_version
+            ),
+        }
+        if app_version != "missing":
+            payload["app_version"] = (
+                self.app.config["APP_VERSION"]
+                if app_version == "current"
+                else app_version
+            )
+        with self.app.test_request_context("/"):
+            return routes.shared_report_serializer().dumps(payload)
+
     def test_admin_live_report(self) -> None:
         self.login()
         html = self.client.get(f"/reports/{self.seed.contract_id}")
@@ -2582,6 +3274,7 @@ class ReportAndSessionRouteTests(AppTestCase):
 
     def test_live_client_report_is_permanent_and_admin_shared(self) -> None:
         self.login()
+        original_version = self.app.config["APP_VERSION"]
         self.app.config["PUBLIC_BASE_URL"] = "https://time.example.invalid"
         with session_scope(self.app) as database:
             client = database.get(Client, self.seed.client_id)
@@ -2696,6 +3389,55 @@ class ReportAndSessionRouteTests(AppTestCase):
             ).status_code,
             304,
         )
+
+        self.app.config["APP_VERSION"] = "next-build"
+        version_rejected = anonymous.get(f"/shared/reports/{token}")
+        self.assertEqual(version_rejected.status_code, 200)
+        self.assertIn(b"CLIENT REPORT ACCESS", version_rejected.data)
+        self.assertNotIn(b"Live Client Report", version_rejected.data)
+        version_live = anonymous.get(f"/shared/reports/{token}/live")
+        self.assertEqual(version_live.status_code, 302)
+        self.assertEqual(version_live.location, f"/shared/reports/{token}")
+        followed_version_live = anonymous.get(
+            f"/shared/reports/{token}/live", follow_redirects=True
+        )
+        self.assertEqual(len(followed_version_live.history), 1)
+        self.assertEqual(
+            followed_version_live.history[0].location, f"/shared/reports/{token}"
+        )
+        self.assertEqual(followed_version_live.request.path, f"/shared/reports/{token}")
+        self.assertIn(b"CLIENT REPORT ACCESS", followed_version_live.data)
+        self.assertIn(b"?v=next-build", followed_version_live.data)
+
+        with self.app.test_request_context("/"):
+            legacy_value = routes.shared_report_serializer().dumps(
+                {
+                    "client_id": client.id,
+                    "password_version": client.report_password_version,
+                }
+            )
+        legacy = self.app.test_client()
+        legacy.set_cookie(
+            routes.shared_report_cookie_name(client),
+            legacy_value,
+            path=routes.SHARED_REPORT_COOKIE_PATH,
+        )
+        legacy_prompt = legacy.get(f"/shared/reports/{token}")
+        self.assertEqual(legacy_prompt.status_code, 200)
+        self.assertIn(b"CLIENT REPORT ACCESS", legacy_prompt.data)
+        legacy_live = legacy.get(f"/shared/reports/{token}/live")
+        self.assertEqual(legacy_live.status_code, 302)
+        self.assertEqual(legacy_live.location, f"/shared/reports/{token}")
+
+        renewed = anonymous.post(
+            f"/shared/reports/{token}", data={"report_password": report_password}
+        )
+        self.assertEqual(renewed.status_code, 302)
+        self.assertEqual(renewed.location, f"/shared/reports/{token}")
+        self.assertIn(
+            b"Live Client Report", anonymous.get(f"/shared/reports/{token}").data
+        )
+        self.app.config["APP_VERSION"] = original_version
         self.assertEqual(
             self.client.post(f"/clients/{self.seed.client_id}/report-link").status_code,
             404,
@@ -3162,6 +3904,21 @@ class ReportAndSessionRouteTests(AppTestCase):
             cookie = response.headers["Set-Cookie"].split(";", 1)[0]
         with self.app.test_request_context("/", headers={"Cookie": cookie}):
             self.assertTrue(routes.shared_report_cookie_allowed(client))
+        original_version = self.app.config["APP_VERSION"]
+        self.app.config["APP_VERSION"] = "next-build"
+        with self.app.test_request_context("/", headers={"Cookie": cookie}):
+            self.assertFalse(routes.shared_report_cookie_allowed(client))
+        self.app.config["APP_VERSION"] = original_version
+        with self.app.test_request_context("/"):
+            legacy_value = routes.shared_report_serializer().dumps(
+                {
+                    "client_id": client.id,
+                    "password_version": client.report_password_version,
+                }
+            )
+        legacy_cookie = f"{routes.shared_report_cookie_name(client)}={legacy_value}"
+        with self.app.test_request_context("/", headers={"Cookie": legacy_cookie}):
+            self.assertFalse(routes.shared_report_cookie_allowed(client))
         with self.app.test_request_context(
             "/", headers={"Cookie": f"{cookie}tampered"}
         ):
@@ -3169,6 +3926,402 @@ class ReportAndSessionRouteTests(AppTestCase):
         client.report_password_version += 1
         with self.app.test_request_context("/", headers={"Cookie": cookie}):
             self.assertFalse(routes.shared_report_cookie_allowed(client))
+
+    def test_shared_report_cookie_rejects_invalid_configured_version(self) -> None:
+        seed = self.seed
+        with session_scope(self.app) as database:
+            client = database.get(Client, seed.client_id)
+            assert client is not None
+        with self.app.test_request_context("/"):
+            response = self.app.response_class()
+            routes.set_shared_report_cookie(response, client)
+            cookie = response.headers["Set-Cookie"].split(";", 1)[0]
+
+        original_version = self.app.config["APP_VERSION"]
+        self.app.config["APP_VERSION"] = ""
+        try:
+            with self.app.test_request_context("/", headers={"Cookie": cookie}):
+                validation = routes.validate_shared_report_cookie(client)
+            self.assertFalse(validation.allowed)
+            self.assertIsNone(validation.invalidation_reason)
+        finally:
+            self.app.config["APP_VERSION"] = original_version
+
+    def test_expired_shared_report_cookie_payload_failures_are_rejected(self) -> None:
+        seed = self.seed
+        with session_scope(self.app) as database:
+            client = database.get(Client, seed.client_id)
+            assert client is not None
+        cookie_name = routes.shared_report_cookie_name(client)
+
+        cases = (
+            ("non-bytes", "not-bytes"),
+            ("deserialization-failure", b"expired"),
+            ("non-dict", b"expired"),
+        )
+        for case, expired_payload in cases:
+            with self.subTest(case=case):
+                with self.app.test_request_context(
+                    "/", headers={"Cookie": f"{cookie_name}=expired"}
+                ):
+                    with patch(
+                        "grayhaven_timetracker.routes.shared_report_serializer"
+                    ) as serializer_factory:
+                        serializer = serializer_factory.return_value
+                        serializer.loads.side_effect = SignatureExpired(
+                            "expired", payload=expired_payload
+                        )
+                        if case == "deserialization-failure":
+                            serializer.load_payload.side_effect = RuntimeError(
+                                "invalid payload"
+                            )
+                        elif case == "non-dict":
+                            serializer.load_payload.return_value = []
+                        validation = routes.validate_shared_report_cookie(client)
+                self.assertFalse(validation.allowed)
+                self.assertIsNone(validation.invalidation_reason)
+
+    def test_replaced_shared_report_cookie_is_not_expired_after_invalidation(
+        self,
+    ) -> None:
+        with session_scope(self.app) as database:
+            client = database.get(Client, self.seed.client_id)
+            assert client is not None and client.report_token is not None
+            token = client.report_token
+            client.report_password_hash = routes.hash_password(
+                "Shared-Report-Password-For-Testing-0001!"
+            )
+        browser = self.app.test_client()
+        self.set_shared_report_cookie_value(
+            browser,
+            client,
+            self.signed_shared_report_cookie(client, app_version="previous-build"),
+        )
+
+        response = browser.post(
+            f"/shared/reports/{token}",
+            data={"report_password": "Shared-Report-Password-For-Testing-0001!"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        replacement = browser.get_cookie(
+            routes.shared_report_cookie_name(client),
+            path=routes.SHARED_REPORT_COOKIE_PATH,
+        )
+        self.assertIsNotNone(replacement)
+        assert replacement is not None
+        with self.app.test_request_context(
+            "/", headers={"Cookie": f"{replacement.key}={replacement.value}"}
+        ):
+            self.assertTrue(routes.shared_report_cookie_allowed(client))
+
+    def test_shared_report_session_invalidation_lifecycle_reasons(self) -> None:
+        with session_scope(self.app) as database:
+            client = database.get(Client, self.seed.client_id)
+            assert client is not None and client.report_token is not None
+            client.report_password_version += 1
+            client_id = client.id
+            token = client.report_token
+            current_password_version = client.report_password_version
+        current_version = self.app.config["APP_VERSION"]
+        maximum_age = int(self.app.permanent_session_lifetime.total_seconds())
+        scenarios = (
+            ("application_version_changed", "main"),
+            ("application_version_changed", "live"),
+            ("legacy_version_marker_missing", "main"),
+            ("legacy_version_marker_missing", "live"),
+            ("report_password_changed", "main"),
+            ("report_password_changed", "live"),
+            ("session_expired", "main"),
+            ("session_expired", "live"),
+        )
+
+        for reason, route_kind in scenarios:
+            with self.subTest(reason=reason, route=route_kind):
+                with session_scope(self.app) as database:
+                    client = database.get(Client, client_id)
+                    assert client is not None
+                    before_id = int(
+                        database.scalar(select(func.max(AuditEvent.id))) or 0
+                    )
+                if reason == "application_version_changed":
+                    value = self.signed_shared_report_cookie(
+                        client, app_version="previous-build"
+                    )
+                elif reason == "legacy_version_marker_missing":
+                    value = self.signed_shared_report_cookie(
+                        client, app_version="missing"
+                    )
+                elif reason == "report_password_changed":
+                    value = self.signed_shared_report_cookie(
+                        client,
+                        password_version=current_password_version - 1,
+                    )
+                else:
+                    with patch("itsdangerous.timed.time.time", return_value=1000):
+                        value = self.signed_shared_report_cookie(client)
+
+                browser = self.app.test_client()
+                self.set_shared_report_cookie_value(browser, client, value)
+                suffix = "/live" if route_kind == "live" else ""
+                path = f"/shared/reports/{token}{suffix}"
+                request_context = (
+                    patch(
+                        "itsdangerous.timed.time.time",
+                        return_value=1000 + maximum_age + 1,
+                    )
+                    if reason == "session_expired"
+                    else nullcontext()
+                )
+                with request_context:
+                    rejected = browser.get(path)
+                self.assertEqual(rejected.status_code, 302 if suffix else 200)
+                if suffix:
+                    self.assertEqual(rejected.location, f"/shared/reports/{token}")
+                else:
+                    self.assertIn(b"CLIENT REPORT ACCESS", rejected.data)
+                self.assertIsNone(
+                    browser.get_cookie(
+                        routes.shared_report_cookie_name(client),
+                        path=routes.SHARED_REPORT_COOKIE_PATH,
+                    )
+                )
+                browser.get(path)
+
+                with session_scope(self.app) as database:
+                    events = database.scalars(
+                        select(AuditEvent).where(
+                            AuditEvent.id > before_id,
+                            AuditEvent.event == "shared_report_session_invalidated",
+                        )
+                    ).all()
+                    self.assertEqual(len(events), 1)
+                    event = events[0]
+                    self.assertEqual(event.details["reason"], reason)
+                    self.assertEqual(
+                        event.details["request_source"], "Public Shared Report"
+                    )
+                    self.assertEqual(event.ip_address, "127.0.0.1")
+                    self.assertIn("client", event.details)
+                    if reason == "application_version_changed":
+                        self.assertEqual(
+                            event.details["previous_version"], "previous-build"
+                        )
+                        self.assertEqual(
+                            event.details["current_version"], current_version
+                        )
+                    elif reason == "legacy_version_marker_missing":
+                        self.assertEqual(event.details["previous_version"], "missing")
+                        self.assertEqual(
+                            event.details["current_version"], current_version
+                        )
+                    elif reason == "report_password_changed":
+                        self.assertEqual(
+                            event.details["previous_report_version"],
+                            current_password_version - 1,
+                        )
+                        self.assertEqual(
+                            event.details["current_report_version"],
+                            current_password_version,
+                        )
+                    self.assertNotIn("cookie", event.details_json)
+                    self.assertNotIn("token", event.details_json)
+                    self.assertNotIn("password_hash", event.details_json)
+
+        self.login()
+        rendered = self.client.get("/audit?event=shared_report_session_invalidated")
+        self.assertEqual(rendered.status_code, 200)
+        self.assertIn(b"Shared Report Session Invalidated", rendered.data)
+        self.assertIn(b"Public Shared Report", rendered.data)
+        for reason in {
+            "application_version_changed",
+            "legacy_version_marker_missing",
+            "report_password_changed",
+            "session_expired",
+        }:
+            self.assertIn(reason.encode(), rendered.data)
+
+    def test_shared_report_session_invalidation_has_no_false_positives(self) -> None:
+        with session_scope(self.app) as database:
+            client = database.get(Client, self.seed.client_id)
+            assert client is not None and client.report_token is not None
+            token = client.report_token
+        with session_scope(self.app) as database:
+            unrelated = Client(
+                name="Unrelated Cookie Client",
+                contact_name="Unrelated Contact",
+                contact_email="unrelated@example.invalid",
+            )
+            database.add(unrelated)
+            database.flush()
+            unrelated_id = unrelated.id
+        with session_scope(self.app) as database:
+            unrelated = database.get(Client, unrelated_id)
+            assert unrelated is not None
+        with self.app.test_request_context("/"):
+            signed_malformed_payload = routes.shared_report_serializer().dumps(
+                [client.id]
+            )
+        self.assertEqual(client.id, 1)
+        malformed_cases = (
+            ("boolean-client-id", {"client_id": True}),
+            ("string-client-id", {"client_id": "1"}),
+            ("zero-client-id", {"client_id": 0}),
+            ("negative-client-id", {"client_id": -1}),
+            ("boolean-password-version", {"password_version": True}),
+            ("string-password-version", {"password_version": "1"}),
+            ("zero-password-version", {"password_version": 0}),
+            ("negative-password-version", {"password_version": -1}),
+            ("empty-app-version", {"app_version": ""}),
+            ("invalid-app-version-type", {"app_version": 42}),
+        )
+        for expired in (False, True):
+            for index, (case, payload_kwargs) in enumerate(malformed_cases):
+                with self.subTest(case=case, expired=expired):
+                    if expired:
+                        with patch("itsdangerous.timed.time.time", return_value=1000):
+                            value = self.signed_shared_report_cookie(
+                                client, **payload_kwargs
+                            )
+                    else:
+                        value = self.signed_shared_report_cookie(
+                            client, **payload_kwargs
+                        )
+                    browser = self.app.test_client()
+                    self.set_shared_report_cookie_value(browser, client, value)
+                    suffix = "/live" if index % 2 else ""
+                    path = f"/shared/reports/{token}{suffix}"
+                    request_context = (
+                        patch(
+                            "itsdangerous.timed.time.time",
+                            return_value=1000
+                            + int(self.app.permanent_session_lifetime.total_seconds())
+                            + 1,
+                        )
+                        if expired
+                        else nullcontext()
+                    )
+                    with request_context:
+                        rejected = browser.get(path)
+                    if suffix:
+                        self.assertEqual(rejected.status_code, 302)
+                        self.assertEqual(rejected.location, f"/shared/reports/{token}")
+                    else:
+                        self.assertEqual(rejected.status_code, 200)
+                        self.assertIn(b"CLIENT REPORT ACCESS", rejected.data)
+
+        cases = (
+            ("absent", None),
+            ("malformed", "not-a-signed-cookie"),
+            ("tampered", self.signed_shared_report_cookie(client) + "tampered"),
+            ("wrong-client", self.signed_shared_report_cookie(unrelated)),
+            (
+                "signed-malformed-payload",
+                signed_malformed_payload,
+            ),
+        )
+        for index, (case, value) in enumerate(cases):
+            with self.subTest(case=case):
+                browser = self.app.test_client()
+                if value is not None:
+                    self.set_shared_report_cookie_value(browser, client, value)
+                path = (
+                    f"/shared/reports/{token}/live"
+                    if index % 2
+                    else f"/shared/reports/{token}"
+                )
+                browser.get(path)
+        with session_scope(self.app) as database:
+            self.assertEqual(
+                database.scalars(
+                    select(AuditEvent).where(
+                        AuditEvent.event == "shared_report_session_invalidated"
+                    )
+                ).all(),
+                [],
+            )
+
+    def test_shared_report_invalidation_audit_failure_does_not_block_cleanup(
+        self,
+    ) -> None:
+        with session_scope(self.app) as database:
+            client = database.get(Client, self.seed.client_id)
+            assert client is not None and client.report_token is not None
+            token = client.report_token
+        browser = self.app.test_client()
+        self.set_shared_report_cookie_value(
+            browser,
+            client,
+            self.signed_shared_report_cookie(client, app_version="previous-build"),
+        )
+        with patch(
+            "grayhaven_timetracker.routes.record_audit_event",
+            side_effect=RuntimeError("simulated report invalidation audit failure"),
+        ):
+            response = browser.get(f"/shared/reports/{token}/live")
+        self.assertEqual(response.status_code, 302)
+        self.assertIsNone(
+            browser.get_cookie(
+                routes.shared_report_cookie_name(client),
+                path=routes.SHARED_REPORT_COOKIE_PATH,
+            )
+        )
+
+    def test_report_password_reset_invalidates_an_existing_report_session(
+        self,
+    ) -> None:
+        with session_scope(self.app) as database:
+            client = database.get(Client, self.seed.client_id)
+            assert client is not None and client.report_token is not None
+            client_id = client.id
+            token = client.report_token
+            previous_report_version = client.report_password_version
+        report_browser = self.app.test_client()
+        self.set_shared_report_cookie_value(
+            report_browser,
+            client,
+            self.signed_shared_report_cookie(client),
+        )
+        self.assertIn(
+            b"Live Client Report",
+            report_browser.get(f"/shared/reports/{token}").data,
+        )
+
+        self.login()
+        reset_path = f"/clients/{client_id}/report-password/reset"
+        self.authorize_sensitive_action(reset_path)
+        with patch(
+            "grayhaven_timetracker.routes.generate_temporary_password",
+            return_value="Replacement-Report-Password-For-Test-0001!",
+        ):
+            reset = self.client.post(reset_path)
+        self.assertEqual(reset.status_code, 302)
+
+        rejected = report_browser.get(f"/shared/reports/{token}")
+        self.assertEqual(rejected.status_code, 200)
+        self.assertIn(b"CLIENT REPORT ACCESS", rejected.data)
+        self.assertIsNone(
+            report_browser.get_cookie(
+                routes.shared_report_cookie_name(client),
+                path=routes.SHARED_REPORT_COOKIE_PATH,
+            )
+        )
+        with session_scope(self.app) as database:
+            event = database.scalar(
+                select(AuditEvent).where(
+                    AuditEvent.event == "shared_report_session_invalidated"
+                )
+            )
+            assert event is not None
+            self.assertEqual(event.details["reason"], "report_password_changed")
+            self.assertEqual(
+                event.details["previous_report_version"],
+                previous_report_version,
+            )
+            self.assertEqual(
+                event.details["current_report_version"],
+                previous_report_version + 1,
+            )
 
     def test_archiving_contract_stops_timers_and_disables_operations(self) -> None:
         self.login()

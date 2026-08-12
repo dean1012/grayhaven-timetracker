@@ -17,6 +17,17 @@ Grayhaven Systems LLC requires adaptation to the target environment.
 
 ## Development Setup
 
+Install the local command-line validators:
+
+```bash
+sudo dnf install ShellCheck nodejs npm
+npm config set prefix "$HOME/.local"
+npm install --global markdownlint-cli2
+printf '%s\n' "$PATH" | grep -qE "(^|:)$HOME/\\.local/bin(:|$)" || \
+  printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$HOME/.bashrc"
+source "$HOME/.bashrc"
+```
+
 Create and activate a Python 3.12 or newer virtual environment:
 
 ```bash
@@ -30,11 +41,16 @@ Install runtime and development dependencies:
 python3 -m pip install --upgrade pip
 python3 -m pip install -r requirements.txt
 python3 -m pip install -r requirements-dev.txt
+python3 -m pip install actionlint-py
 ```
 
-Docker is required for container-image and Compose validation. ShellCheck,
-actionlint, yamllint, and markdownlint-cli2 are required to run every CI check
-locally.
+Docker with the Compose plugin is required for container-image and Compose
+validation. Confirm that both interfaces are available:
+
+```bash
+docker --version
+docker compose version
+```
 
 [Back to top](#contributing)
 
@@ -56,9 +72,10 @@ requires the pull request branch to be current before merging.
 
 ## Validation
 
-Run the same application checks used by CI:
+Run the application checks locally:
 
 ```bash
+node --test tests/test_passkeys_js.mjs
 python3 -m pip_audit --progress-spinner off -r requirements.txt
 python3 -m compileall -q grayhaven_timetracker scripts tests
 mypy --strict grayhaven_timetracker scripts
@@ -150,12 +167,10 @@ secrets.
 
 ## Documentation Guidelines
 
-Keep the project overview in [README.md](README.md), application structure in
-[Application Architecture](docs/architecture.md), runtime settings in
-[Configuration](docs/configuration.md), managed-host procedures in
-[Operations](docs/operations.md), optional standalone procedures in
-[Standalone Docker Compose Operations](docs/docker-compose.md), and trust
-boundaries in [Security](docs/security.md).
+Keep the project overview in `README.md`, managed-host procedures in
+`docs/operations.md`, and optional standalone procedures in
+`docs/docker-compose.md`. Keep architecture, configuration, and security
+details in their corresponding guides and contributor workflows in this file.
 
 Use Python docstrings for module, class, and function responsibilities. Add
 comments for non-obvious implementation decisions, security boundaries, and
