@@ -651,7 +651,7 @@ class SecurityAndErrorRouteTests(AppTestCase):
             r"\.mobile-nav \{ display: none; \}",
         )
 
-    def test_application_header_glass_preserves_structure_and_navigation(
+    def test_application_header_opaque_preserves_structure_and_navigation(
         self,
     ) -> None:
         stylesheet = (
@@ -666,20 +666,16 @@ class SecurityAndErrorRouteTests(AppTestCase):
             "top: 0",
             "z-index: 5",
             "flex: 0 0 auto",
-            "background: rgba(20, 20, 20, 0.35)",
+            "background: var(--navbar-bg)",
             "border-bottom: 1px solid var(--charcoal-border)",
-            "backdrop-filter: blur(22px)",
-            "-webkit-backdrop-filter: blur(22px)",
-            "box-shadow: 0 10px 40px rgba(0, 0, 0, .35), "
-            "inset 0 1px rgba(255, 255, 255, .08)",
         ):
             with self.subTest(declaration=declaration):
                 self.assertIn(declaration, header_rule)
-        self.assertEqual(
-            len(re.findall(r"(?<!-webkit-)backdrop-filter:", header_rule)), 1
-        )
-        self.assertEqual(header_rule.count("-webkit-backdrop-filter:"), 1)
-        self.assertEqual(stylesheet.count("background: rgba(20, 20, 20, 0.35)"), 1)
+        self.assertNotIn("backdrop-filter:", header_rule)
+        self.assertNotIn("-webkit-backdrop-filter:", header_rule)
+        self.assertNotIn("box-shadow:", header_rule)
+        self.assertIn("--navbar-bg: var(--deep-graphite);", stylesheet)
+        self.assertNotIn("background: rgba(20, 20, 20, 0.35)", stylesheet)
         self.assertIn(
             ".app-header-inner { display: flex; align-items: center; width: "
             "min(1680px, calc(100% - var(--container-padding) - "
