@@ -130,7 +130,7 @@ jobs:
       - name: Ruff format check
         run: ruff format --check grayhaven_timetracker scripts tests
       - name: Run actionlint
-        uses: devops-actions/actionlint@9fb9c192862f19e684586ca84b500461bcd8a541  # v0.1.12
+        uses: devops-actions/actionlint@ec02b36684b2f574f1d219ad0a43b082e46bf3e4  # v0.1.13
       - name: Run yamllint
         uses: ibiqlik/action-yamllint@2576378a8e339169678f9939646ee3ee325e845c  # v3
       - name: Validate Docker Compose config
