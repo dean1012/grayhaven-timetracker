@@ -124,7 +124,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .rename-control > summary::-webkit-details-marker { display: none; }
 .rename-popover { position: absolute; top: calc(100% + .6rem); right: 0; z-index: 10; display: grid; grid-template-columns: minmax(240px, 1fr) auto; align-items: end; gap: .65rem; width: 390px; padding: 1rem; }
 .subtask-empty { margin: .8rem 0 .8rem 46px; font-size: .82rem; }
-.subtask-add { margin-top: .75rem; margin-left: 46px; }
+.subtask-add { width: calc(100% - 46px); margin-top: .75rem; margin-left: 46px; }
 .audit-change { display: block; }
 .passkey-choice { display: none; }
 .passkey-choice[data-passkey-state="ready"], .passkey-choice[data-passkey-state="fallback"] { display: block; margin-top: 1.5rem; padding-top: 1.25rem; }
