@@ -27,7 +27,8 @@ security model, and operating procedures for its own environment.
 The application provides:
 
 - Role-based administration and user access with password/TOTP authentication
-  and optional passkeys.
+  and optional passkeys. Sign-in and sensitive-action pages expose an explicit
+  passkey alternative while retaining password/TOTP fallback.
 - Clients, contracts, tasks, and optional subtasks.
 - One active timer per user, manual time entries, and administrative time
   reassignment.

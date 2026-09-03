@@ -56,7 +56,14 @@ The primary modules are:
   support, and key rotation.
 
 HTML templates and application CSS are maintained in `templates/` and
-`static/`. Runtime identity assets are supplied separately through `branding/`.
+`static/`. The canonical Branding component layer is tracked as
+`static/shared-components.css` and `static/shared-components.js`; it owns shared
+tokens, resets, controls, panels, alerts, tables, hierarchy primitives, and
+shared interaction behavior. These files are synchronized byte-for-byte from
+the published Branding source before consumer validation. `static/app.css` and
+`static/app.js` may add only Time Tracker composition and behavior hooks, not
+local forks of shared visuals. Runtime identity assets are supplied separately
+through `branding/`.
 
 [Back to top](#application-architecture)
 
@@ -81,10 +88,12 @@ Argon2id. Accounts can enroll TOTP, and configured TOTP is required at login.
 Bootstrap provisioning may supply an initial TOTP secret, and administrators
 have an assisted recovery path. Sensitive administrator actions require recent
 password and TOTP reauthentication or a verified passkey. Passkeys are
-optional: password and TOTP sign-in remain permanently available. Users can
-name, add, and remove their own passkeys after reauthentication. Administrators
-can see only whether an account has passkeys and can wipe all of them; they
-cannot inspect credential details. Bootstrap remains password/TOTP based.
+optional: password and TOTP sign-in remain permanently available. The ordinary
+sign-in and sensitive-action password stages expose explicit passkey buttons,
+while conditional login autofill remains a quiet enhancement. Users can name,
+add, and remove their own passkeys after reauthentication. Administrators can
+see only whether an account has passkeys and can wipe all of them; they cannot
+inspect credential details. Bootstrap remains password/TOTP based.
 
 [Back to top](#application-architecture)
 
