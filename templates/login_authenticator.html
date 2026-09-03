@@ -9,7 +9,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       {% include "_totp_bubbles.html" %}
       <button class="button button-primary" type="submit"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Verify</button>
-      <a class="auth-back" href="{{ url_for('main.login') }}">Back to Sign In</a>
+      <a class="back-link app-back-link" href="{{ url_for('main.login') }}">Back to Sign In</a>
     </form>
   </div>
 </section>

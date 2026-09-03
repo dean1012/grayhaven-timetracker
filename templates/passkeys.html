@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Passkeys · Grayhaven Systems LLC Time Tracker{% endblock %}
-{% block breadcrumbs %}<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li><a class="breadcrumb-label" href="{{ url_for('main.profile') }}" title="Profile">Profile</a></li><li aria-current="page"><span class="breadcrumb-label" title="Passkeys">Passkeys</span></li></ol></nav>{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li><a class="breadcrumb-label" href="{{ url_for('main.profile') }}" title="Profile">Profile</a></li><li aria-current="page"><span class="breadcrumb-label" title="Passkeys">Passkeys</span></li></ol></nav>{% endblock %}
 {% block content %}
 <section class="narrow-content">
   <div class="page-heading compact"><div><p class="eyebrow">ACCOUNT SECURITY</p><h1>Passkeys</h1></div></div>
@@ -12,6 +12,6 @@
     <div class="form-actions"><a class="button button-secondary" href="{{ url_for('main.profile') }}">Cancel</a><button class="button button-primary" type="button" data-passkey-start hidden><i class="fa-solid fa-key" aria-hidden="true"></i> Add Passkey</button><button class="button button-secondary" type="button" data-passkey-cancel hidden>Cancel Passkey</button></div>
     <p class="muted" role="status" data-passkey-status></p>
   </div>
-  <div class="panel form-panel"><h2>Registered Passkeys</h2>{% if passkeys %}<ul class="plain-list">{% for passkey in passkeys %}<li><strong>{{ passkey.name }}</strong><span class="muted">Added {{ format_datetime(passkey.created_at, timezone_info) }}{% if passkey.last_used_at %}; last used {{ format_datetime(passkey.last_used_at, timezone_info) }}{% endif %}</span><a class="button button-secondary" href="{{ url_for('main.remove_passkey', passkey_id=passkey.id) }}">Remove</a></li>{% endfor %}</ul>{% else %}<p class="muted">No passkeys are registered.</p>{% endif %}</div>
+  <div class="panel form-panel"><h2>Registered Passkeys</h2>{% if passkeys %}<ul class="action-list">{% for passkey in passkeys %}<li><strong>{{ passkey.name }}</strong><span class="muted">Added {{ format_datetime(passkey.created_at, timezone_info) }}{% if passkey.last_used_at %}; last used {{ format_datetime(passkey.last_used_at, timezone_info) }}{% endif %}</span><a class="button button-secondary" href="{{ url_for('main.remove_passkey', passkey_id=passkey.id) }}">Remove</a></li>{% endfor %}</ul>{% else %}<p class="muted">No passkeys are registered.</p>{% endif %}</div>
 </section>
 {% endblock %}

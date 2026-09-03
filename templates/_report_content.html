@@ -11,7 +11,7 @@
     <div class="report-meta">
       <p class="eyebrow">CONFIDENTIAL</p>
       <p>{{ 'Live Client Report' if shared_report else 'Client Time Report' }}</p>
-      <p class="live-report-status" data-live-status data-state="live" aria-live="polite"><span class="running-dot" aria-hidden="true"></span><span data-live-status-label>Live</span></p>
+      <p class="live-status" data-live-status data-state="live" aria-live="polite"><span class="running-dot" aria-hidden="true"></span><span data-live-status-label>Live</span></p>
     </div>
   </header>{% endif %}
   <div class="report-viewport">
@@ -21,10 +21,10 @@
     {% if not shared_report %}<div class="report-title-meta">
       <p class="eyebrow">CONFIDENTIAL</p>
       <p>Client Time Report</p>
-      <p class="live-report-status" data-live-status data-state="live" aria-live="polite"><span class="running-dot" aria-hidden="true"></span><span data-live-status-label>Live</span></p>
+      <p class="live-status" data-live-status data-state="live" aria-live="polite"><span class="running-dot" aria-hidden="true"></span><span data-live-status-label>Live</span></p>
     </div>{% endif %}
   </section>
-  <section class="report-summary panel">
+  <section class="summary-grid panel">
     <div class="summary-card"><span>Total duration</span><strong data-report-total-duration>{{ format_duration(report.total_seconds) }}</strong></div>
     <div class="summary-card"><span>Cost</span><strong data-report-total-cost>{{ format_money(report.total_cost) }}</strong></div>
     <div class="summary-card"><span>Contracts</span><strong>{{ report.contracts|length }}</strong></div>
@@ -35,7 +35,7 @@
       <h2 class="report-contract-name">{{ contract_report.contract.name }}</h2>
       <p class="muted">{{ format_money(contract_report.contract.hourly_rate) }} per hour</p>
     </header>
-    <section class="report-contract-summary panel">
+    <section class="summary-grid content-grid-two panel">
       <div class="summary-card"><span>Contract duration</span><strong data-report-contract-total-duration>{{ format_duration(contract_report.total_seconds) }}</strong></div>
       <div class="summary-card"><span>Cost</span><strong data-report-contract-total-cost>{{ format_money(contract_report.total_cost) }}</strong></div>
     </section>
@@ -49,8 +49,8 @@
             {% for group in contract_report.groups %}
             <tr data-report-group="{{ group.label }}">
               <td class="cell-primary" data-label="Task / Subtask">{{ group.label }}</td>
-              <td data-label="Duration" data-report-group-duration>{{ format_duration(group.seconds) }}</td>
-              <td data-label="Cost" data-report-group-cost>{{ format_money(group.cost) }}</td>
+              <td class="cell-numeric" data-label="Duration" data-report-group-duration>{{ format_duration(group.seconds) }}</td>
+              <td class="cell-numeric" data-label="Cost" data-report-group-cost>{{ format_money(group.cost) }}</td>
             </tr>
             {% else %}
             <tr class="empty-table-row"><td colspan="3">No time has been recorded.</td></tr>
@@ -62,7 +62,7 @@
     <section class="panel report-detail report-panel">
       <div class="panel-heading"><div><p class="eyebrow">DETAIL</p><h3>Session Log</h3></div></div>
       <div data-report-pagination="sessions">
-        <div class="table-scroll"><table class="data-table responsive-table report-session-table">
+        <div class="table-container"><table class="data-table responsive-table report-session-table">
           <caption class="visually-hidden">Session log for {{ contract_report.contract.name }}</caption>
           <thead><tr><th scope="col">User</th><th scope="col">Task / Subtask</th><th scope="col">Start</th><th scope="col">End</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Cost</th></tr></thead>
           <tbody>
@@ -73,8 +73,8 @@
               <td data-label="Start">{{ format_datetime(entry.started_at, report.timezone) }}</td>
               <td data-label="End">{% if entry.active %}<span class="live-label">active now</span>{% else %}{{ format_datetime(entry.ended_at, report.timezone) }}{% endif %}</td>
               <td class="cell-status" data-label="Status">{% if entry.active %}<span class="status-pill status-running"><i class="fa-solid fa-circle" aria-hidden="true"></i> Running</span>{% else %}<span class="status-pill status-neutral">Pending Invoice</span>{% endif %}</td>
-              <td data-label="Duration" data-report-session-duration>{{ format_duration(entry.seconds) }}</td>
-              <td data-label="Cost" data-report-session-cost>{{ format_money(entry.cost) }}</td>
+              <td class="cell-numeric" data-label="Duration" data-report-session-duration>{{ format_duration(entry.seconds) }}</td>
+              <td class="cell-numeric" data-label="Cost" data-report-session-cost>{{ format_money(entry.cost) }}</td>
             </tr>
             {% else %}
             <tr class="empty-table-row"><td colspan="7">No sessions have been recorded.</td></tr>
@@ -85,7 +85,7 @@
     </section>
   </section>
   {% else %}
-  <section class="panel empty-state"><p>No active contracts are currently available for this client.</p></section>
+  <section class="panel empty-panel"><div class="panel-heading"><h2>No Active Contracts</h2></div><p class="muted">No active contracts are currently available for this client.</p></section>
   {% endfor %}
   </div>
   </div>

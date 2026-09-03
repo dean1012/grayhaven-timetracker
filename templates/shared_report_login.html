@@ -6,7 +6,7 @@
     <img class="auth-logo" src="{{ url_for('main.branding_asset', filename='grayhaven-logo-wordmark-dark.svg') }}" alt="Grayhaven Systems LLC">
     <p class="eyebrow">CLIENT REPORT ACCESS</p>
     <h1>{{ client.name }}</h1>
-    {% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack">{% for category, message in messages %}<div class="flash flash-{{ category }}">{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}
+    {% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="notification-region" aria-live="polite">{% for category, message in messages %}<div class="alert alert-{{ category }} alert-with-icon" role="{{ 'alert' if category == 'error' else 'status' }}" data-auto-dismiss><i class="fa-solid {{ {'info': 'fa-circle-info', 'success': 'fa-circle-check', 'warning': 'fa-triangle-exclamation', 'error': 'fa-circle-xmark'}.get(category, 'fa-circle-info') }}" aria-hidden="true"></i><span class="alert-message">{{ message }}</span><button class="alert-dismiss" type="button" data-alert-dismiss aria-label="Dismiss notification"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></div>{% endfor %}</div>{% endif %}{% endwith %}
     <form method="post" class="form-stack" autocomplete="off" data-protonpass-ignore="true">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Report Password<input type="password" name="report_password" maxlength="1024" required autocomplete="off" data-protonpass-ignore="true" autofocus></label>

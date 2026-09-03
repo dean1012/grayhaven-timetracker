@@ -11,14 +11,16 @@
   <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('main.branding_asset', filename='favicon-16.png') }}">
   <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('main.branding_asset', filename='apple-touch-icon.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='fontawesome.min.css') }}?v={{ app_version }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='shared-components.css') }}?v={{ app_version }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ app_version }}">
+  <script src="{{ url_for('static', filename='shared-components.js') }}?v={{ app_version }}" defer></script>
   <script src="{{ url_for('static', filename='app.js') }}?v={{ app_version }}" defer></script>
 </head>
 <body class="app-body {% block body_class %}{% endblock %}">
   {% if logged_user %}
-  {% set profile_active = request.endpoint in ('main.profile', 'main.required_password_change', 'main.change_password', 'main.setup_totp', 'main.confirm_totp', 'main.disable_totp', 'main.update_profile_name') %}
+  {% set profile_active = request.endpoint in ('main.profile', 'main.passkey_management', 'main.passkey_registration_options', 'main.passkey_registration_verify', 'main.remove_passkey', 'main.required_password_change', 'main.authenticate_password_change', 'main.password_change_form', 'main.change_password', 'main.setup_totp', 'main.confirm_totp', 'main.disable_totp', 'main.update_profile_name') %}
   {% set sessions_active = request.endpoint == 'main.my_sessions' %}
-  {% set users_active = request.endpoint in ('main.users', 'main.new_user', 'main.edit_user', 'main.reset_user_password', 'main.reset_user_password_confirmation', 'main.toggle_user_enabled', 'main.toggle_user_admin') %}
+  {% set users_active = request.endpoint in ('main.users', 'main.new_user', 'main.edit_user', 'main.reset_user_password', 'main.reset_user_password_confirmation', 'main.disable_user_totp', 'main.wipe_user_passkeys', 'main.toggle_user_enabled', 'main.toggle_user_admin') %}
   {% set audit_active = request.endpoint == 'main.audit_log' %}
   {% set dashboard_active = not profile_active and not sessions_active and not users_active and not audit_active %}
   <header class="app-header">
@@ -66,13 +68,13 @@
       'main.edit_time_entry', 'main.delete_time_entry'
     ) %}
     <div class="page-shell"{% if live_page %} data-live-page data-live-etag="{{ live_page_etag }}" data-live-interval-ms="3000"{% endif %}>
-      {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-        <div class="flash-stack">
-          {% for category, message in messages %}<div class="flash flash-{{ category }}" role="status">{{ message }}</div>{% endfor %}
-        </div>
-        {% endif %}
-      {% endwith %}
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div class="notification-region app-notification-region" aria-live="polite">
+      {% for category, message in messages %}<div class="alert alert-{{ category }} alert-with-icon" role="{{ 'alert' if category == 'error' else 'status' }}" data-auto-dismiss><i class="fa-solid {{ {'info': 'fa-circle-info', 'success': 'fa-circle-check', 'warning': 'fa-triangle-exclamation', 'error': 'fa-circle-xmark'}.get(category, 'fa-circle-info') }}" aria-hidden="true"></i><span class="alert-message">{{ message }}</span><button class="alert-dismiss" type="button" data-alert-dismiss aria-label="Dismiss notification"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></div>{% endfor %}
+      </div>
+      {% endif %}
+    {% endwith %}
       {% set stale_messages = {
         'client_deleted': 'The client was deleted.',
         'contract_deleted': 'The contract was deleted.',
@@ -81,11 +83,11 @@
         'time_entry_deleted': 'This time entry was deleted.',
         'time_entry_moved': 'This time entry has been moved.'
       } %}
-      {% if request.args.get('stale') in stale_messages %}<div class="flash-stack"><div class="flash flash-warning" role="status">{{ stale_messages[request.args.get('stale')] }}</div></div>{% endif %}
+      {% if request.args.get('stale') in stale_messages %}<div class="alert-stack"><div class="alert alert-warning alert-with-icon" role="status"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i><span class="alert-message">{{ stale_messages[request.args.get('stale')] }}</span><button class="alert-dismiss" type="button" data-alert-dismiss aria-label="Dismiss notification"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></div></div>{% endif %}
       <div data-live-region="active-timer">{% if active_entry %}{% include "active_timer.html" %}{% endif %}</div>
       {% block content %}{% endblock %}
     </div>
   </main>
-  <footer class="app-footer"><strong class="app-footer-confidential">CONFIDENTIAL</strong><span>Build {{ app_version }}</span></footer>
+  <footer class="app-footer"><div class="app-footer-inner"><strong class="app-footer-label">CONFIDENTIAL</strong><span>Build {{ app_version }}</span></div></footer>
 </body>
 </html>

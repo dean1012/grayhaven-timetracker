@@ -2,7 +2,7 @@
 {% set editing = client is defined %}
 {% block title %}{{ 'Update Client' if editing else 'New Client' }} · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block breadcrumbs %}
-<nav class="breadcrumbs" aria-label="Breadcrumb">
+<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb">
   <ol>
     <li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li>
     {% if editing %}<li><a class="breadcrumb-label" href="{{ url_for('main.client', client_id=client.id) }}" title="{{ client.name }}">{{ client.name }}</a></li>{% endif %}
