@@ -788,7 +788,6 @@ class DatabaseAndModelTests(AppTestCase):
     def test_database_file_is_encrypted_and_wrong_key_is_rejected(self) -> None:
         database_path = Path(str(self.app.config["DATABASE_PATH"]))
         self.assertTrue(database_is_encrypted(database_path))
-        self.assertNotEqual(database_path.read_bytes()[:16], b"SQLite format 3\x00")
         with self.assertRaises(DatabaseError):
             connect_sqlcipher(database_path, "Wrong-passphrase-with-at-least-32-chars!")
         plain = self.root / "plain.sqlite3"

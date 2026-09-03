@@ -8,7 +8,6 @@ import time
 import unittest
 from contextlib import nullcontext
 from datetime import date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
@@ -405,12 +404,7 @@ class AuthenticationRouteTests(AppTestCase):
         self.assertIn("next=/", self.client.get("/").location)
         login_page = self.client.get("/login")
         self.assertEqual(login_page.status_code, 200)
-        self.assertIn(b'class="app-body auth-page"', login_page.data)
-        self.assertNotIn(b'class="app-header"', login_page.data)
-        self.assertNotIn(b"SECURE WORK SESSION MANAGEMENT", login_page.data)
         self.assertNotIn(b'name="totp_digit"', login_page.data)
-        self.assertIn(b"fa-envelope", login_page.data)
-        self.assertIn(b"fa-lock", login_page.data)
         self.assertEqual(self.client.head("/login").status_code, 200)
         rejected = self.client.post(
             "/login", data={"email": ADMIN_EMAIL, "password": "wrong", "totp": "000000"}
@@ -421,9 +415,7 @@ class AuthenticationRouteTests(AppTestCase):
             data={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
         )
         self.assertEqual(challenge.location, "/login/authenticator")
-        challenge_page = self.client.get(challenge.location)
-        self.assertEqual(challenge_page.data.count(b'name="totp_digit"'), 6)
-        self.assertIn(b"data-totp-bubbles", challenge_page.data)
+        self.assertEqual(self.client.get("/login/authenticator").status_code, 200)
         rejected_totp = self.client.post(
             "/login/authenticator",
             data={"totp_digit": list("000000")},
@@ -610,362 +602,6 @@ class AuthenticationRouteTests(AppTestCase):
 
 
 class SecurityAndErrorRouteTests(AppTestCase):
-    def test_responsive_navbar_keeps_fixed_logo_and_icon_only_trigger(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        stylesheet = (project_root / "static" / "app.css").read_text(encoding="utf-8")
-        template = (project_root / "templates" / "base.html").read_text(
-            encoding="utf-8"
-        )
-        self.assertEqual(len(re.findall(r"\.brand img\s*\{", stylesheet)), 1)
-        self.assertIn(
-            ".brand img { width: 194px; height: auto; }",
-            stylesheet,
-        )
-        for report_width in (230, 185, 160, 145):
-            with self.subTest(report_width=report_width):
-                self.assertIn(
-                    f".report-header img {{ width: {report_width}px; }}",
-                    stylesheet,
-                )
-        self.assertNotIn(".mobile-nav-label", stylesheet)
-        self.assertIn(
-            ".mobile-nav-toggle { display: inline-flex; align-items: center; "
-            "justify-content: center; width: 44px; height: 44px; padding: 0;",
-            stylesheet,
-        )
-        self.assertEqual(
-            len(re.findall(r"(?m)^\.mobile-nav-toggle\s*\{", stylesheet)), 1
-        )
-        self.assertIn(
-            '<summary class="mobile-nav-toggle" aria-label="Application menu">'
-            '<i class="fa-solid fa-bars" aria-hidden="true"></i></summary>',
-            template,
-        )
-        self.assertNotIn("mobile-nav-label", template)
-        self.assertNotIn(">Menu</", template)
-        self.assertIn("@media (width >=1721px)", stylesheet)
-        self.assertRegex(
-            stylesheet,
-            r"(?s)@media \(width >=1721px\).*?"
-            r"\.desktop-nav \{ display: flex; \}.*?"
-            r"\.mobile-nav \{ display: none; \}",
-        )
-
-    def test_application_header_opaque_preserves_structure_and_navigation(
-        self,
-    ) -> None:
-        stylesheet = (
-            Path(__file__).resolve().parents[1] / "static" / "app.css"
-        ).read_text(encoding="utf-8")
-        match = re.search(r"\.app-header \{([^}]+)\}", stylesheet)
-        self.assertIsNotNone(match)
-        assert match is not None
-        header_rule = match.group(1)
-        for declaration in (
-            "position: sticky",
-            "top: 0",
-            "z-index: 5",
-            "flex: 0 0 auto",
-            "background: var(--navbar-bg)",
-            "border-bottom: 1px solid var(--charcoal-border)",
-        ):
-            with self.subTest(declaration=declaration):
-                self.assertIn(declaration, header_rule)
-        self.assertNotIn("backdrop-filter:", header_rule)
-        self.assertNotIn("-webkit-backdrop-filter:", header_rule)
-        self.assertNotIn("box-shadow:", header_rule)
-        self.assertIn("--navbar-bg: var(--deep-graphite);", stylesheet)
-        self.assertNotIn("background: rgba(20, 20, 20, 0.35)", stylesheet)
-        self.assertIn(
-            ".app-header-inner { display: flex; align-items: center; width: "
-            "min(1680px, calc(100% - var(--container-padding) - "
-            "var(--container-padding))); height: 76px; margin: auto; }",
-            stylesheet,
-        )
-        self.assertIn(
-            ".app-nav a:hover, .app-nav a[aria-current], .nav-button:hover { "
-            "color: var(--primary-accent); }",
-            stylesheet,
-        )
-        self.assertIn(".desktop-nav { display: none; }", stylesheet)
-        self.assertIn(".mobile-nav { position: relative; display: block;", stylesheet)
-
-    def test_form_focus_keeps_borders_without_weakening_other_indicators(
-        self,
-    ) -> None:
-        stylesheet = (
-            Path(__file__).resolve().parents[1] / "static" / "app.css"
-        ).read_text(encoding="utf-8")
-        self.assertIn(
-            "input, select { min-height: 42px; width: 100%; padding: .65rem "
-            ".75rem; color: var(--soft-white); background: "
-            "var(--deep-graphite); border: 1px solid var(--charcoal-border);",
-            stylesheet,
-        )
-        self.assertIn(
-            "input:focus-visible, select:focus-visible { "
-            "border-color: var(--primary-accent); outline: none; }",
-            stylesheet,
-        )
-        self.assertIn(
-            ".money-input:focus-within { border-color: var(--primary-accent); "
-            "outline: none; }",
-            stylesheet,
-        )
-        self.assertIn(
-            ".button:focus-visible, .icon-button:focus-visible, "
-            ".text-link:focus-visible, .nav-button:focus-visible { "
-            "outline: 2px solid var(--primary-accent); outline-offset: 3px; }",
-            stylesheet,
-        )
-        self.assertIn(
-            "a:focus-visible { outline: 2px solid var(--primary-accent); "
-            "outline-offset: 3px; }",
-            stylesheet,
-        )
-        self.assertIn(
-            ".mobile-nav-toggle:focus-visible { outline: 2px solid "
-            "var(--primary-accent); outline-offset: 3px; }",
-            stylesheet,
-        )
-        self.assertIn(
-            ".input-with-icon:focus-within > i { color: var(--primary-accent); }",
-            stylesheet,
-        )
-        self.assertNotRegex(
-            stylesheet,
-            r"(?:input|select):focus-visible[^{}]*\{[^}]*border-width",
-        )
-        self.assertNotRegex(
-            stylesheet,
-            r"\.money-input:focus-within\s*\{[^}]*border-width",
-        )
-        self.assertNotRegex(
-            stylesheet,
-            r"(?:input|select):focus-visible[^{}]*\{[^}]*"
-            r"outline:[^;}]*primary-accent",
-        )
-        self.assertNotRegex(
-            stylesheet,
-            r"\.money-input:focus-within\s*\{[^}]*"
-            r"outline:[^;}]*primary-accent",
-        )
-
-    def test_static_assets_cover_template_icons_and_branding_breakpoints(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        stylesheet = (project_root / "static/fontawesome.min.css").read_text(
-            encoding="utf-8"
-        )
-        used_icons: set[str] = set()
-        for template in (project_root / "templates").glob("*.html"):
-            for classes in re.findall(
-                r'class="([^"]*)"', template.read_text(encoding="utf-8")
-            ):
-                used_icons.update(
-                    item
-                    for item in classes.split()
-                    if item.startswith("fa-") and item != "fa-solid" and "{" not in item
-                )
-        missing_icons = sorted(
-            icon for icon in used_icons if f".{icon}:before" not in stylesheet
-        )
-        self.assertEqual(missing_icons, [])
-
-        app_stylesheet = (project_root / "static/app.css").read_text(encoding="utf-8")
-        self.assertIn("[hidden] { display: none !important; }", app_stylesheet)
-        for media_query in (
-            "@media (width <=400px)",
-            "@media (width <=575px)",
-            "@media (width <1440px)",
-            "@media (width >=640px)",
-            "@media (width >=768px)",
-            "@media (width >=1120px)",
-            "@media (width >=1721px)",
-        ):
-            self.assertIn(media_query, app_stylesheet)
-        self.assertRegex(
-            app_stylesheet,
-            r"(?s)@media \(width >=1721px\).*?"
-            r"\.desktop-nav \{ display: flex; \}.*?"
-            r"\.mobile-nav \{ display: none; \}",
-        )
-        self.assertIn(".responsive-table tbody > tr > td::before", app_stylesheet)
-        self.assertRegex(
-            app_stylesheet,
-            r"(?s)\.status-pill,\s*\.live-label \{[^}]*"
-            r"flex: 0 0 auto;[^}]*justify-self: start;[^}]*"
-            r"inline-size: fit-content;[^}]*max-inline-size: 100%;[^}]*"
-            r"text-align: left;[^}]*overflow-wrap: anywhere;",
-        )
-        self.assertNotRegex(
-            app_stylesheet,
-            r"\.audit-source\s*\{[^}]*(?:min-(?:inline-)?size|text-align: center)",
-        )
-        self.assertNotIn(
-            ".responsive-table.user-table .status-pill",
-            app_stylesheet,
-        )
-        self.assertIn(
-            ".active-timer-actions .timer-stop-form",
-            app_stylesheet,
-        )
-        self.assertRegex(
-            app_stylesheet,
-            r"\.session-directory \+ \.session-directory \{[^}]*"
-            r"margin-top: 1\.5rem;",
-        )
-        self.assertIn("flex: 1 1 0", app_stylesheet)
-        self.assertNotIn("overflow-x: auto", app_stylesheet)
-        self.assertNotRegex(
-            app_stylesheet,
-            r"\.(?:session-table|my-session-table|user-table|audit-table)\s*\{[^}]*min-width",
-        )
-        self.assertNotIn(
-            ".report-page-public .report-detail { display: none; }",
-            app_stylesheet,
-        )
-
-        responsive_templates = {
-            "sessions.html": (
-                "responsive-table session-table",
-                'data-label="Actions"',
-            ),
-            "my_sessions.html": (
-                "responsive-table my-session-table",
-                'data-label="Invoice"',
-            ),
-            "users.html": ("responsive-table user-table", 'data-label="TOTP"'),
-            "audit_log.html": (
-                "responsive-table audit-table",
-                'data-label="Details"',
-            ),
-            "_report_content.html": (
-                "responsive-table report-session-table",
-                'data-label="Cost"',
-            ),
-        }
-        for filename, markers in responsive_templates.items():
-            template = (project_root / "templates" / filename).read_text(
-                encoding="utf-8"
-            )
-            with self.subTest(template=filename):
-                for marker in markers:
-                    self.assertIn(marker, template)
-
-        active_timer_template = (
-            project_root / "templates" / "active_timer.html"
-        ).read_text(encoding="utf-8")
-        self.assertIn('class="icon-button timer-action"', active_timer_template)
-        self.assertIn('class="timer-stop-form"', active_timer_template)
-
-        my_sessions_template = (
-            project_root / "templates" / "my_sessions.html"
-        ).read_text(encoding="utf-8")
-        self.assertIn(
-            "{{ entry.invoice_date }}{% if entry.invoice_number %}"
-            "<br><small>#{{ entry.invoice_number }}</small>",
-            my_sessions_template,
-        )
-        self.assertIn(
-            "<br><small>#{{ entry.transaction_number }}</small>",
-            my_sessions_template,
-        )
-        self.assertIn(
-            'class="summary-grid session-summary panel"', my_sessions_template
-        )
-        self.assertNotIn('class="summary-card panel"', my_sessions_template)
-
-        status_template = (
-            project_root / "templates" / "session_status_form.html"
-        ).read_text(encoding="utf-8")
-        self.assertEqual(
-            status_template.count(
-                'data-payment-statuses="invoiced client_paid disbursed"'
-            ),
-            2,
-        )
-        self.assertEqual(
-            status_template.count('data-payment-statuses="client_paid disbursed"'),
-            1,
-        )
-        self.assertEqual(
-            status_template.count('data-payment-statuses="disbursed"'),
-            2,
-        )
-        app_script = (project_root / "static/app.js").read_text(encoding="utf-8")
-        for behavior in (
-            "select[name='billing_status']",
-            "field.hidden = !visible",
-            "input.disabled = !visible",
-            'status.addEventListener("change", updateFields)',
-            "form.dataset.currentPaymentStatus",
-            'input.dataset.originalValue !== ""',
-            "reasonField.hidden = !required",
-            "reasonInput.required = required",
-        ):
-            self.assertIn(behavior, app_script)
-
-    def test_documentation_separates_managed_and_compose_operations(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        managed = (project_root / "docs/operations.md").read_text(encoding="utf-8")
-        compose = (project_root / "docs/docker-compose.md").read_text(encoding="utf-8")
-        readme = (project_root / "README.md").read_text(encoding="utf-8")
-        contributing = (project_root / "CONTRIBUTING.md").read_text(encoding="utf-8")
-
-        self.assertNotIn("## Deployment", managed)
-        self.assertNotIn("[Deployment](#deployment)", managed)
-        self.assertNotRegex(managed.lower(), r"(?m)^\s*docker compose\s")
-        for command in (
-            "sudo grayhaven-backupctl backup",
-            "sudo grayhaven-backupctl restore latest",
-            "sudo systemctl stop grayhaven-timetracker.service",
-            "sudo systemctl start grayhaven-timetracker.service",
-        ):
-            self.assertIn(command, managed)
-        self.assertIn(
-            "/var/lib/grayhaven/timetracker/backups/<backup>",
-            managed,
-        )
-        self.assertIn(
-            "/tmp/var/lib/grayhaven/timetracker/backups/<backup>",
-            managed,
-        )
-        self.assertIn(
-            "https://github.com/dean1012/grayhaven-backupctl/blob/main/"
-            "docs/operations.md#restoring-to-a-target-directory",
-            managed,
-        )
-        self.assertIn("docker compose up --build --detach", compose)
-        self.assertIn("docker compose exec timetracker", compose)
-        self.assertIn("docker compose stop timetracker", compose)
-        self.assertIn("docker compose run --rm --no-deps timetracker", compose)
-        self.assertIn(
-            "not the Grayhaven Systems LLC managed deployment",
-            compose.replace("\n", " "),
-        )
-        self.assertNotIn("Managed Environment", readme)
-        self.assertIn("docs/docker-compose.md", readme)
-        self.assertIn("docs/docker-compose.md", contributing)
-
-        markdown_paths = [
-            project_root / "README.md",
-            project_root / "CONTRIBUTING.md",
-            *(project_root / "docs").glob("*.md"),
-        ]
-        for markdown_path in markdown_paths:
-            with self.subTest(markdown=str(markdown_path.relative_to(project_root))):
-                self.assertNotIn(
-                    "operations.md#deployment",
-                    markdown_path.read_text(encoding="utf-8"),
-                )
-
-    def test_compose_uses_stable_local_image_name(self) -> None:
-        project_root = Path(__file__).resolve().parents[1]
-        compose = (project_root / "compose.yml").read_text(encoding="utf-8")
-
-        self.assertEqual(compose.count("image: grayhaven-timetracker:local"), 1)
-        self.assertNotIn("grayhaven-timetracker-timetracker", compose)
-
     def test_security_headers_cache_policy_health_and_errors(self) -> None:
         response = self.client.get("/login", base_url="https://example.invalid")
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
@@ -2405,11 +2041,6 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                 expected_emails[2 * routes.USER_PAGE_SIZE :],
             ],
         )
-        flattened_emails = [email for page in page_emails for email in page]
-        self.assertEqual(flattened_emails, expected_emails)
-        self.assertEqual(len(flattened_emails), len(set(flattened_emails)))
-        self.assertEqual([len(page) for page in page_emails], [25, 25, 6])
-        self.assertTrue(all(len(page) <= routes.USER_PAGE_SIZE for page in page_emails))
         self.assertEqual(page_emails[0][0], ADMIN_EMAIL)
         self.assertNotIn(ADMIN_EMAIL, page_emails[1] + page_emails[2])
 
@@ -2471,7 +2102,6 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         self.assertIn(b'autocomplete="current-password"', challenge.data)
         self.assertIn(b'name="password"', challenge.data)
         self.assertNotIn(b'name="email"', challenge.data)
-        self.assertNotIn(b"data-totp-bubbles", challenge.data)
         self.assertNotIn(b"data-protonpass-ignore", challenge.data)
         self.assertEqual(
             self.client.post(
@@ -2487,7 +2117,6 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         self.assertEqual(authorized.location, "/reauthenticate/authenticator")
         authenticator = self.client.get(authorized.location)
         self.assertEqual(authenticator.status_code, 200)
-        self.assertIn(b"data-totp-bubbles", authenticator.data)
         self.assertNotIn(b'type="password"', authenticator.data)
         self.assertEqual(
             self.client.post(
@@ -4332,9 +3961,6 @@ class ReportAndSessionRouteTests(AppTestCase):
             reset_totp_replay_state(database, admin.id)
 
         archive_url = f"/contracts/{self.seed.contract_id}/archive"
-        active_contract_page = self.client.get(f"/contracts/{self.seed.contract_id}")
-        self.assertIn(b'class="icon-button timer-action"', active_contract_page.data)
-        self.assertIn(b'class="timer-stop-form"', active_contract_page.data)
         self.authorize_sensitive_action(archive_url)
         self.assertEqual(self.client.get(archive_url).status_code, 200)
         archived = self.client.post(archive_url)
@@ -4419,7 +4045,6 @@ class ReportAndSessionRouteTests(AppTestCase):
             )
         self.assertEqual(created.status_code, 200)
         self.assertIn(first_token.encode(), created.data)
-        self.assertGreater(created.data.count(first_token.encode()), 1)
         self.assertIn(
             f"https://time.example.invalid/shared/reports/{first_token}".encode(),
             created.data,

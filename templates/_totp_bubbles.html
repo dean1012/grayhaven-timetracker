@@ -1,6 +1,11 @@
-<fieldset class="totp-fieldset">
+<fieldset class="verification-code">
   <legend><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Authenticator Code</legend>
-  <div class="totp-bubbles" data-totp-bubbles>
-    {% for digit in range(1, 7) %}<input type="text" name="totp_digit" inputmode="numeric" pattern="{% if digit == 1 %}[0-9]{1,6}{% else %}[0-9]{1}{% endif %}" maxlength="{{ 6 if digit == 1 else 1 }}" required {% if digit == 1 %}autocomplete="one-time-code" autofocus{% else %}autocomplete="off"{% endif %} aria-label="Authenticator code digit {{ digit }}">{% endfor %}
+  <div class="verification-code-fields" data-verification-code>
+    <div class="verification-code-group">
+      {% for digit in range(1, 4) %}<input type="text" name="totp_digit" inputmode="numeric" pattern="{% if digit == 1 %}[0-9]{1,6}{% else %}[0-9]{1}{% endif %}" maxlength="{{ 6 if digit == 1 else 1 }}" required {% if digit == 1 %}autocomplete="one-time-code" autofocus{% else %}autocomplete="off"{% endif %} aria-label="Authenticator code digit {{ digit }}">{% endfor %}
+    </div>
+    <div class="verification-code-group">
+      {% for digit in range(4, 7) %}<input type="text" name="totp_digit" inputmode="numeric" pattern="[0-9]{1}" maxlength="1" required autocomplete="off" aria-label="Authenticator code digit {{ digit }}">{% endfor %}
+    </div>
   </div>
 </fieldset>

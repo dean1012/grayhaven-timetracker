@@ -125,6 +125,14 @@ function requiredPasskeyResponseValue(body, field) {
   return value;
 }
 
+let conditionalPasskeyController = null;
+let conditionalPasskeyPending = Promise.resolve();
+
+async function settleConditionalPasskeyLogin() {
+  conditionalPasskeyController?.abort();
+  await conditionalPasskeyPending;
+}
+
 async function startConditionalPasskeyLogin(container) {
   const conditionalAvailable =
     typeof window.PublicKeyCredential?.isConditionalMediationAvailable ===
@@ -132,106 +140,137 @@ async function startConditionalPasskeyLogin(container) {
   if (!conditionalAvailable || !navigator.credentials) {
     return;
   }
-  try {
-    if (!(await window.PublicKeyCredential.isConditionalMediationAvailable())) {
-      return;
-    }
-  } catch {
-    return;
-  }
+  const controller =
+    typeof AbortController === "function" ? new AbortController() : null;
+  conditionalPasskeyController = controller;
+  let status;
+  const pending = (async () => {
+    try {
+      if (!(await window.PublicKeyCredential.isConditionalMediationAvailable())) {
+        return;
+      }
+      const optionsUrl = container.dataset.optionsUrl;
+      const verifyUrl = container.dataset.verifyUrl;
+      const csrfToken = container.querySelector('input[name="csrf_token"]')?.value;
+      status = container.querySelector("[data-conditional-passkey-status]");
+      if (!optionsUrl || !verifyUrl || !csrfToken || controller?.signal.aborted) {
+        return;
+      }
 
-  const optionsUrl = container.dataset.optionsUrl;
-  const verifyUrl = container.dataset.verifyUrl;
-  const csrfToken = container.querySelector('input[name="csrf_token"]')?.value;
-  const status = container.querySelector("[data-conditional-passkey-status]");
-  if (!optionsUrl || !verifyUrl || !csrfToken) {
-    return;
-  }
-
-  let challengeId;
-  let credential;
-  try {
-    const options = await passkeyPost(optionsUrl, {}, csrfToken);
-    challengeId = requiredPasskeyResponseValue(options, "challengeId");
-    delete options.challengeId;
-    credential = await navigator.credentials.get({
-      publicKey: preparePublicKeyOptions(options, "authentication"),
-      mediation: "conditional",
-    });
-    if (!(credential instanceof window.PublicKeyCredential)) {
-      return;
+      let challengeId;
+      let credential;
+      try {
+        const options = await passkeyPost(optionsUrl, {}, csrfToken);
+        challengeId = requiredPasskeyResponseValue(options, "challengeId");
+        delete options.challengeId;
+        const request = {
+          publicKey: preparePublicKeyOptions(options, "authentication"),
+          mediation: "conditional",
+        };
+        if (controller) {
+          request.signal = controller.signal;
+        }
+        credential = await navigator.credentials.get(request);
+        if (!(credential instanceof window.PublicKeyCredential)) {
+          return;
+        }
+      } catch {
+        return;
+      }
+      const result = await passkeyPost(
+        verifyUrl,
+        {
+          challengeId,
+          credential: serializePasskeyCredential(credential, "authentication"),
+        },
+        csrfToken,
+      );
+      window.location.assign(requiredPasskeyResponseValue(result, "redirect"));
+    } catch (error) {
+      if (status) {
+        status.hidden = false;
+        status.textContent = error?.message || "The passkey was not accepted.";
+      }
     }
-  } catch {
-    return;
-  }
-
-  try {
-    const result = await passkeyPost(
-      verifyUrl,
-      {
-        challengeId,
-        credential: serializePasskeyCredential(credential, "authentication"),
-      },
-      csrfToken,
-    );
-    window.location.assign(requiredPasskeyResponseValue(result, "redirect"));
-  } catch (error) {
-    if (status) {
-      status.hidden = false;
-      status.textContent = error?.message || "The passkey was not accepted.";
+  })();
+  conditionalPasskeyPending = pending.finally(() => {
+    if (conditionalPasskeyController === controller) {
+      conditionalPasskeyController = null;
+      conditionalPasskeyPending = Promise.resolve();
     }
-  }
+  });
+  return conditionalPasskeyPending;
 }
 
-async function startAccountScopedPasskeyAuthentication(container) {
+async function startExplicitPasskey(container) {
+  const button = container.querySelector("[data-passkey-start]");
+  const alternative = container.querySelector("[data-passkey-alternative]");
+  const status = container.querySelector("[data-passkey-status]");
+  if (
+    !(button instanceof HTMLButtonElement) ||
+    !(status instanceof HTMLElement)
+  ) {
+    return;
+  }
   if (!window.PublicKeyCredential || !navigator.credentials) {
+    container.dataset.passkeyState = "fallback";
+    if (alternative && alternative !== status) alternative.hidden = true;
+    button.hidden = true;
+    status.hidden = false;
+    status.textContent =
+      "Passkeys are unavailable in this browser. Use the password and authenticator instead.";
     return;
   }
   const optionsUrl = container.dataset.optionsUrl;
   const verifyUrl = container.dataset.verifyUrl;
-  const csrfToken = container.querySelector('input[name="csrf_token"]')?.value;
-  const status = container.querySelector("[data-account-passkey-status]");
+  const csrfToken =
+    container.querySelector('input[name="csrf_token"]')?.value ||
+    document.querySelector('input[name="csrf_token"]')?.value;
   if (!optionsUrl || !verifyUrl || !csrfToken) {
+    container.dataset.passkeyState = "fallback";
+    if (alternative && alternative !== status) alternative.hidden = true;
+    button.hidden = true;
+    button.disabled = true;
+    status.hidden = false;
+    status.textContent = "The passkey request could not be started.";
     return;
   }
-
-  let challengeId;
-  let credential;
-  let credentialPayload;
-  try {
-    const options = await passkeyPost(optionsUrl, {}, csrfToken);
-    challengeId = requiredPasskeyResponseValue(options, "challengeId");
-    delete options.challengeId;
-    credential = await navigator.credentials.get({
-      publicKey: preparePublicKeyOptions(options, "authentication"),
-    });
-    if (!(credential instanceof window.PublicKeyCredential)) {
-      return;
+  container.dataset.passkeyState = "ready";
+  if (alternative && alternative !== status) alternative.hidden = false;
+  button.hidden = false;
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    status.hidden = false;
+    status.textContent = "Waiting for your passkey…";
+    try {
+      await settleConditionalPasskeyLogin();
+      const options = await passkeyPost(optionsUrl, {}, csrfToken);
+      const challengeId = requiredPasskeyResponseValue(options, "challengeId");
+      delete options.challengeId;
+      const credential = await navigator.credentials.get({
+        publicKey: preparePublicKeyOptions(options, "authentication"),
+      });
+      if (!(credential instanceof window.PublicKeyCredential)) {
+        throw new Error("The browser did not return a passkey response.");
+      }
+      const result = await passkeyPost(
+        verifyUrl,
+        {
+          challengeId,
+          credential: serializePasskeyCredential(credential, "authentication"),
+        },
+        csrfToken,
+      );
+      window.location.assign(requiredPasskeyResponseValue(result, "redirect"));
+    } catch (error) {
+      status.textContent =
+        error?.name === "NotAllowedError" || error?.name === "AbortError"
+          ? "Passkey canceled. Use the password and authenticator option whenever you prefer."
+          : error?.message || "The passkey was not accepted.";
+    } finally {
+      button.disabled = false;
     }
-    credentialPayload = serializePasskeyCredential(
-      credential,
-      "authentication",
-    );
-  } catch {
-    return;
-  }
-
-  try {
-    const result = await passkeyPost(
-      verifyUrl,
-      {
-        challengeId,
-        credential: credentialPayload,
-      },
-      csrfToken,
-    );
-    window.location.assign(requiredPasskeyResponseValue(result, "redirect"));
-  } catch (error) {
-    if (status) {
-      status.hidden = false;
-      status.textContent = error?.message || "The passkey was not accepted.";
-    }
-  }
+  });
 }
 
 document.querySelectorAll("[data-passkey-flow]").forEach((container) => {
@@ -315,65 +354,8 @@ document
   .forEach((container) => void startConditionalPasskeyLogin(container));
 
 document
-  .querySelectorAll("[data-account-scoped-passkey-authentication]")
-  .forEach((container) => void startAccountScopedPasskeyAuthentication(container));
-
-async function copyText(value) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return;
-  }
-  const fallback = document.createElement("textarea");
-  fallback.value = value;
-  fallback.setAttribute("readonly", "true");
-  fallback.className = "clipboard-fallback";
-  document.body.append(fallback);
-  fallback.select();
-  const copied = document.execCommand("copy");
-  fallback.remove();
-  if (!copied) {
-    throw new Error("Clipboard copy was rejected");
-  }
-}
-
-document.addEventListener("click", async (event) => {
-  if (!(event.target instanceof Element)) {
-    return;
-  }
-  const button = event.target.closest("[data-copy-target]");
-  if (!(button instanceof HTMLButtonElement)) {
-    return;
-  }
-  const target = document.querySelector(button.dataset.copyTarget || "");
-  const value = target?.dataset.copyValue || target?.textContent?.trim() || "";
-  if (!value) {
-    return;
-  }
-  try {
-    await copyText(value);
-    const original = button.innerHTML;
-    const originalLabel = button.getAttribute("aria-label");
-    const originalTitle = button.getAttribute("title");
-    button.innerHTML = '<i class="fa-solid fa-check" aria-hidden="true"></i><span class="visually-hidden">Copied</span>';
-    button.setAttribute("aria-label", "Copied");
-    button.setAttribute("title", "Copied");
-    window.setTimeout(() => {
-      button.innerHTML = original;
-      if (originalLabel === null) {
-        button.removeAttribute("aria-label");
-      } else {
-        button.setAttribute("aria-label", originalLabel);
-      }
-      if (originalTitle === null) {
-        button.removeAttribute("title");
-      } else {
-        button.setAttribute("title", originalTitle);
-      }
-    }, 1800);
-  } catch {
-    window.prompt("Copy this password", value);
-  }
-});
+  .querySelectorAll("[data-explicit-passkey-login], [data-explicit-passkey-authentication]")
+  .forEach((container) => void startExplicitPasskey(container));
 
 const oneTimeConfirmation = document.querySelector("[data-one-time-confirmation]");
 
@@ -492,7 +474,7 @@ function createReportPaginationControls(container) {
   controls.setAttribute("aria-label", `${container.dataset.reportPagination} table pages`);
 
   const previous = document.createElement("button");
-  previous.className = "button button-secondary table-button";
+  previous.className = "button button-secondary button-compact";
   previous.type = "button";
   previous.textContent = "Previous";
   previous.dataset.reportPagePrevious = "";
@@ -501,7 +483,7 @@ function createReportPaginationControls(container) {
   label.dataset.reportPageLabel = "";
 
   const next = document.createElement("button");
-  next.className = "button button-secondary table-button";
+  next.className = "button button-secondary button-compact";
   next.type = "button";
   next.textContent = "Next";
   next.dataset.reportPageNext = "";
@@ -846,13 +828,6 @@ document.addEventListener("click", (event) => {
   });
 });
 
-document.querySelectorAll(".flash").forEach((flash) => {
-  window.setTimeout(() => {
-    flash.classList.add("is-dismissing");
-    window.setTimeout(() => flash.remove(), 300);
-  }, 4500);
-});
-
 document.querySelectorAll("[data-role-create-form]").forEach((form) => {
   const role = form.querySelector("[name=role]");
   const submit = form.querySelector("[data-role-create-submit]");
@@ -960,58 +935,6 @@ document.addEventListener("keydown", (event) => {
   }
   document.querySelectorAll("details.rename-control[open]").forEach((details) => {
     details.removeAttribute("open");
-  });
-});
-
-document.querySelectorAll("[data-totp-bubbles]").forEach((group) => {
-  const inputs = Array.from(group.querySelectorAll("input[name='totp_digit']"));
-
-  function distributeDigits(value) {
-    const digits = value.replace(/\D/g, "").slice(0, inputs.length);
-    inputs.forEach((input, index) => {
-      input.value = digits[index] || "";
-    });
-    const focusIndex = Math.min(digits.length, inputs.length - 1);
-    inputs[focusIndex].focus();
-    inputs[focusIndex].select();
-  }
-
-  group.addEventListener("paste", (event) => {
-    const digits = event.clipboardData?.getData("text").replace(/\D/g, "") || "";
-    if (digits.length === inputs.length) {
-      event.preventDefault();
-      distributeDigits(digits);
-    }
-  });
-
-  inputs.forEach((input, index) => {
-    input.addEventListener("input", () => {
-      const digits = input.value.replace(/\D/g, "");
-      if (digits.length > 1) {
-        distributeDigits(digits);
-        return;
-      }
-      input.value = digits;
-      if (digits && index < inputs.length - 1) {
-        inputs[index + 1].focus();
-        inputs[index + 1].select();
-      }
-    });
-
-    input.addEventListener("focus", () => input.select());
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Backspace" && !input.value && index > 0) {
-        event.preventDefault();
-        inputs[index - 1].value = "";
-        inputs[index - 1].focus();
-      } else if (event.key === "ArrowLeft" && index > 0) {
-        event.preventDefault();
-        inputs[index - 1].focus();
-      } else if (event.key === "ArrowRight" && index < inputs.length - 1) {
-        event.preventDefault();
-        inputs[index + 1].focus();
-      }
-    });
   });
 });
 

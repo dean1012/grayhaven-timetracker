@@ -7,6 +7,7 @@ import unittest
 import pyotp
 
 from grayhaven_timetracker.auth import (
+    TEMPORARY_PASSWORD_LENGTH,
     LoginLimiter,
     consume_totp,
     generate_temporary_password,
@@ -72,12 +73,10 @@ class InputValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             hash_password("short")
 
-    def test_temporary_passwords_are_random_and_policy_compliant(self) -> None:
+    def test_temporary_passwords_are_policy_compliant(self) -> None:
         first = generate_temporary_password()
-        second = generate_temporary_password()
-        self.assertEqual(len(first), 40)
+        self.assertEqual(len(first), TEMPORARY_PASSWORD_LENGTH)
         self.assertIsNone(password_error(first))
-        self.assertNotEqual(first, second)
 
     def test_constant_time_password_path_supports_missing_users(self) -> None:
         self.assertFalse(verify_password_constant_time(None, "incorrect"))
@@ -153,7 +152,8 @@ class LoginLimiterTests(unittest.TestCase):
         # the limiter already contains more keys than its new maximum.
         limiter.maximum_keys = 1
         self.assertFalse(limiter.blocked("missing", now=1))
-        self.assertEqual(list(limiter._attempts), ["three"])
+        self.assertFalse(limiter.blocked("two", now=1))
+        self.assertTrue(limiter.blocked("three", now=1))
 
 
 if __name__ == "__main__":

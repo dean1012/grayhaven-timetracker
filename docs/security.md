@@ -77,12 +77,11 @@ authenticated application sessions.
 - Browser Host values use an explicit allowlist. A configured public origin
   must be HTTPS and match that allowlist.
 - Passkey credential creation/get are limited to the same origin by browser
-  policy. The normal login page offers discoverable passkeys through quiet
-  conditional autofill when the browser supports it; cancellation or
-  unavailability leaves password/TOTP sign-in untouched. Enrollment retains
-  explicit passkey controls. Sensitive-action reauthentication starts passkey
-  authorization automatically and quietly; canceling that browser prompt
-  leaves the password/TOTP fallback available.
+  policy. The normal login page offers both an explicit discoverable-passkey
+  button and optional quiet conditional autofill when supported; cancellation or
+  unavailability leaves password/TOTP sign-in untouched. Enrollment and
+  sensitive-action reauthentication retain explicit passkey controls, and no
+  sensitive-action prompt starts until the user activates its button.
 - SQLCipher encrypts database pages and connections enable defensive SQLite
   settings, secure deletion, foreign keys, and integrity checks.
 - Database constraints protect timer uniqueness, work assignment integrity,

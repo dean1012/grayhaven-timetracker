@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ client.name }} · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block breadcrumbs %}
-<nav class="breadcrumbs" aria-label="Breadcrumb">
+<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb">
   <ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li aria-current="page"><span class="breadcrumb-label" title="{{ client.name }}">{{ client.name }}</span></li></ol>
 </nav>
 {% endblock %}
@@ -23,7 +23,7 @@
     <div><p class="eyebrow">LIVE REPORT</p><h2>Report Link</h2></div>
   </div>
   <div class="report-link-row">
-    <span class="secret-value client-report-link" data-copy-value="{{ report_url }}">
+    <span class="copy-value client-report-link" data-copy-value="{{ report_url }}">
       <a class="content-link" href="{{ report_url }}" target="_blank" rel="noopener noreferrer" title="{{ report_url }}">{{ report_url }}</a>
       <span class="report-link-actions">
         <button class="icon-button" type="button" data-copy-target=".client-report-link" title="Copy report link" aria-label="Copy report link"><i class="fa-solid fa-copy" aria-hidden="true"></i><span class="visually-hidden">Copy report link</span></button>
@@ -57,7 +57,7 @@
     </span>
   </div>
   {% else %}
-  <div class="empty-state"><p>No contracts created for this client.</p></div>
+  <div class="panel empty-panel"><div class="panel-heading"><h2>No Contracts Yet</h2></div><p class="muted">No contracts created for this client.</p></div>
   {% endfor %}
 </section>
 {% endblock %}

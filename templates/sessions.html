@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Sessions · {{ contract.name }} · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block breadcrumbs %}
-<nav class="breadcrumbs" aria-label="Breadcrumb"><ol>
+<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb"><ol>
   <li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li>
   <li><a class="breadcrumb-label" href="{{ url_for('main.client', client_id=contract.client.id) }}" title="{{ contract.client.name }}">{{ contract.client.name }}</a></li>
   <li><a class="breadcrumb-label" href="{{ url_for('main.contract', contract_id=contract.id) }}" title="{{ contract.name }}">{{ contract.name }}</a></li>
@@ -16,10 +16,10 @@
     <h1>{{ contract.name }}</h1>
   </div>
   {% if contract.archived_at %}<span class="status-pill status-warning"><i class="fa-solid fa-folder-open" aria-hidden="true"></i> Archived</span>{% elif can('time_entry:add_own') or can('time_entry:add_any') %}<a class="icon-button accent" href="{{ url_for('main.new_time_entry', contract_id=contract.id) }}" title="New Session" aria-label="New Session"><i class="fa-solid fa-plus" aria-hidden="true"></i></a>{% endif %}
-</section>{% if contract.archived_at %}<div class="flash flash-warning archived-warning" role="status"><i class="fa-solid fa-folder-open" aria-hidden="true"></i> This contract is archived. All session controls are disabled until an administrator activates it.</div>{% endif %}</div>
+</section>{% if contract.archived_at %}<div class="alert-stack"><div class="alert alert-warning alert-with-icon" role="status"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i><span class="alert-message">This contract is archived. All session controls are disabled until an administrator activates it.</span><button class="alert-dismiss" type="button" data-alert-dismiss aria-label="Dismiss notification"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></div></div>{% endif %}</div>
 <section class="panel session-directory" data-live-region="contract-sessions">
   <div class="table-summary"><span>{{ total }} session{{ '' if total == 1 else 's' }}</span><span>Page {{ page }} of {{ page_count }}</span></div>
-  <div class="table-scroll">
+  <div class="table-container">
     <table class="data-table responsive-table session-table">
       <caption class="visually-hidden">Time sessions for {{ contract.name }}</caption>
       <thead><tr>{% if show_users %}<th scope="col">User</th>{% endif %}<th scope="col">Task / Subtask</th><th scope="col">Start</th><th scope="col">End</th><th scope="col">Status</th><th scope="col">Duration</th><th scope="col">Rate</th><th scope="col">Cost</th>{% if show_actions %}<th scope="col">Actions</th>{% endif %}</tr></thead>
@@ -32,8 +32,8 @@
           <td data-label="Start">{{ format_datetime(entry.started_at, timezone_info) }}</td>
           <td data-label="End">{% if entry.stopped_at %}{{ format_datetime(row.ended_at, timezone_info) }}{% else %}<span class="status-pill status-running"><i class="fa-solid fa-circle" aria-hidden="true"></i> Running</span>{% endif %}</td>
           <td class="cell-status" data-label="Status">{% if entry.stopped_at %}<span class="status-pill status-neutral">{{ entry.billing_status|replace('_', ' ')|title }}</span>{% else %}<span class="status-pill status-running">Running</span>{% endif %}</td>
-          <td data-label="Duration"{% if not entry.stopped_at %} data-session-start="{{ entry.started_at.isoformat() }}Z"{% endif %}>{{ format_duration(row.seconds) }}</td>
-          <td data-label="Rate">{{ format_money(entry.task.contract.hourly_rate) }}/hr</td><td data-label="Cost">{{ format_money(row.cost) }}</td>
+          <td class="cell-numeric" data-label="Duration"{% if not entry.stopped_at %} data-session-start="{{ entry.started_at.isoformat() }}Z"{% endif %}>{{ format_duration(row.seconds) }}</td>
+          <td class="cell-numeric" data-label="Rate">{{ format_money(entry.task.contract.hourly_rate) }}/hr</td><td class="cell-numeric" data-label="Cost">{{ format_money(row.cost) }}</td>
           {% if show_actions %}<td class="cell-actions" data-label="Actions"><div class="row-actions">{% if not entry.stopped_at and contract.archived_at is none %}<form method="post" action="{{ url_for('main.stop_timer', entry_id=entry.id) }}" autocomplete="off" data-protonpass-ignore="true"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ request.full_path }}"><button class="icon-button danger" type="submit" title="Stop Timer" aria-label="Stop Timer"><i class="fa-solid fa-stop" aria-hidden="true"></i></button></form>{% elif entry.stopped_at and contract.archived_at is none %}<a class="icon-button" href="{{ url_for('main.edit_time_entry_status', entry_id=entry.id) }}" title="Update Payment Status" aria-label="Update Payment Status"><i class="fa-solid fa-file-signature" aria-hidden="true"></i></a>{% endif %}{% if row.can_edit %}<a class="icon-button" href="{{ url_for('main.edit_time_entry', entry_id=entry.id) }}" title="Update Session" aria-label="Update Session"><i class="fa-solid fa-pen" aria-hidden="true"></i></a>{% endif %}{% if row.can_delete %}<a class="icon-button danger" href="{{ url_for('main.delete_time_entry', entry_id=entry.id) }}" title="Delete Session" aria-label="Delete Session"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>{% endif %}{% if contract.archived_at is not none %}<span class="muted">Archived</span>{% endif %}</div></td>{% endif %}
         </tr>
       {% else %}

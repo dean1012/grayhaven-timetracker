@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Audit log · Grayhaven Systems LLC Time Tracker{% endblock %}
-{% block breadcrumbs %}<nav class="breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li aria-current="page"><span class="breadcrumb-label" title="Audit Log">Audit Log</span></li></ol></nav>{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li aria-current="page"><span class="breadcrumb-label" title="Audit Log">Audit Log</span></li></ol></nav>{% endblock %}
 {% block content %}
 <section class="page-heading">
   <div>
@@ -31,8 +31,8 @@
     <div class="audit-filter-actions"><a class="button button-secondary" href="{{ url_for('main.audit_log') }}">Clear</a><button class="button button-primary" type="submit"><i class="fa-solid fa-filter" aria-hidden="true"></i> Apply Filters</button></div>
   </form>
   <div data-live-region="audit-results">
-  <div class="audit-summary"><span>{{ total }} event{{ '' if total == 1 else 's' }}</span><span>Page {{ page }} of {{ page_count }}</span></div>
-  <div class="table-scroll">
+  <div class="table-summary"><span>{{ total }} event{{ '' if total == 1 else 's' }}</span><span>Page {{ page }} of {{ page_count }}</span></div>
+  <div class="table-container">
     <table class="data-table responsive-table audit-table">
       <caption class="visually-hidden">Audit events</caption>
       <thead><tr><th scope="col">Time</th><th scope="col">Source</th><th scope="col">Actor</th><th scope="col">Action</th><th scope="col">Details</th></tr></thead>
@@ -40,7 +40,7 @@
       {% for item in items %}
         <tr>
           <td data-label="Time"><time datetime="{{ item.occurred_at.isoformat() }}Z">{{ format_datetime(item.occurred_at, timezone_info) }}</time></td>
-          <td data-label="Source"><span class="status-pill audit-source audit-source-{{ item.source }}">{{ item.source|title }}</span><small class="table-note">{{ item.details.get('request_source', 'Application') }}</small></td>
+          <td data-label="Source"><span class="badge audit-source-{{ item.source }}">{{ item.source|title }}</span><small class="table-note">{{ item.details.get('request_source', 'Application') }}</small></td>
           <td data-label="Actor">{% if item.actor_name %}{{ item.actor_name }}<small class="table-note">{{ item.actor_email }}</small>{% else %}<span class="muted">{{ 'Application' if item.source == 'system' else 'Unauthenticated' }}</span>{% endif %}</td>
           <td class="cell-primary" data-label="Action"><strong>{{ item.event.replace('_', ' ')|title }}</strong></td>
           <td class="cell-details" data-label="Details">{% if item.details or item.ip_address %}<dl class="audit-details">{% if item.ip_address %}<div><dt>Source IP</dt><dd>{{ item.ip_address }}</dd></div>{% endif %}{% for key, value in item.details.items() %}{% if key != 'request_source' %}<div><dt>{{ key.replace('_', ' ') }}</dt><dd>{% if value is mapping %}{% for field, change in value.items() %}<span class="audit-change">{{ field }}: {% if change is mapping and 'from' in change and 'to' in change %}{{ change['from'] if change['from'] is not none else '—' }} → {{ change['to'] if change['to'] is not none else '—' }}{% else %}{{ change if change is not none else '—' }}{% endif %}</span>{% endfor %}{% else %}{{ value if value is not none else '—' }}{% endif %}</dd></div>{% endif %}{% endfor %}</dl>{% else %}<span class="muted">—</span>{% endif %}</td>
