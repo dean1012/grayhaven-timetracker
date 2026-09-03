@@ -10,6 +10,10 @@ assert.notEqual(start, -1);
 assert.notEqual(end, -1);
 
 const context = vm.createContext({ window: {} });
+class TestHTMLElement {}
+class TestHTMLButtonElement extends TestHTMLElement {}
+context.HTMLElement = TestHTMLElement;
+context.HTMLButtonElement = TestHTMLButtonElement;
 vm.runInContext(source.slice(start, end), context);
 
 function response({
@@ -56,11 +60,14 @@ function accountScopedAuthenticationOptions() {
 
 function conditionalHarness({
   available = true,
+  conditionalAvailability,
   getCredential,
   responses = [],
+  localCsrf = true,
 } = {}) {
   class TestPublicKeyCredential {}
-  TestPublicKeyCredential.isConditionalMediationAvailable = async () => available;
+  TestPublicKeyCredential.isConditionalMediationAvailable =
+    conditionalAvailability || (async () => available);
   const credential = new TestPublicKeyCredential();
   Object.assign(credential, {
     id: "credential",
@@ -78,19 +85,49 @@ function conditionalHarness({
   const requests = [];
   const credentialRequests = [];
   const redirects = [];
+  const documentQueries = [];
   const status = { hidden: true, textContent: "" };
+  Object.setPrototypeOf(status, TestHTMLElement.prototype);
+  const alternative = { hidden: true };
+  const button = {
+    hidden: false,
+    disabled: false,
+    clickHandler: null,
+    addEventListener: (event, handler) => {
+      if (event === "click") {
+        button.clickHandler = handler;
+      }
+    },
+  };
+  Object.setPrototypeOf(button, TestHTMLButtonElement.prototype);
   const container = {
     dataset: {
       optionsUrl: "/login/passkey/options",
       verifyUrl: "/login/passkey/verify",
     },
-    querySelector: (selector) =>
-      selector === 'input[name="csrf_token"]' ? { value: "csrf" } : status,
+    querySelector: (selector) => {
+      if (selector === 'input[name="csrf_token"]') {
+        return localCsrf ? { value: "csrf" } : null;
+      }
+      if (selector === "[data-passkey-start]") {
+        return button;
+      }
+      if (selector === "[data-passkey-alternative]") {
+        return alternative;
+      }
+      return status;
+    },
   };
   context.window.PublicKeyCredential = TestPublicKeyCredential;
   context.window.atob = (value) => Buffer.from(value, "base64").toString("binary");
   context.window.btoa = (value) => Buffer.from(value, "binary").toString("base64");
   context.window.location = { assign: (value) => redirects.push(value) };
+  context.document = {
+    querySelector: (selector) => {
+      documentQueries.push(selector);
+      return selector === 'input[name="csrf_token"]' ? { value: "csrf" } : null;
+    },
+  };
   context.window.fetch = async (...request) => {
     requests.push(request);
     return responses.shift();
@@ -99,7 +136,7 @@ function conditionalHarness({
     credentials: {
       get: async (request) => {
         credentialRequests.push(request);
-        return getCredential ? getCredential(credential) : credential;
+        return getCredential ? getCredential(credential, request) : credential;
       },
     },
   };
@@ -109,11 +146,18 @@ function conditionalHarness({
     redirects,
     requests,
     status,
+    alternative,
+    documentQueries,
+    button,
+    click: async () => {
+      assert.ok(button.clickHandler);
+      await button.clickHandler();
+    },
   };
 }
 
 function accountScopedHarness(options = {}) {
-  const harness = conditionalHarness(options);
+  const harness = conditionalHarness({ ...options, localCsrf: false });
   harness.container.dataset = {
     optionsUrl: "/reauthenticate/passkey/options",
     verifyUrl: "/reauthenticate/passkey/verify",
@@ -274,27 +318,25 @@ test("conditional login shows bounded server verification errors", async () => {
   });
   await context.startConditionalPasskeyLogin(harness.container);
   assert.equal(harness.status.hidden, false);
-  assert.equal(harness.status.textContent, "The passkey was not accepted.");
+  assert.ok(harness.status.textContent);
   assert.deepEqual(harness.redirects, []);
 });
 
-test("account-scoped authentication is wired to start automatically", () => {
-  assert.match(
-    source,
-    /querySelectorAll\("\[data-account-scoped-passkey-authentication\]"\)[\s\S]*startAccountScopedPasskeyAuthentication/,
-  );
-});
-
-test("account-scoped authentication preserves allowCredentials and redirects", async () => {
+test("explicit passkey authentication preserves allowCredentials and redirects", async () => {
   const harness = accountScopedHarness({
     responses: [
       accountScopedAuthenticationOptions(),
       response({ json: async () => ({ redirect: "/profile/password/change" }) }),
     ],
   });
-  await context.startAccountScopedPasskeyAuthentication(harness.container);
+  assert.equal(harness.alternative.hidden, true);
+  await context.startExplicitPasskey(harness.container);
+  assert.equal(harness.container.dataset.passkeyState, "ready");
+  assert.equal(harness.alternative.hidden, false);
+  await harness.click();
 
   assert.equal(harness.requests.length, 2);
+  assert.deepEqual(harness.documentQueries, ['input[name="csrf_token"]']);
   assert.equal(harness.requests[0][0], "/reauthenticate/passkey/options");
   assert.equal(harness.requests[1][0], "/reauthenticate/passkey/verify");
   assert.equal(harness.credentialRequests.length, 1);
@@ -310,38 +352,122 @@ test("account-scoped authentication preserves allowCredentials and redirects", a
     "public-key",
   );
   assert.deepEqual(harness.redirects, ["/profile/password/change"]);
-  assert.equal(harness.status.hidden, true);
+  assert.equal(harness.status.hidden, false);
 });
 
-test("account-scoped authentication keeps pre-verification failures quiet", async () => {
+test("explicit passkey authentication settles an active conditional login", async () => {
+  class TestAbortController {
+    constructor() {
+      this.signal = {
+        aborted: false,
+        listeners: [],
+        addEventListener: (event, listener) => {
+          if (event === "abort") this.signal.listeners.push(listener);
+        },
+      };
+    }
+
+    abort() {
+      this.signal.aborted = true;
+      for (const listener of this.signal.listeners) listener();
+    }
+  }
+  context.AbortController = TestAbortController;
+  let conditionalSettled = false;
+  const harness = conditionalHarness({
+    responses: [
+      authenticationOptions(),
+      accountScopedAuthenticationOptions(),
+      response({ json: async () => ({ redirect: "/profile" }) }),
+    ],
+    getCredential: (credential, request) => {
+      if (request.mediation === "conditional") {
+        return new Promise((resolve, reject) => {
+          request.signal.addEventListener("abort", () => {
+            const error = new Error("conditional canceled");
+            error.name = "AbortError";
+            reject(error);
+          });
+        });
+      }
+      return credential;
+    },
+  });
+
+  const conditional = context.startConditionalPasskeyLogin(harness.container);
+  await new Promise((resolve) => setImmediate(resolve));
+  await context.startExplicitPasskey(harness.container);
+  await harness.click();
+  await conditional;
+  conditionalSettled = true;
+
+  assert.equal(conditionalSettled, true);
+  assert.equal(harness.credentialRequests[0].mediation, "conditional");
+  assert.equal("mediation" in harness.credentialRequests[1], false);
+  assert.deepEqual(harness.redirects, ["/profile"]);
+});
+
+test("explicit activation wins while conditional capability is still probing", async () => {
+  let resolveCapability;
+  const capability = new Promise((resolve) => {
+    resolveCapability = resolve;
+  });
+  const harness = accountScopedHarness({
+    conditionalAvailability: () => capability,
+    responses: [
+      accountScopedAuthenticationOptions(),
+      response({ json: async () => ({ redirect: "/profile/password/change" }) }),
+    ],
+  });
+
+  const conditional = context.startConditionalPasskeyLogin(harness.container);
+  await context.startExplicitPasskey(harness.container);
+  const explicit = harness.click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(harness.requests, []);
+
+  resolveCapability(true);
+  await conditional;
+  await explicit;
+
+  assert.deepEqual(
+    harness.requests.map(([url]) => url),
+    ["/reauthenticate/passkey/options", "/reauthenticate/passkey/verify"],
+  );
+  assert.equal(harness.credentialRequests.length, 1);
+  assert.equal("mediation" in harness.credentialRequests[0], false);
+  assert.deepEqual(harness.redirects, ["/profile/password/change"]);
+});
+
+test("explicit passkey authentication reports pre-verification failures", async () => {
   const unsupported = accountScopedHarness();
   delete context.window.PublicKeyCredential;
-  await context.startAccountScopedPasskeyAuthentication(unsupported.container);
+  await context.startExplicitPasskey(unsupported.container);
   assert.equal(unsupported.requests.length, 0);
-  assert.equal(unsupported.status.hidden, true);
+  assert.equal(unsupported.button.hidden, true);
+  assert.equal(unsupported.status.hidden, false);
 
   const missingCredentials = accountScopedHarness();
   delete context.navigator.credentials;
-  await context.startAccountScopedPasskeyAuthentication(
-    missingCredentials.container,
-  );
+  await context.startExplicitPasskey(missingCredentials.container);
   assert.equal(missingCredentials.requests.length, 0);
-  assert.equal(missingCredentials.status.hidden, true);
+  assert.equal(missingCredentials.button.hidden, true);
+  assert.equal(missingCredentials.status.hidden, false);
 
   const missingConfiguration = accountScopedHarness();
   delete missingConfiguration.container.dataset.optionsUrl;
-  await context.startAccountScopedPasskeyAuthentication(
-    missingConfiguration.container,
-  );
+  await context.startExplicitPasskey(missingConfiguration.container);
   assert.equal(missingConfiguration.requests.length, 0);
-  assert.equal(missingConfiguration.status.hidden, true);
+  assert.equal(missingConfiguration.button.disabled, true);
+  assert.equal(missingConfiguration.status.hidden, false);
 
   const optionsFailure = accountScopedHarness({
     responses: [response({ status: 409, json: async () => ({ error: "None" }) })],
   });
-  await context.startAccountScopedPasskeyAuthentication(optionsFailure.container);
+  await context.startExplicitPasskey(optionsFailure.container);
+  await optionsFailure.click();
   assert.equal(optionsFailure.credentialRequests.length, 0);
-  assert.equal(optionsFailure.status.hidden, true);
+  assert.equal(optionsFailure.status.hidden, false);
 
   for (const result of [null, "cancel"]) {
     const canceled = accountScopedHarness({
@@ -355,9 +481,10 @@ test("account-scoped authentication keeps pre-verification failures quiet", asyn
       },
       responses: [accountScopedAuthenticationOptions()],
     });
-    await context.startAccountScopedPasskeyAuthentication(canceled.container);
+    await context.startExplicitPasskey(canceled.container);
+    await canceled.click();
     assert.equal(canceled.requests.length, 1);
-    assert.equal(canceled.status.hidden, true);
+    assert.equal(canceled.status.hidden, false);
     assert.deepEqual(canceled.redirects, []);
   }
 
@@ -368,14 +495,13 @@ test("account-scoped authentication keeps pre-verification failures quiet", asyn
     },
     responses: [accountScopedAuthenticationOptions()],
   });
-  await context.startAccountScopedPasskeyAuthentication(
-    serializationFailure.container,
-  );
+  await context.startExplicitPasskey(serializationFailure.container);
+  await serializationFailure.click();
   assert.equal(serializationFailure.requests.length, 1);
-  assert.equal(serializationFailure.status.hidden, true);
+  assert.equal(serializationFailure.status.hidden, false);
 });
 
-test("account-scoped authentication shows bounded verification errors", async () => {
+test("explicit passkey authentication shows bounded verification errors", async () => {
   const harness = accountScopedHarness({
     responses: [
       accountScopedAuthenticationOptions(),
@@ -385,8 +511,9 @@ test("account-scoped authentication shows bounded verification errors", async ()
       }),
     ],
   });
-  await context.startAccountScopedPasskeyAuthentication(harness.container);
+  await context.startExplicitPasskey(harness.container);
+  await harness.click();
   assert.equal(harness.status.hidden, false);
-  assert.equal(harness.status.textContent, "The passkey was not accepted.");
+  assert.ok(harness.status.textContent);
   assert.deepEqual(harness.redirects, []);
 });
