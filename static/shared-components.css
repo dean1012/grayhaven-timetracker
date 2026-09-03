@@ -599,6 +599,7 @@ h3 {
 
 .badge {
   display: inline-block;
+  cursor: default;
   padding: 0.3rem 0.75rem;
   color: var(--primary-accent);
   background: color-mix(in srgb, var(--primary-accent) 8%, transparent);
