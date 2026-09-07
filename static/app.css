@@ -159,7 +159,10 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .active-timer-actions form { margin: 0; }
 .timer-elapsed { min-width: 7rem; color: var(--soft-white); font-size: 1.35rem; font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; text-align: right; }
 .contract-directory, .user-directory, .session-directory, .audit-directory { padding: 1.7rem; }
+.session-summary + .session-directory,
 .session-directory + .session-directory { margin-top: 1.5rem; }
+.my-session-table td[data-label="Rate"],
+.my-session-table td[data-label="Cost"] { white-space: nowrap; }
 .share-panel { display: flex; align-items: end; justify-content: space-between; gap: 2rem; margin-bottom: 1.5rem; padding: 1.4rem 1.7rem; }
 .report-share-panel { margin-bottom: 1.5rem; padding: 1.4rem 1.7rem; }
 .report-link-row { display: flex; align-items: center; gap: .65rem; }
@@ -189,7 +192,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .audit-details dt { color: var(--cool-grey); }
 .audit-details dd { margin: 0; overflow-wrap: anywhere; }
 .table-note { display: block; margin-top: .15rem; }
-.report-body { display: flex; flex-direction: column; min-width: 0; height: 100vh; height: 100dvh; overflow: hidden; }
+.report-body { position: fixed; inset: 0; display: flex; flex-direction: column; width: 100%; min-width: 0; height: 100vh; height: 100dvh; overflow: hidden; overflow: clip; }
 .report-shell { width: min(1600px, calc(100% - var(--container-padding) - var(--container-padding))); min-height: 0; height: 100%; margin: 0 auto; padding: 1.5rem 0; }
 .report-shell > .auth-layout { height: 100%; }
 .report-page { display: flex; flex-direction: column; max-width: 1480px; height: 100%; min-height: 0; margin: 0 auto; }
@@ -207,11 +210,14 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .report-title-meta { color: var(--cool-grey); font-size: .86rem; text-align: right; }
 .report-title-meta p { margin-bottom: .15rem; }
 .report-contract-section { margin-bottom: 2.5rem; }
+.report-content > .summary-grid + .report-contract-section,
+.report-content > .summary-grid + .empty-panel { margin-top: 2.5rem; }
 .report-contract-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: 1rem 0; border-top: 1px solid var(--charcoal-border); }
 .report-contract-heading h2 { margin-bottom: 0; }
 .report-contract-name { color: var(--primary-accent); }
 .report-page > .panel { padding: 1.7rem; margin-bottom: 1.5rem; }
 .report-panel { padding: 1.7rem; }
+.report-contract-section > .summary-grid + .report-panel,
 .report-panel + .report-panel { margin-top: 1.5rem; }
 .report-page .data-table td, .report-page .data-table th { text-align: left; }
 .report-page .data-table.report-task-summary-table td.cell-numeric, .report-page .data-table.report-task-summary-table th.cell-numeric, .report-page .report-detail .data-table td.cell-numeric, .report-page .report-detail .data-table th.cell-numeric { text-align: right; }
