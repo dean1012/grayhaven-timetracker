@@ -14,7 +14,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='shared-components.css') }}?v={{ app_version }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ app_version }}">
   <script src="{{ url_for('static', filename='shared-components.js') }}?v={{ app_version }}" defer></script>
-  <script src="{{ url_for('static', filename='app.js') }}?v={{ app_version }}" defer></script>
+  <script type="module" src="{{ url_for('static', filename='app.js') }}?v={{ app_version }}"></script>
 </head>
 <body class="app-body {% block body_class %}{% endblock %}">
   {% if logged_user %}

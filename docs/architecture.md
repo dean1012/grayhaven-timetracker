@@ -45,6 +45,8 @@ The primary modules are:
 - `auth.py`: password, session, TOTP, reauthentication, and rate-limit helpers.
 - `passkeys.py`: trusted WebAuthn options, session-bound challenge state, and
   registration/authentication verification.
+- `bootstrap.py`: validated bootstrap-user provisioning and initial account
+  setup.
 - `permissions.py`: centralized role and object-state checks.
 - `routes.py`: authenticated workflows and shared-report endpoints.
 - `reports.py`: report queries and summaries.
@@ -54,6 +56,11 @@ The primary modules are:
 - `audit.py` and `logging_config.py`: audit persistence and structured logging.
 - `scripts/database_maintenance.py`: encrypted backup, verification, restore
   support, and key rotation.
+- `static/passkeys.mjs`: passkey browser workflows and response conversion.
+- `static/report-helpers.mjs`: session cost calculations and refresh edit state.
+- `static/app.css`: Time Tracker layout and visual composition.
+- `static/app.js`: browser workflows, refresh coordination, and interaction
+  behavior.
 
 HTML templates and application CSS are maintained in `templates/` and
 `static/`. The canonical Branding component layer is tracked as
@@ -73,9 +80,11 @@ The application has two roles:
 
 | Capability | User | Administrator |
 | --- | --- | --- |
-| Track and edit own pending time | Yes | Yes |
+| Create and rename shared tasks and subtasks | Yes | Yes |
+| Track and edit or delete own pending time | Yes | Yes |
 | View own time and timer state | Yes | Yes |
-| Manage clients, contracts, tasks, and subtasks | No | Yes |
+| Manage clients and contracts | No | Yes |
+| Delete shared tasks and subtasks | No | Yes |
 | Move another user's pending time | No | Yes |
 | Advance or reverse billing state | No | Yes |
 | Manage users, TOTP recovery, and passkey wipe-all | No | Yes |
@@ -126,13 +135,20 @@ through enablement rather than a delete operation.
 ## Time Tracking
 
 The database enforces at most one active timer per user. A timer records its
-user, client, contract, task, optional subtask, start time, and description.
-Stopping it creates a time session using the configured display timezone.
+user, task, optional subtask, and start time; the task identifies the contract
+and client. Stopping it records its end time. Stored timestamps use UTC and
+are displayed in the configured timezone.
 
-Users can create manual entries and edit or delete their own sessions while
-those sessions remain pending invoice. Administrators can move pending sessions
-between users and work assignments. Corrections and destructive actions are
-recorded with reasons and audit context.
+Users can create manual entries and edit or delete their own stopped sessions
+while those sessions remain pending invoice and belong to an active contract.
+They may correct the assignment among visible active contracts and tasks, but
+cannot change the owner, billing state, or billing metadata. Administrators
+can also move pending sessions between users. Corrections and destructive
+actions are recorded with reasons and audit context.
+
+Each session's exact elapsed seconds and contract rate determine its amount.
+Amounts are rounded to cents with ROUND_HALF_UP per session, then summed for
+groups and reports. Two one-minute sessions at $55/hour therefore total $1.84.
 
 Once a session advances beyond pending invoice, ordinary edits are blocked. An
 administrator must reverse its billing state before correcting the underlying

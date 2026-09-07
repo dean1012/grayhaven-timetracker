@@ -35,8 +35,13 @@ hosts, and proxy-hop configuration. Compromise of the host, service process, or
 runtime secrets is outside the protection provided by database encryption.
 
 Enabled internal users can access the client and work structures needed for
-time entry. Administrators can manage all users and business records, change
-billing state, create shared-report credentials, and inspect the audit log.
+time entry. They may create and rename shared tasks and subtasks, and may edit
+or delete their own stopped sessions while those sessions remain pending
+invoice under an active contract. They may correct work assignments among
+visible active contracts and tasks, but cannot change ownership, billing state,
+or billing metadata. Administrators can manage all
+users and business records, change billing state, correct other users' pending
+sessions, create shared-report credentials, and inspect the audit log.
 
 A client can access its live report without an application account only by
 presenting both the client's high-entropy permanent URL and the separately

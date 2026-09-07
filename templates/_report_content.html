@@ -89,11 +89,17 @@
   {% endfor %}
   </div>
   </div>
-  {% if shared_report %}<footer class="report-footer">
+  {% if shared_report %}
+  <footer class="report-footer">
     <strong>CONFIDENTIAL</strong>
     <div class="report-contact">
-      <p>Questions or concerns? <a class="external-link" href="{{ contact_url }}" target="_blank" rel="noopener noreferrer">Schedule a meeting with us <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i></a> or email your point of contact and we will be happy to help.</p>
+      <p>
+        Questions or concerns?
+        <a class="external-link" href="{{ contact_url }}" target="_blank" rel="noopener noreferrer">Schedule a meeting with us <i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i></a>
+        or email your point of contact and we will be happy to help.
+      </p>
     </div>
     <span class="report-footer-client">{{ report.client.name }}</span>
-  </footer>{% endif %}
+  </footer>
+  {% endif %}
 </article>

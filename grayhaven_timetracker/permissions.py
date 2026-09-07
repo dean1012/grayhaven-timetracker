@@ -81,7 +81,6 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             TASK_ADD,
             TASK_VIEW,
             TASK_EDIT,
-            TASK_DELETE,
             TIMER_START,
             TIMER_STOP,
             TIME_ENTRY_VIEW_OWN,
