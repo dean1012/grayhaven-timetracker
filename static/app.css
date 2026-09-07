@@ -161,6 +161,8 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .contract-directory, .user-directory, .session-directory, .audit-directory { padding: 1.7rem; }
 .session-summary + .session-directory,
 .session-directory + .session-directory { margin-top: 1.5rem; }
+.my-session-table td[data-label="Rate"],
+.my-session-table td[data-label="Cost"] { white-space: nowrap; }
 .share-panel { display: flex; align-items: end; justify-content: space-between; gap: 2rem; margin-bottom: 1.5rem; padding: 1.4rem 1.7rem; }
 .report-share-panel { margin-bottom: 1.5rem; padding: 1.4rem 1.7rem; }
 .report-link-row { display: flex; align-items: center; gap: .65rem; }
@@ -190,7 +192,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .audit-details dt { color: var(--cool-grey); }
 .audit-details dd { margin: 0; overflow-wrap: anywhere; }
 .table-note { display: block; margin-top: .15rem; }
-.report-body { display: flex; flex-direction: column; min-width: 0; height: 100vh; height: 100dvh; overflow: hidden; }
+.report-body { position: fixed; inset: 0; display: flex; flex-direction: column; width: 100%; min-width: 0; height: 100vh; height: 100dvh; overflow: hidden; overflow: clip; }
 .report-shell { width: min(1600px, calc(100% - var(--container-padding) - var(--container-padding))); min-height: 0; height: 100%; margin: 0 auto; padding: 1.5rem 0; }
 .report-shell > .auth-layout { height: 100%; }
 .report-page { display: flex; flex-direction: column; max-width: 1480px; height: 100%; min-height: 0; margin: 0 auto; }
