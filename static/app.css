@@ -117,7 +117,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .page-heading > .icon-button:not(:disabled):not([aria-disabled="true"]):hover, .heading-actions .icon-button:not(:disabled):not([aria-disabled="true"]):hover { color: var(--muted-emerald); }
 .confirmation-expiry { color: var(--alert-error-foreground); font-weight: var(--font-weight-semibold); }
 .contract-layout { display: block; }
-.contract-task-actions { flex-wrap: wrap; justify-content: flex-end; gap: .45rem; }
+.contract-task-actions, .contract-subtask-actions { flex-wrap: wrap; justify-content: flex-end; gap: .45rem; }
 .icon-locked { display: inline-grid; place-items: center; width: 32px; height: 32px; color: var(--slate-grey); font-size: .75rem; }
 .rename-control { position: relative; }
 .rename-control > summary { list-style: none; }
@@ -308,7 +308,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
   h1 { font-size: 1.75rem; }
   .client-card, .contract-directory, .user-directory, .session-directory, .audit-directory, .report-panel { padding: 1rem; }
   .subtask-add { align-items: stretch; flex-direction: column; margin-left: 46px; }
-  .contract-task-actions { flex-direction: column; flex-wrap: nowrap; }
+  .contract-task-actions, .contract-subtask-actions { flex-direction: column; flex-wrap: nowrap; }
   .active-timer-context { align-items: flex-start; flex-direction: column; }
   .active-timer-context i { display: none; }
   .report-header img { width: 145px; }
