@@ -208,7 +208,8 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .report-title-meta { color: var(--cool-grey); font-size: .86rem; text-align: right; }
 .report-title-meta p { margin-bottom: .15rem; }
 .report-contract-section { margin-bottom: 2.5rem; }
-.report-content > .summary-grid + .report-contract-section { margin-top: 2.5rem; }
+.report-content > .summary-grid + .report-contract-section,
+.report-content > .summary-grid + .empty-panel { margin-top: 2.5rem; }
 .report-contract-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; padding: 1rem 0; border-top: 1px solid var(--charcoal-border); }
 .report-contract-heading h2 { margin-bottom: 0; }
 .report-contract-name { color: var(--primary-accent); }
