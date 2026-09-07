@@ -4617,6 +4617,49 @@ class ReviewRegressionTests(AppTestCase):
             200,
         )
 
+    def test_invalid_sensitive_totp_restarts_password_stage_and_audits(self) -> None:
+        self.login()
+        challenge_url = self.client.get("/profile/password/authenticate").location
+        assert challenge_url is not None
+        self.assertEqual(self.client.get(challenge_url).status_code, 200)
+        self.assertEqual(
+            self.client.post(challenge_url, data={"password": ADMIN_PASSWORD}).location,
+            "/reauthenticate/authenticator",
+        )
+        with patch("grayhaven_timetracker.routes.consume_totp", return_value=False):
+            rejected = self.client.post(
+                "/reauthenticate/authenticator", data={"totp_digit": list("000000")}
+            )
+        self.assertEqual(rejected.status_code, 302)
+        self.assertIn("/reauthenticate?", rejected.location)
+        with self.client.session_transaction() as browser_session:
+            self.assertNotIn(
+                "pending_sensitive_action_password_verified", browser_session
+            )
+        with session_scope(self.app) as database:
+            event = database.scalar(
+                select(AuditEvent).where(
+                    AuditEvent.event == "sensitive_action_reauthentication_rejected"
+                )
+            )
+            assert event is not None
+            self.assertEqual(event.details["stage"], "authenticator")
+
+        restarted_url = self.client.get("/profile/password/authenticate").location
+        assert restarted_url is not None
+        self.assertEqual(self.client.get(restarted_url).status_code, 200)
+        self.assertEqual(
+            self.client.post(restarted_url, data={"password": ADMIN_PASSWORD}).location,
+            "/reauthenticate/authenticator",
+        )
+        with patch.object(
+            routes.sensitive_action_limiter, "blocked", return_value=True
+        ):
+            limited = self.client.post(
+                "/reauthenticate/authenticator", data={"totp_digit": list("000000")}
+            )
+        self.assertEqual(limited.status_code, 429)
+
     def test_archived_contract_rejects_new_timer_but_stops_legacy_timer(self) -> None:
         seed = self.seed_contract()
         self.login()
@@ -4642,6 +4685,22 @@ class ReviewRegressionTests(AppTestCase):
             legacy = database.get(TimeEntry, legacy_id)
             assert legacy is not None
             self.assertIsNotNone(legacy.stopped_at)
+
+    def test_timer_start_rejects_contract_archived_during_insert(self) -> None:
+        seed = self.seed_contract()
+        self.login()
+
+        def archive_after_initial_guard(contract: Contract) -> None:
+            contract.archived_at = datetime.now()
+
+        with patch(
+            "grayhaven_timetracker.routes.require_active_contract",
+            side_effect=archive_after_initial_guard,
+        ):
+            response = self.client.post(
+                "/timer/start", data={"task_id": str(seed.task_id)}
+            )
+        self.assertEqual(response.status_code, 409)
 
     def test_pending_pagination_preserves_finalized_page(self) -> None:
         seed = self.seed_contract()
@@ -4710,6 +4769,18 @@ class ReviewRegressionTests(AppTestCase):
             },
         )
         self.assertEqual(crafted.status_code, 400)
+        malformed = user_client.post(
+            edit_url,
+            data={
+                "client_id": "invalid",
+                "contract_id": str(seed.contract_id),
+                "assignment": str(seed.other_task_id),
+                "started_at": "2026-07-15T08:00:00",
+                "stopped_at": "2026-07-15T09:00:00",
+                "correction_reason": "Reject malformed correction",
+            },
+        )
+        self.assertEqual(malformed.status_code, 400)
         corrected = user_client.post(
             edit_url,
             data={
@@ -4728,6 +4799,40 @@ class ReviewRegressionTests(AppTestCase):
             self.assertEqual(entry.user_id, user.id)
             self.assertEqual(entry.task_id, seed.other_task_id)
 
+        self.login()
+        invalid_admin_owner = self.client.post(
+            edit_url,
+            data={
+                "user_id": "invalid",
+                "client_id": str(seed.client_id),
+                "contract_id": str(seed.contract_id),
+                "correction_reason": "Reject malformed owner selection",
+            },
+        )
+        self.assertEqual(invalid_admin_owner.status_code, 400)
+
+    def test_assignment_apis_reject_users_without_time_entry_permissions(self) -> None:
+        user = self.create_user(totp_secret="")
+        seed = self.seed_contract()
+        client = self.app.test_client()
+        self.login(
+            client,
+            email=user.email,
+            password="Standard-User-Test-Password-0001!",
+            totp_secret="",
+        )
+        with patch.dict(ROLE_PERMISSIONS, {"user": frozenset()}):
+            self.assertEqual(
+                client.get(f"/api/clients/{seed.client_id}/contracts").status_code,
+                403,
+            )
+            self.assertEqual(
+                client.get(
+                    f"/api/contracts/{seed.contract_id}/assignments"
+                ).status_code,
+                403,
+            )
+
     def test_live_refresh_skips_rendering_after_route_access_checks(self) -> None:
         self.login()
         initial = self.client.get("/", headers={"X-Grayhaven-Live-Refresh": "1"})
@@ -4742,6 +4847,31 @@ class ReviewRegressionTests(AppTestCase):
             )
         self.assertEqual(unchanged.status_code, 304)
         render.assert_not_called()
+
+    def test_live_refresh_skips_rendering_for_checked_resources(self) -> None:
+        seed = self.seed_contract()
+        self.login()
+        for path in (
+            f"/clients/{seed.client_id}",
+            f"/contracts/{seed.contract_id}",
+            f"/contracts/{seed.contract_id}/sessions",
+            "/sessions",
+        ):
+            with self.subTest(path=path):
+                initial = self.client.get(
+                    path, headers={"X-Grayhaven-Live-Refresh": "1"}
+                )
+                self.assertEqual(initial.status_code, 200)
+                with patch("grayhaven_timetracker.routes.render_template") as render:
+                    unchanged = self.client.get(
+                        path,
+                        headers={
+                            "X-Grayhaven-Live-Refresh": "1",
+                            "If-None-Match": initial.headers["ETag"],
+                        },
+                    )
+                self.assertEqual(unchanged.status_code, 304)
+                render.assert_not_called()
 
 
 if __name__ == "__main__":

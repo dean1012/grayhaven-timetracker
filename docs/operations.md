@@ -307,19 +307,31 @@ a restore over the live database.
    recorded for that recovery point.
 
    ```bash
+   VERIFY_DIR=$(mktemp -d /tmp/timetracker-verify.XXXXXX)
+   sudo install -d -o 777 -g 777 -m 0700 "$VERIFY_DIR"
+   sudo cp -a \
+     /tmp/var/lib/grayhaven/timetracker/backups/<backup> \
+     "$VERIFY_DIR/timetracker.sqlite3"
+   sudo chown 777:777 "$VERIFY_DIR/timetracker.sqlite3"
+   sudo chmod 0600 "$VERIFY_DIR/timetracker.sqlite3"
    sudo podman run --rm \
      --user 777:777 \
      --read-only \
      --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
      --cap-drop all \
      --security-opt no-new-privileges \
-     --volume /tmp/var/lib/grayhaven/timetracker/backups/<backup>:/recovery/timetracker.sqlite3:ro,Z \
+     --volume "$VERIFY_DIR:/recovery:Z" \
      --volume /var/lib/grayhaven/timetracker/secrets:/run/secrets:ro,Z \
      <approved-image>@sha256:<digest> \
      python scripts/database_maintenance.py verify \
      /recovery/timetracker.sqlite3 \
      /run/secrets/sqlcipher_passphrase
+   sudo rm -rf -- "$VERIFY_DIR"
    ```
+
+   The verification copy is writable because SQLCipher opens databases in WAL
+   mode and may create journal metadata beside the database. The restored
+   source artifact remains untouched.
 
 5. Create a disposable data directory and install the restored artifact.
 
@@ -370,8 +382,9 @@ a restore over the live database.
    A successful response confirms that the application started and loaded the
    restored database with the supplied SQLCipher passphrase. This health-only
    recovery procedure uses the local WebAuthn settings required for startup;
-   it does not validate a browser ceremony. Browser passkey checks must use
-   `http://localhost:8000`, the exact origin configured for this procedure.
+   this port-18000 container cannot validate browser ceremonies. Browser
+   passkey checks require a separate instance published at
+   `http://localhost:8000`, matching the allowed local WebAuthn origin.
 
 8. Stop the recovery container and remove the isolated recovery files after
    the exercise is accepted.
@@ -512,19 +525,31 @@ Use this procedure when the required artifact is not present under
    SQLCipher passphrase.
 
    ```bash
+   VERIFY_DIR=$(mktemp -d /tmp/timetracker-verify.XXXXXX)
+   sudo install -d -o 777 -g 777 -m 0700 "$VERIFY_DIR"
+   sudo cp -a \
+     /tmp/var/lib/grayhaven/timetracker/backups/<backup> \
+     "$VERIFY_DIR/timetracker.sqlite3"
+   sudo chown 777:777 "$VERIFY_DIR/timetracker.sqlite3"
+   sudo chmod 0600 "$VERIFY_DIR/timetracker.sqlite3"
    sudo podman run --rm \
      --user 777:777 \
      --read-only \
      --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
      --cap-drop all \
      --security-opt no-new-privileges \
-     --volume /tmp/var/lib/grayhaven/timetracker/backups/<backup>:/recovery/timetracker.sqlite3:ro,Z \
+     --volume "$VERIFY_DIR:/recovery:Z" \
      --volume /var/lib/grayhaven/timetracker/secrets:/run/secrets:ro,Z \
      <approved-image>@sha256:<digest> \
      python scripts/database_maintenance.py verify \
      /recovery/timetracker.sqlite3 \
      /run/secrets/sqlcipher_passphrase
+   sudo rm -rf -- "$VERIFY_DIR"
    ```
+
+   The verification copy is writable because SQLCipher opens databases in WAL
+   mode and may create journal metadata beside the database. The restored
+   source artifact remains untouched.
 
 5. Set the restored artifact path and public hostname.
 
