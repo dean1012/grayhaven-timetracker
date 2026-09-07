@@ -353,6 +353,8 @@ a restore over the live database.
      --env SKIP_BOOTSTRAP=true \
      --env SQLCIPHER_PASSPHRASE_FILE=/run/secrets/sqlcipher_passphrase \
      --env TRUSTED_HOSTS=localhost,127.0.0.1 \
+     --env WEBAUTHN_RP_ID=localhost \
+     --env WEBAUTHN_ORIGIN=http://localhost:8000 \
      --volume /tmp/timetracker-recovery-data:/app/data:Z \
      --volume /var/lib/grayhaven/timetracker/branding:/app/branding:ro,Z \
      --volume /var/lib/grayhaven/timetracker/secrets:/run/secrets:ro,Z \
@@ -366,7 +368,10 @@ a restore over the live database.
    ```
 
    A successful response confirms that the application started and loaded the
-   restored database with the supplied SQLCipher passphrase.
+   restored database with the supplied SQLCipher passphrase. This health-only
+   recovery procedure uses the local WebAuthn settings required for startup;
+   it does not validate a browser ceremony. Browser passkey checks must use
+   `http://localhost:8000`, the exact origin configured for this procedure.
 
 8. Stop the recovery container and remove the isolated recovery files after
    the exercise is accepted.
@@ -804,12 +809,18 @@ deliver the temporary password through the approved recovery channel.
 
 To make a correction to completed time:
 
-1. Sign in as an administrator.
-2. Open **Sessions** and locate the affected session.
-3. If the session is invoiced, paid, or disbursed, move it backward through
-   the billing workflow until it is **Pending Invoice**.
-4. Edit or move the pending session.
-5. Move the corrected session forward through each billing stage again and
+1. Sign in with the account that owns the session, or as an administrator.
+2. Open **My Sessions** for your own work, or **Sessions** as an administrator
+   correcting another user's work.
+3. If the session is invoiced, paid, or disbursed, an administrator must move
+   it backward through the billing workflow until it is **Pending Invoice**.
+4. The owner may edit or delete their own stopped pending session when its
+   contract is active, after entering a correction reason and completing the
+   existing reauthentication when required. The owner cannot change its
+   ownership, billing state, or billing metadata. Work assignments may be
+   corrected among visible active contracts and tasks.
+   Administrators may correct other users' pending sessions.
+5. Move a corrected session forward through each billing stage again and
    enter the accurate invoice, payment, and disbursement metadata.
 6. Review the audit log and confirm that each reversal, correction, and
    forward transition was recorded.

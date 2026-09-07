@@ -117,12 +117,14 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .page-heading > .icon-button:not(:disabled):not([aria-disabled="true"]):hover, .heading-actions .icon-button:not(:disabled):not([aria-disabled="true"]):hover { color: var(--muted-emerald); }
 .confirmation-expiry { color: var(--alert-error-foreground); font-weight: var(--font-weight-semibold); }
 .contract-layout { display: block; }
-.contract-hierarchy .hierarchy-item-name form, .contract-hierarchy .hierarchy-item-name .status-pill { flex: 0 0 auto; margin-left: .45rem; }
+.contract-task-actions { flex-wrap: wrap; justify-content: flex-end; gap: .45rem; }
 .icon-locked { display: inline-grid; place-items: center; width: 32px; height: 32px; color: var(--slate-grey); font-size: .75rem; }
 .rename-control { position: relative; }
 .rename-control > summary { list-style: none; }
 .rename-control > summary::-webkit-details-marker { display: none; }
-.rename-popover { position: absolute; top: calc(100% + .6rem); right: 0; z-index: 10; display: grid; grid-template-columns: minmax(240px, 1fr) auto; align-items: end; gap: .65rem; width: 390px; padding: 1rem; }
+.rename-popover { position: absolute; top: calc(100% + .6rem); right: 0; z-index: 10; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: .65rem; width: min(390px, calc(100vw - 2rem)); padding: 1rem; }
+.task-create-form .form-field, .subtask-add .form-field { min-width: 0; }
+.task-create-form .form-field > span, .subtask-add .form-field > span { color: var(--cool-grey); font-size: .76rem; }
 .subtask-empty { margin: .8rem 0 .8rem 46px; font-size: .82rem; }
 .subtask-add { width: calc(100% - 46px); margin-top: .75rem; margin-left: 46px; }
 .audit-change { display: block; }
@@ -220,7 +222,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .report-contact p { margin: 0; }
 .report-footer { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; flex: 0 0 auto; align-items: center; gap: var(--space-md); margin-top: 1rem; padding-top: 1rem; color: var(--cool-grey); border-top: 1px solid var(--primary-accent); font-size: .76rem; }
 .report-footer > strong { color: var(--primary-accent); letter-spacing: .16em; }
-.report-footer-client { text-align: right; }
+.report-footer-client { min-width: 0; overflow-wrap: anywhere; text-align: right; }
 
 @media (width >=640px) {
   :root { --container-padding: 2rem; }
@@ -270,9 +272,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
   .share-controls { align-items: stretch; flex-wrap: wrap; }
   .active-timer-actions { flex-wrap: wrap; }
   .timer-elapsed { margin-right: auto; text-align: left; }
-  .contract-hierarchy .hierarchy-item-header { align-items: flex-start; }
-  .contract-hierarchy .hierarchy-child { align-items: start; }
-  .rename-popover { position: fixed; top: 30%; right: 1rem; left: 1rem; width: auto; }
+  .rename-popover { position: fixed; top: 30%; right: 1rem; left: 1rem; grid-template-columns: minmax(0, 1fr); width: auto; }
   .auth-panel { width: 100%; padding: 2rem; }
   .report-shell { padding: 1rem 0; }
   .report-header img { width: 185px; }
@@ -297,7 +297,10 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
   .report-header img { width: 160px; }
   .report-meta { font-size: .75rem; }
   .report-contract-heading { align-items: flex-start; flex-direction: column; gap: .35rem; }
-  .report-footer { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .4rem; }
+  .report-footer { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: .6rem .8rem; }
+  .report-footer > strong { grid-column: 1; }
+  .report-footer-client { grid-column: 2; }
+  .report-contact { grid-column: 1 / -1; grid-row: 2; }
 }
 
 @media (width <=400px) {
@@ -305,9 +308,13 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
   h1 { font-size: 1.75rem; }
   .client-card, .contract-directory, .user-directory, .session-directory, .audit-directory, .report-panel { padding: 1rem; }
   .subtask-add { align-items: stretch; flex-direction: column; margin-left: 46px; }
+  .contract-task-actions { flex-direction: column; flex-wrap: nowrap; }
   .active-timer-context { align-items: flex-start; flex-direction: column; }
   .active-timer-context i { display: none; }
   .report-header img { width: 145px; }
+  .report-footer { grid-template-columns: minmax(0, 1fr); }
+  .report-footer > strong, .report-footer-client, .report-contact { grid-column: 1; }
+  .report-footer-client { text-align: left; }
 }
 
 @media (width >=768px) {

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from threading import Barrier, Lock, Thread
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -15,7 +16,7 @@ from webauthn.helpers import bytes_to_base64url
 from webauthn.helpers.exceptions import InvalidAuthenticationResponse
 from webauthn.helpers.structs import CredentialDeviceType
 
-from grayhaven_timetracker import routes
+from grayhaven_timetracker import passkeys, routes
 from grayhaven_timetracker.database import session_scope
 from grayhaven_timetracker.models import (
     AuditEvent,
@@ -925,6 +926,78 @@ class PasskeyRouteTests(AppTestCase):
         self.assertEqual(password.location, "/reauthenticate/authenticator")
         authenticator = self.client.get(password.location)
         self.assertEqual(authenticator.status_code, 200)
+
+    def test_challenge_consumption_allows_exactly_one_concurrent_consumer(self) -> None:
+        """Competing SQLCipher sessions must not both receive one challenge."""
+        challenge_id = "c" * 32
+        binding = "b" * 32
+        with self.app.test_request_context("/"):
+            session["webauthn_session_binding"] = binding
+            binding_hash = passkeys._binding_hash()
+        with session_scope(self.app) as database:
+            database.add(
+                WebAuthnChallenge(
+                    id=challenge_id,
+                    challenge=b"single-use-challenge",
+                    ceremony="authentication",
+                    user_id=None,
+                    session_binding_hash=binding_hash,
+                    action_context_hash=None,
+                    created_at=datetime.now(UTC).replace(tzinfo=None),
+                    expires_at=datetime.now(UTC).replace(tzinfo=None)
+                    + timedelta(minutes=5),
+                )
+            )
+            database.commit()
+        with session_scope(self.app) as database:
+            self.assertIsNotNone(database.get(WebAuthnChallenge, challenge_id))
+
+        barrier = Barrier(2)
+        result_lock = Lock()
+        accepted: list[bytes] = []
+        rejected: list[PasskeyError] = []
+        errors: list[Exception] = []
+
+        def consume_in_own_session() -> None:
+            with self.app.test_request_context("/"):
+                session["webauthn_session_binding"] = binding
+                with session_scope(self.app) as database:
+                    # Both sessions have observed the same row before either
+                    # consumes it; the database write must still pick one winner.
+                    observed = database.get(WebAuthnChallenge, challenge_id)
+                    self.assertIsNotNone(observed)
+                    barrier.wait(timeout=10)
+                    try:
+                        value = consume_challenge(
+                            database,
+                            challenge_id,
+                            ceremony="authentication",
+                            user_id=None,
+                        )
+                    except PasskeyError as exc:
+                        with result_lock:
+                            rejected.append(exc)
+                    except Exception as exc:
+                        with result_lock:
+                            errors.append(exc)
+                    else:
+                        with result_lock:
+                            accepted.append(value)
+
+        workers = [Thread(target=consume_in_own_session) for _ in range(2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=15)
+        self.assertFalse(any(worker.is_alive() for worker in workers))
+
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            accepted, [b"single-use-challenge"], [str(item) for item in rejected]
+        )
+        self.assertEqual(len(rejected), 1)
+        with session_scope(self.app) as database:
+            self.assertIsNone(database.get(WebAuthnChallenge, challenge_id))
 
 
 class PasskeyVerificationBoundaryTests(AppTestCase):

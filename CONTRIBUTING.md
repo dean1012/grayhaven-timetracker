@@ -72,10 +72,12 @@ requires the pull request branch to be current before merging.
 
 ## Validation
 
-Run the application checks locally:
+Run the application checks locally with Python 3.12 or newer. CI keeps the
+Python 3.12 contributor check and also runs unit coverage on the Python 3.14
+production runtime:
 
 ```bash
-node --test tests/test_passkeys_js.mjs
+node --test tests/*.mjs
 python3 -m pip_audit --progress-spinner off -r requirements.txt
 python3 -m compileall -q grayhaven_timetracker scripts tests
 mypy --strict grayhaven_timetracker scripts

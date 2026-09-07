@@ -132,11 +132,16 @@ def consume_challenge(
     """Consume matching ceremony state before attempting cryptographic verification."""
     if not isinstance(challenge_id, str) or not 32 <= len(challenge_id) <= 64:
         raise PasskeyError("The passkey challenge was not accepted.")
-    item = database.get(WebAuthnChallenge, challenge_id)
+    # Delete and return the row in one statement: only the winning consumer
+    # can obtain the challenge, including when two requests arrive together.
+    item = database.execute(
+        delete(WebAuthnChallenge)
+        .where(WebAuthnChallenge.id == challenge_id)
+        .returning(WebAuthnChallenge)
+    ).scalar_one_or_none()
     if item is None:
         raise PasskeyError("The passkey challenge expired or was already used.")
     if item.expires_at <= _now():
-        database.delete(item)
         database.commit()
         raise PasskeyError("The passkey challenge expired or was already used.")
     context_hash = _action_context_hash(action_context)
@@ -146,11 +151,9 @@ def consume_challenge(
         or not secrets.compare_digest(item.session_binding_hash, _binding_hash())
         or item.action_context_hash != context_hash
     ):
-        database.delete(item)
         database.commit()
         raise PasskeyError("The passkey challenge was not accepted.")
     challenge = bytes(item.challenge)
-    database.delete(item)
     database.commit()
     return challenge
 

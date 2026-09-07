@@ -1,361 +1,14 @@
 "use strict";
 
-function decodeBase64Url(value) {
-  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-  return Uint8Array.from(window.atob(padded), (character) =>
-    character.charCodeAt(0),
-  );
-}
+import {
+  shouldDeferLiveReplacement,
+  summarizeReportSessions,
+  isDirtyLiveControl,
+} from "./report-helpers.mjs";
+import { initializePasskeyFlows } from "./passkeys.mjs";
 
-function encodeBase64Url(value) {
-  if (value === null) {
-    return null;
-  }
-  const bytes = new Uint8Array(value);
-  let binary = "";
-  bytes.forEach((byte) => {
-    binary += String.fromCharCode(byte);
-  });
-  return window
-    .btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
-}
 
-function preparePublicKeyOptions(options, flow) {
-  const prepared = { ...options, challenge: decodeBase64Url(options.challenge) };
-  if (flow === "registration") {
-    prepared.user = { ...options.user, id: decodeBase64Url(options.user.id) };
-    prepared.excludeCredentials = (options.excludeCredentials || []).map(
-      (credential) => ({ ...credential, id: decodeBase64Url(credential.id) }),
-    );
-  } else {
-    prepared.allowCredentials = (options.allowCredentials || []).map(
-      (credential) => ({ ...credential, id: decodeBase64Url(credential.id) }),
-    );
-  }
-  return prepared;
-}
-
-function serializePasskeyCredential(credential, flow) {
-  const common = {
-    id: credential.id,
-    rawId: encodeBase64Url(credential.rawId),
-    type: credential.type,
-    authenticatorAttachment: credential.authenticatorAttachment,
-    clientExtensionResults: credential.getClientExtensionResults(),
-  };
-  if (flow === "registration") {
-    return {
-      ...common,
-      response: {
-        attestationObject: encodeBase64Url(credential.response.attestationObject),
-        clientDataJSON: encodeBase64Url(credential.response.clientDataJSON),
-        transports: credential.response.getTransports?.() || [],
-      },
-    };
-  }
-  return {
-    ...common,
-    response: {
-      authenticatorData: encodeBase64Url(credential.response.authenticatorData),
-      clientDataJSON: encodeBase64Url(credential.response.clientDataJSON),
-      signature: encodeBase64Url(credential.response.signature),
-      userHandle: encodeBase64Url(credential.response.userHandle),
-    },
-  };
-}
-
-async function passkeyPost(url, payload, csrfToken) {
-  const response = await window.fetch(url, {
-    method: "POST",
-    credentials: "same-origin",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRFToken": csrfToken,
-    },
-    body: JSON.stringify(payload),
-  });
-  const mediaType = (response.headers.get("Content-Type") || "")
-    .split(";", 1)[0]
-    .trim()
-    .toLowerCase();
-  const isJson = mediaType === "application/json" || mediaType.endsWith("+json");
-  let body;
-  if (isJson) {
-    try {
-      body = await response.json();
-    } catch {
-      body = undefined;
-    }
-  }
-  const isObject = body !== null && typeof body === "object" && !Array.isArray(body);
-  if (!response.ok) {
-    const serverError =
-      isObject && typeof body.error === "string" && body.error.trim()
-        ? body.error
-        : undefined;
-    const fallback =
-      response.status === 429
-        ? "Too many passkey attempts. Wait a moment and try again."
-        : "The passkey request was not accepted.";
-    throw new Error(serverError || fallback);
-  }
-  if (!isObject) {
-    throw new Error("The passkey response was not accepted.");
-  }
-  return body;
-}
-
-function requiredPasskeyResponseValue(body, field) {
-  const value = body[field];
-  if (typeof value !== "string" || !value) {
-    throw new Error("The passkey response was not accepted.");
-  }
-  const validChallenge =
-    field !== "challengeId" || (value.length >= 32 && value.length <= 64);
-  const validRedirect =
-    field !== "redirect" ||
-    (value.startsWith("/") && !value.startsWith("//") && !value.includes("\\"));
-  if (!validChallenge || !validRedirect) {
-    throw new Error("The passkey response was not accepted.");
-  }
-  return value;
-}
-
-let conditionalPasskeyController = null;
-let conditionalPasskeyPending = Promise.resolve();
-
-async function settleConditionalPasskeyLogin() {
-  conditionalPasskeyController?.abort();
-  await conditionalPasskeyPending;
-}
-
-async function startConditionalPasskeyLogin(container) {
-  const conditionalAvailable =
-    typeof window.PublicKeyCredential?.isConditionalMediationAvailable ===
-    "function";
-  if (!conditionalAvailable || !navigator.credentials) {
-    return;
-  }
-  const controller =
-    typeof AbortController === "function" ? new AbortController() : null;
-  conditionalPasskeyController = controller;
-  let status;
-  const pending = (async () => {
-    try {
-      if (!(await window.PublicKeyCredential.isConditionalMediationAvailable())) {
-        return;
-      }
-      const optionsUrl = container.dataset.optionsUrl;
-      const verifyUrl = container.dataset.verifyUrl;
-      const csrfToken = container.querySelector('input[name="csrf_token"]')?.value;
-      status = container.querySelector("[data-conditional-passkey-status]");
-      if (!optionsUrl || !verifyUrl || !csrfToken || controller?.signal.aborted) {
-        return;
-      }
-
-      let challengeId;
-      let credential;
-      try {
-        const options = await passkeyPost(optionsUrl, {}, csrfToken);
-        challengeId = requiredPasskeyResponseValue(options, "challengeId");
-        delete options.challengeId;
-        const request = {
-          publicKey: preparePublicKeyOptions(options, "authentication"),
-          mediation: "conditional",
-        };
-        if (controller) {
-          request.signal = controller.signal;
-        }
-        credential = await navigator.credentials.get(request);
-        if (!(credential instanceof window.PublicKeyCredential)) {
-          return;
-        }
-      } catch {
-        return;
-      }
-      const result = await passkeyPost(
-        verifyUrl,
-        {
-          challengeId,
-          credential: serializePasskeyCredential(credential, "authentication"),
-        },
-        csrfToken,
-      );
-      window.location.assign(requiredPasskeyResponseValue(result, "redirect"));
-    } catch (error) {
-      if (status) {
-        status.hidden = false;
-        status.textContent = error?.message || "The passkey was not accepted.";
-      }
-    }
-  })();
-  conditionalPasskeyPending = pending.finally(() => {
-    if (conditionalPasskeyController === controller) {
-      conditionalPasskeyController = null;
-      conditionalPasskeyPending = Promise.resolve();
-    }
-  });
-  return conditionalPasskeyPending;
-}
-
-async function startExplicitPasskey(container) {
-  const button = container.querySelector("[data-passkey-start]");
-  const alternative = container.querySelector("[data-passkey-alternative]");
-  const status = container.querySelector("[data-passkey-status]");
-  if (
-    !(button instanceof HTMLButtonElement) ||
-    !(status instanceof HTMLElement)
-  ) {
-    return;
-  }
-  if (!window.PublicKeyCredential || !navigator.credentials) {
-    container.dataset.passkeyState = "fallback";
-    if (alternative && alternative !== status) alternative.hidden = true;
-    button.hidden = true;
-    status.hidden = false;
-    status.textContent =
-      "Passkeys are unavailable in this browser. Use the password and authenticator instead.";
-    return;
-  }
-  const optionsUrl = container.dataset.optionsUrl;
-  const verifyUrl = container.dataset.verifyUrl;
-  const csrfToken =
-    container.querySelector('input[name="csrf_token"]')?.value ||
-    document.querySelector('input[name="csrf_token"]')?.value;
-  if (!optionsUrl || !verifyUrl || !csrfToken) {
-    container.dataset.passkeyState = "fallback";
-    if (alternative && alternative !== status) alternative.hidden = true;
-    button.hidden = true;
-    button.disabled = true;
-    status.hidden = false;
-    status.textContent = "The passkey request could not be started.";
-    return;
-  }
-  container.dataset.passkeyState = "ready";
-  if (alternative && alternative !== status) alternative.hidden = false;
-  button.hidden = false;
-  button.addEventListener("click", async () => {
-    button.disabled = true;
-    status.hidden = false;
-    status.textContent = "Waiting for your passkey…";
-    try {
-      await settleConditionalPasskeyLogin();
-      const options = await passkeyPost(optionsUrl, {}, csrfToken);
-      const challengeId = requiredPasskeyResponseValue(options, "challengeId");
-      delete options.challengeId;
-      const credential = await navigator.credentials.get({
-        publicKey: preparePublicKeyOptions(options, "authentication"),
-      });
-      if (!(credential instanceof window.PublicKeyCredential)) {
-        throw new Error("The browser did not return a passkey response.");
-      }
-      const result = await passkeyPost(
-        verifyUrl,
-        {
-          challengeId,
-          credential: serializePasskeyCredential(credential, "authentication"),
-        },
-        csrfToken,
-      );
-      window.location.assign(requiredPasskeyResponseValue(result, "redirect"));
-    } catch (error) {
-      status.textContent =
-        error?.name === "NotAllowedError" || error?.name === "AbortError"
-          ? "Passkey canceled. Use the password and authenticator option whenever you prefer."
-          : error?.message || "The passkey was not accepted.";
-    } finally {
-      button.disabled = false;
-    }
-  });
-}
-
-document.querySelectorAll("[data-passkey-flow]").forEach((container) => {
-  const startButton = container.querySelector("[data-passkey-start]");
-  const cancelButton = container.querySelector("[data-passkey-cancel]");
-  const status = container.querySelector("[data-passkey-status]");
-  const nameInput = container.querySelector("[data-passkey-name]");
-  if (
-    !(startButton instanceof HTMLButtonElement) ||
-    !(cancelButton instanceof HTMLButtonElement) ||
-    !(status instanceof HTMLElement) ||
-    !window.PublicKeyCredential ||
-    !navigator.credentials
-  ) {
-    if (status instanceof HTMLElement) {
-      status.textContent = "Passkeys are unavailable in this browser. Use your password and authenticator instead.";
-    }
-    return;
-  }
-  startButton.hidden = false;
-  let controller;
-  cancelButton.addEventListener("click", () => controller?.abort());
-  startButton.addEventListener("click", async () => {
-    const flow = container.dataset.passkeyFlow;
-    const optionsUrl = container.dataset.optionsUrl;
-    const verifyUrl = container.dataset.verifyUrl;
-    const csrfToken =
-      container.querySelector('input[name="csrf_token"]')?.value ||
-      document.querySelector('input[name="csrf_token"]')?.value;
-    const name = nameInput?.value.trim();
-    if (!flow || !optionsUrl || !verifyUrl || !csrfToken) {
-      status.textContent = "The passkey request could not be started.";
-      return;
-    }
-    if (flow === "registration" && !name) {
-      status.textContent = "Enter a name for this passkey.";
-      nameInput?.focus();
-      return;
-    }
-    controller = new AbortController();
-    startButton.disabled = true;
-    cancelButton.hidden = false;
-    status.textContent = "Waiting for your passkey…";
-    try {
-      const options = await passkeyPost(optionsUrl, {}, csrfToken);
-      const challengeId = requiredPasskeyResponseValue(options, "challengeId");
-      delete options.challengeId;
-      const publicKey = preparePublicKeyOptions(options, flow);
-      const credential =
-        flow === "registration"
-          ? await navigator.credentials.create({ publicKey, signal: controller.signal })
-          : await navigator.credentials.get({ publicKey, signal: controller.signal });
-      if (!(credential instanceof PublicKeyCredential)) {
-        throw new Error("The browser did not return a passkey response.");
-      }
-      const result = await passkeyPost(
-        verifyUrl,
-        {
-          challengeId,
-          credential: serializePasskeyCredential(credential, flow),
-          ...(flow === "registration" ? { name } : {}),
-        },
-        csrfToken,
-      );
-      window.location.assign(requiredPasskeyResponseValue(result, "redirect"));
-    } catch (error) {
-      status.textContent =
-        error?.name === "AbortError"
-          ? "Passkey canceled. Use the password and authenticator option whenever you prefer."
-          : error?.message || "The passkey was not accepted.";
-    } finally {
-      controller = undefined;
-      startButton.disabled = false;
-      cancelButton.hidden = true;
-    }
-  });
-});
-
-document
-  .querySelectorAll("[data-conditional-passkey-login]")
-  .forEach((container) => void startConditionalPasskeyLogin(container));
-
-document
-  .querySelectorAll("[data-explicit-passkey-login], [data-explicit-passkey-authentication]")
-  .forEach((container) => void startExplicitPasskey(container));
+initializePasskeyFlows();
 
 const oneTimeConfirmation = document.querySelector("[data-one-time-confirmation]");
 
@@ -541,37 +194,6 @@ function initializeReportPagination(root, pages = new Map()) {
   });
 }
 
-function roundedCostCents(seconds, hourlyRateCents) {
-  const numerator = BigInt(seconds) * BigInt(hourlyRateCents);
-  return Number((numerator + 1800n) / 3600n);
-}
-
-function allocateReportSessionCosts(sessions, hourlyRateCents) {
-  const allocations = sessions.map((session, index) => {
-    const numerator = BigInt(session.seconds) * BigInt(hourlyRateCents);
-    return {
-      index,
-      cents: Number(numerator / 3600n),
-      remainder: Number(numerator % 3600n),
-    };
-  });
-  const target = roundedCostCents(
-    sessions.reduce((total, session) => total + session.seconds, 0),
-    hourlyRateCents,
-  );
-  let remaining = target - allocations.reduce((total, item) => total + item.cents, 0);
-  allocations
-    .slice()
-    .sort((left, right) => right.remainder - left.remainder || left.index - right.index)
-    .forEach((item) => {
-      if (remaining > 0) {
-        allocations[item.index].cents += 1;
-        remaining -= 1;
-      }
-    });
-  return allocations.map((item) => item.cents);
-}
-
 function updateLiveReportSection(section) {
   const hourlyRateCents = Number(section.dataset.hourlyRateCents);
   if (!Number.isSafeInteger(hourlyRateCents)) {
@@ -599,13 +221,15 @@ function updateLiveReportSection(section) {
     }
   });
   groups.forEach((group) => {
-    group.seconds = group.sessions.reduce((total, session) => total + session.seconds, 0);
-    group.costCents = roundedCostCents(group.seconds, hourlyRateCents);
-    const allocations = allocateReportSessionCosts(group.sessions, hourlyRateCents);
-    group.sessions.forEach((session, index) => {
+    const summary = summarizeReportSessions(group.sessions, hourlyRateCents);
+    group.seconds = summary.seconds;
+    group.costCents = summary.costCents;
+    summary.rows.forEach((session) => {
       const cost = session.row.querySelector("[data-report-session-cost]");
       if (cost) {
-        cost.textContent = moneyFormatter.format(allocations[index] / 100);
+        cost.textContent = moneyFormatter.format(
+          session.costCents / 100,
+        );
       }
     });
     const duration = group.row.querySelector("[data-report-group-duration]");
@@ -748,6 +372,16 @@ if (liveReport) {
 function replaceLiveRegions(page, replacement) {
   const currentRegions = Array.from(page.querySelectorAll("[data-live-region]"));
   const replacementRegions = Array.from(replacement.querySelectorAll("[data-live-region]"));
+  const deferred = currentRegions.some((region) => {
+    const active = region.contains(document.activeElement);
+    const dirty = Array.from(region.querySelectorAll("input, textarea, select"))
+      .some(isDirtyLiveControl);
+    const openDisclosure = region.querySelector("details[open]") !== null;
+    return shouldDeferLiveReplacement({ dirty, focused: active, openDisclosure });
+  });
+  if (deferred) {
+    return false;
+  }
   let replaced = false;
 
   currentRegions.forEach((region) => {
@@ -767,7 +401,7 @@ let livePageEtag = "";
 
 async function reconcileLivePage() {
   const page = document.querySelector("[data-live-page]");
-  if (!page || page.querySelector("[data-one-time-confirmation], [data-totp-setup]") || livePageRequestActive) {
+  if (document.hidden || !page || page.querySelector("[data-one-time-confirmation], [data-totp-setup]") || livePageRequestActive) {
     return;
   }
   livePageRequestActive = true;

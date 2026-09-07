@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_, select
@@ -84,23 +84,8 @@ def calculate_cost(seconds: int, hourly_rate_cents: int) -> Decimal:
 def allocate_session_costs(
     durations: list[int], hourly_rate_cents: int
 ) -> tuple[Decimal, ...]:
-    """Allocate cents so session costs reconcile to their containing group."""
-    if not durations:
-        return ()
-    exact_cents = [
-        Decimal(seconds * hourly_rate_cents) / Decimal(3600) for seconds in durations
-    ]
-    allocated_cents = [
-        int(value.to_integral_value(rounding=ROUND_FLOOR)) for value in exact_cents
-    ]
-    target_cents = int(calculate_cost(sum(durations), hourly_rate_cents) * 100)
-    priority = sorted(
-        range(len(durations)),
-        key=lambda index: (-(exact_cents[index] - allocated_cents[index]), index),
-    )
-    for index in priority[: target_cents - sum(allocated_cents)]:
-        allocated_cents[index] += 1
-    return tuple(Decimal(cents) / Decimal(100) for cents in allocated_cents)
+    """Round each session independently, so grouping never changes its price."""
+    return tuple(calculate_cost(seconds, hourly_rate_cents) for seconds in durations)
 
 
 def format_duration(seconds: int) -> str:
@@ -232,7 +217,10 @@ def build_contract_report(
         ReportGroup(
             label=label,
             seconds=seconds,
-            cost=calculate_cost(seconds, contract.hourly_rate_cents),
+            cost=sum(
+                (session_costs[index] for index in group_session_indexes[label]),
+                Decimal(0),
+            ),
         )
         for label, seconds in group_seconds.items()
     )

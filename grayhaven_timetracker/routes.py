@@ -37,7 +37,7 @@ from flask import (
     url_for,
 )
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
-from sqlalchemy import case, delete, func, or_, select, update
+from sqlalchemy import case, delete, func, insert, literal, or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -108,7 +108,9 @@ from .permissions import (
     TIME_ENTRY_ADD_ANY,
     TIME_ENTRY_ADD_OWN,
     TIME_ENTRY_DELETE_ANY,
+    TIME_ENTRY_DELETE_OWN,
     TIME_ENTRY_EDIT_ANY,
+    TIME_ENTRY_EDIT_OWN,
     TIME_ENTRY_VIEW_ANY,
     TIME_ENTRY_VIEW_OWN,
     TIMER_START,
@@ -173,6 +175,7 @@ PENDING_SENSITIVE_ACTION_SESSION_KEYS = (
     "pending_sensitive_action_cancel_url",
     "pending_sensitive_action_expires_at",
     "pending_sensitive_action_path",
+    "pending_sensitive_action_password_verified",
     "pending_sensitive_action_session_version",
     "pending_sensitive_action_user_id",
 )
@@ -859,6 +862,34 @@ def time_entry_allowed(
     return can(any_permission) or (entry.user_id == user.id and can(own_permission))
 
 
+def unchanged_live_page_response() -> Response | None:
+    """Return 304 before rendering an unchanged authenticated live page."""
+    if (
+        request.headers.get("X-Grayhaven-Live-Refresh") != "1"
+        or request.method != "GET"
+    ):
+        return None
+    actor = current_user()
+    if actor is None:
+        return None
+    etag = live_page_etag()
+    if not request.if_none_match.contains(etag):
+        return None
+    response = current_app.response_class(status=304)
+    response.set_etag(etag)
+    return response
+
+
+def live_page_etag() -> str:
+    """Fingerprint live-page state without volatile rendered markup."""
+    database = getattr(g, "database_session", None)
+    revision = database.scalar(select(func.max(AuditEvent.id))) if database else 0
+    actor = current_user()
+    actor_id: int | str = actor.id if actor is not None else "public"
+    state = f"{actor_id}|{request.full_path}|{revision or 0}"
+    return hashlib.sha256(state.encode()).hexdigest()
+
+
 def time_entry_overlaps(
     user_id: int,
     started_at: datetime,
@@ -1064,19 +1095,6 @@ def register_routes(app: Flask) -> None:
             404,
         )
 
-    def live_page_etag() -> str:
-        """Fingerprint application state without volatile rendered markup."""
-        database = getattr(g, "database_session", None)
-        if database is None:
-            actor_id: int | str = "public"
-            revision = 0
-        else:
-            revision = database.scalar(select(func.max(AuditEvent.id))) or 0
-            actor = current_user()
-            actor_id = actor.id if actor else "public"
-        state = f"{actor_id}|{request.full_path}|{revision}"
-        return hashlib.sha256(state.encode()).hexdigest()
-
     @app.before_request
     def enforce_required_password_change() -> Any:
         user = current_user()
@@ -1196,6 +1214,17 @@ def pending_sensitive_action(user: User) -> tuple[str, str] | None:
         clear_pending_sensitive_action()
         return None
     return cast(str, path), cast(str, cancel_url)
+
+
+def pending_sensitive_action_password_verified(user: User) -> tuple[str, str] | None:
+    """Return a pending action only after this browser verified its password."""
+    pending = pending_sensitive_action(user)
+    if pending is None:
+        return None
+    if session.get("pending_sensitive_action_password_verified") is not True:
+        clear_pending_sensitive_action()
+        return None
+    return pending
 
 
 def authorize_sensitive_action(user: User, path: str) -> None:
@@ -1635,6 +1664,7 @@ def authenticate_sensitive_action() -> Any:
             400,
         )
     if user.totp_secret:
+        session["pending_sensitive_action_password_verified"] = True
         return redirect(url_for("main.authenticate_sensitive_action_totp"))
     sensitive_action_limiter.clear(rate_key)
     authorize_sensitive_action(user, next_url)
@@ -1653,7 +1683,7 @@ def authenticate_sensitive_action() -> Any:
 def authenticate_sensitive_action_totp() -> Any:
     """Complete a sensitive-action challenge using a separate TOTP form."""
     user = cast(User, current_user())
-    pending = pending_sensitive_action(user)
+    pending = pending_sensitive_action_password_verified(user)
     if pending is None or not user.totp_secret:
         flash("Your authentication challenge expired. Please try again.", "warning")
         return redirect(url_for("main.profile"))
@@ -1684,12 +1714,14 @@ def authenticate_sensitive_action_totp() -> Any:
             stage="authenticator",
             action_path=next_url,
         )
+        clear_pending_sensitive_action()
         flash("The authenticator code was not accepted.", "error")
-        return (
-            render_template(
-                "sensitive_action_authenticator.html", cancel_url=cancel_url
-            ),
-            400,
+        return redirect(
+            url_for(
+                "main.authenticate_sensitive_action",
+                next=next_url,
+                cancel=cancel_url,
+            )
         )
     sensitive_action_limiter.clear(rate_key)
     authorize_sensitive_action(user, next_url)
@@ -1719,7 +1751,9 @@ def logout() -> Any:
 
 @main.get("/")
 @permission_required(CLIENT_VIEW)
-def dashboard() -> str:
+def dashboard() -> Any:
+    if response := unchanged_live_page_response():
+        return response
     clients = (
         get_session()
         .scalars(
@@ -1735,7 +1769,7 @@ def dashboard() -> str:
 
 @main.get("/clients/<int:client_id>")
 @permission_required(CLIENT_VIEW)
-def client(client_id: int) -> str:
+def client(client_id: int) -> Any:
     item = get_session().scalar(
         select(Client)
         .where(Client.id == client_id, Client.visible.is_(True))
@@ -1743,6 +1777,8 @@ def client(client_id: int) -> str:
     )
     if item is None:
         abort(404)
+    if response := unchanged_live_page_response():
+        return response
     report_token = ensure_client_report_token(item)
     return render_template(
         "client.html",
@@ -2240,7 +2276,7 @@ def archive_contract(contract_id: int) -> Any:
 
 @main.get("/contracts/<int:contract_id>")
 @permission_required(CONTRACT_VIEW)
-def contract(contract_id: int) -> str:
+def contract(contract_id: int) -> Any:
     item = get_session().scalar(
         select(Contract)
         .where(Contract.id == contract_id)
@@ -2255,6 +2291,8 @@ def contract(contract_id: int) -> str:
     )
     if item is None:
         abort(404)
+    if response := unchanged_live_page_response():
+        return response
     return render_template("contract.html", contract=item)
 
 
@@ -2538,6 +2576,7 @@ def start_timer() -> Any:
     except ValueError:
         abort(400)
     task = cast(Task, get_or_404(Task, task_id))
+    require_active_contract(task.contract)
     subtask: Subtask | None = None
     raw_subtask_id = request.form.get("subtask_id", "")
     if raw_subtask_id:
@@ -2547,16 +2586,39 @@ def start_timer() -> Any:
             abort(400)
         if subtask.task_id != task.id:
             abort(400, "The selected subtask does not belong to the selected task.")
-    entry = TimeEntry(
-        user=user,
-        task=task,
-        subtask=subtask,
-        started_at=now_utc(),
-        stopped_at=None,
-        billing_status="pending_invoice",
-    )
-    database.add(entry)
+    started_at = now_utc()
     try:
+        inserted = cast(
+            CursorResult[Any],
+            database.execute(
+                insert(TimeEntry).from_select(
+                    (
+                        "visible",
+                        "user_id",
+                        "task_id",
+                        "subtask_id",
+                        "started_at",
+                        "stopped_at",
+                        "billing_status",
+                    ),
+                    select(
+                        literal(True),
+                        literal(user.id),
+                        literal(task.id),
+                        literal(subtask.id if subtask is not None else None),
+                        literal(started_at),
+                        literal(None),
+                        literal("pending_invoice"),
+                    )
+                    .select_from(Task)
+                    .join(Contract)
+                    .where(Task.id == task.id, Contract.archived_at.is_(None)),
+                )
+            ),
+        )
+        if inserted.rowcount != 1:
+            database.rollback()
+            abort(409, "This contract is archived.")
         database.commit()
     except IntegrityError:
         database.rollback()
@@ -2564,6 +2626,13 @@ def start_timer() -> Any:
         return redirect(
             url_for("main.contract", contract_id=task.contract_id), code=303
         )
+    entry = database.scalar(
+        select(TimeEntry)
+        .where(TimeEntry.user_id == user.id, TimeEntry.stopped_at.is_(None))
+        .options(selectinload(TimeEntry.task).selectinload(Task.contract))
+    )
+    if entry is None:
+        abort(409, "Stop your active timer before starting another.")
     audit(
         "timer_started",
         **audit_time_entry_details(entry),
@@ -2580,7 +2649,8 @@ def stop_timer(entry_id: int) -> Any:
     user = cast(User, current_user())
     if (entry.user_id != user.id and not user.is_admin) or entry.stopped_at is not None:
         abort(403)
-    require_active_contract(entry.task.contract)
+    # Archiving stops ordinary timers, but permit this narrow recovery path for
+    # a legacy timer that was created before the active-contract start guard.
     entry.stopped_at = max(now_utc(), entry.started_at)
     database.commit()
     audit(
@@ -2719,6 +2789,8 @@ def contract_sessions(contract_id: int) -> Any:
     )
     if contract_item is None:
         abort(404)
+    if response := unchanged_live_page_response():
+        return response
     conditions = [Task.contract_id == contract_id]
     if not can(TIME_ENTRY_VIEW_ANY):
         conditions.append(TimeEntry.user_id == cast(User, current_user()).id)
@@ -2774,13 +2846,15 @@ def contract_sessions(contract_id: int) -> Any:
                 entry.stopped_at is not None
                 and entry.billing_status == "pending_invoice"
                 and contract_item.archived_at is None
-                and can(TIME_ENTRY_EDIT_ANY)
+                and time_entry_allowed(entry, TIME_ENTRY_EDIT_OWN, TIME_ENTRY_EDIT_ANY)
             ),
             "can_delete": (
                 entry.stopped_at is not None
                 and entry.billing_status == "pending_invoice"
                 and contract_item.archived_at is None
-                and can(TIME_ENTRY_DELETE_ANY)
+                and time_entry_allowed(
+                    entry, TIME_ENTRY_DELETE_OWN, TIME_ENTRY_DELETE_ANY
+                )
             ),
         }
         for entry in entries
@@ -2819,6 +2893,8 @@ def my_sessions() -> Any:
     if page < 1 or finalized_page < 1:
         abort(400)
     user = cast(User, current_user())
+    if response := unchanged_live_page_response():
+        return response
     database = get_session()
     base_condition = TimeEntry.user_id == user.id
     pending_condition = base_condition & (TimeEntry.billing_status == "pending_invoice")
@@ -2904,20 +2980,24 @@ def my_sessions() -> Any:
         status: {"seconds": 0, "cost": Decimal(0)}
         for status in ("pending_invoice", "invoiced", "client_paid", "disbursed")
     }
-    all_entries = database.scalars(
-        select(TimeEntry)
+    summary_rows = database.execute(
+        select(
+            TimeEntry.billing_status,
+            TimeEntry.started_at,
+            TimeEntry.stopped_at,
+            Contract.hourly_rate_cents,
+        )
+        .join(TimeEntry.task)
+        .join(Task.contract)
         .where(base_condition)
-        .options(selectinload(TimeEntry.task).selectinload(Task.contract))
-    ).all()
-    for entry in all_entries:
+    )
+    for status, started_at, stopped_at, hourly_rate_cents in summary_rows:
         seconds = duration_seconds(
-            entry.started_at,
-            entry.stopped_at or max(snapshot_at, entry.started_at),
+            started_at,
+            stopped_at or max(snapshot_at, started_at),
         )
-        summary[entry.billing_status]["seconds"] += seconds
-        summary[entry.billing_status]["cost"] += calculate_cost(
-            seconds, entry.task.contract.hourly_rate_cents
-        )
+        summary[status]["seconds"] += seconds
+        summary[status]["cost"] += calculate_cost(seconds, hourly_rate_cents)
     return render_template(
         "my_sessions.html",
         session_rows=build_rows(pending_entries),
@@ -2929,9 +3009,15 @@ def my_sessions() -> Any:
         finalized_page=finalized_page,
         finalized_page_count=finalized_page_count,
         summary=summary,
-        previous_url=(url_for("main.my_sessions", page=page - 1) if page > 1 else None),
+        previous_url=(
+            url_for("main.my_sessions", page=page - 1, finalized_page=finalized_page)
+            if page > 1
+            else None
+        ),
         next_url=(
-            url_for("main.my_sessions", page=page + 1) if page < page_count else None
+            url_for("main.my_sessions", page=page + 1, finalized_page=finalized_page)
+            if page < page_count
+            else None
         ),
         finalized_previous_url=(
             url_for("main.my_sessions", page=page, finalized_page=finalized_page - 1)
@@ -2948,9 +3034,16 @@ def my_sessions() -> Any:
 
 
 @main.get("/api/clients/<int:client_id>/contracts")
-@permission_required(TIME_ENTRY_EDIT_ANY)
+@login_required
 def session_client_contracts(client_id: int) -> Response:
     """Return contracts for the selected session client without inline script data."""
+    if not (
+        can(TIME_ENTRY_ADD_OWN)
+        or can(TIME_ENTRY_ADD_ANY)
+        or can(TIME_ENTRY_EDIT_OWN)
+        or can(TIME_ENTRY_EDIT_ANY)
+    ):
+        abort(403)
     get_visible_client_or_404(client_id)
     contracts = (
         get_session()
@@ -2967,9 +3060,16 @@ def session_client_contracts(client_id: int) -> Response:
 
 
 @main.get("/api/contracts/<int:contract_id>/assignments")
-@permission_required(TIME_ENTRY_EDIT_ANY)
+@login_required
 def session_contract_assignments(contract_id: int) -> Response:
     """Return task and subtask options for the selected session contract."""
+    if not (
+        can(TIME_ENTRY_ADD_OWN)
+        or can(TIME_ENTRY_ADD_ANY)
+        or can(TIME_ENTRY_EDIT_OWN)
+        or can(TIME_ENTRY_EDIT_ANY)
+    ):
+        abort(403)
     contract = get_session().get(Contract, contract_id)
     if contract is None:
         abort(404)
@@ -3000,7 +3100,7 @@ def session_contract_assignments(contract_id: int) -> Response:
 
 
 @main.route("/sessions/<int:entry_id>/edit", methods=["GET", "POST"])
-@permission_required(TIME_ENTRY_EDIT_ANY)
+@login_required
 def edit_time_entry(entry_id: int) -> Any:
     database = get_session()
     entry = database.scalar(
@@ -3014,6 +3114,8 @@ def edit_time_entry(entry_id: int) -> Any:
     )
     if entry is None:
         abort(404)
+    if not time_entry_allowed(entry, TIME_ENTRY_EDIT_OWN, TIME_ENTRY_EDIT_ANY):
+        abort(403)
     if entry.stopped_at is None:
         abort(409, "Stop an active timer before editing it.")
     if entry.billing_status != "pending_invoice":
@@ -3043,6 +3145,7 @@ def edit_time_entry(entry_id: int) -> Any:
             )
         return stale_resource_redirect("main.dashboard", notice)
     client_item = contract_item.client
+    can_reassign = can(TIME_ENTRY_EDIT_ANY)
     previous_details = audit_time_entry_details(entry)
     previous_started_at = entry.started_at
     previous_stopped_at = entry.stopped_at
@@ -3056,9 +3159,13 @@ def edit_time_entry(entry_id: int) -> Any:
     clients = database.scalars(
         select(Client).where(Client.visible.is_(True)).order_by(Client.name)
     ).all()
-    users = database.scalars(
-        select(User).order_by(User.last_name, User.first_name, User.email)
-    ).all()
+    users = (
+        database.scalars(
+            select(User).order_by(User.last_name, User.first_name, User.email)
+        ).all()
+        if can_reassign
+        else []
+    )
     timezone_name = cast(str, current_app.config["DISPLAY_TIMEZONE"])
     if request.method != "POST":
         return render_template(
@@ -3068,6 +3175,7 @@ def edit_time_entry(entry_id: int) -> Any:
             contract=contract_item,
             clients=clients,
             users=users,
+            can_reassign=can_reassign,
             tasks=tasks,
             timezone_name=timezone_name,
             start_value=datetime_local_value(entry.started_at, timezone_name),
@@ -3078,11 +3186,16 @@ def edit_time_entry(entry_id: int) -> Any:
         raw_user_id = request.form.get("user_id", "")
         raw_client_id = request.form.get("client_id", "")
         raw_contract_id = request.form.get("contract_id", "")
-        if not all(
-            value.isdigit() for value in (raw_user_id, raw_client_id, raw_contract_id)
-        ):
-            raise ValueError("Select a valid user, client, and contract.")
-        entry_user = database.get(User, int(raw_user_id))
+        if not raw_client_id.isdigit() or not raw_contract_id.isdigit():
+            raise ValueError("Select a valid client and contract.")
+        if can_reassign:
+            if not raw_user_id.isdigit():
+                raise ValueError("Select a valid user.")
+            entry_user = database.get(User, int(raw_user_id))
+        else:
+            if raw_user_id not in ("", str(entry.user_id)):
+                raise ValueError("You can only correct your own time session.")
+            entry_user = entry.user
         selected_client = database.get(Client, int(raw_client_id))
         selected_contract = database.get(Contract, int(raw_contract_id))
         if (
@@ -3130,6 +3243,7 @@ def edit_time_entry(entry_id: int) -> Any:
             contract=contract_item,
             clients=clients,
             users=users,
+            can_reassign=can_reassign,
             tasks=tasks,
             timezone_name=timezone_name,
             start_value=request.form.get(
@@ -3194,7 +3308,7 @@ def edit_time_entry(entry_id: int) -> Any:
 
 
 @main.route("/sessions/<int:entry_id>/delete", methods=["GET", "POST"])
-@permission_required(TIME_ENTRY_DELETE_ANY)
+@login_required
 def delete_time_entry(entry_id: int) -> Any:
     database = get_session()
     entry = database.scalar(
@@ -3204,6 +3318,8 @@ def delete_time_entry(entry_id: int) -> Any:
     )
     if entry is None:
         abort(404)
+    if not time_entry_allowed(entry, TIME_ENTRY_DELETE_OWN, TIME_ENTRY_DELETE_ANY):
+        abort(403)
     if entry.stopped_at is None:
         abort(409, "Stop an active timer before deleting it.")
     if entry.billing_status != "pending_invoice":

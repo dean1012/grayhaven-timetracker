@@ -1,20 +1,25 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
-import vm from "node:vm";
+import {
+  createPasskeyFlows,
+  decodeBase64Url,
+  encodeBase64Url,
+  preparePublicKeyOptions,
+  requiredPasskeyResponseValue,
+  serializePasskeyCredential,
+} from "../static/passkeys.mjs";
 
-const source = readFileSync(new URL("../static/app.js", import.meta.url), "utf8");
-const start = source.indexOf("function decodeBase64Url");
-const end = source.indexOf('document.querySelectorAll("[data-passkey-flow]")');
-assert.notEqual(start, -1);
-assert.notEqual(end, -1);
-
-const context = vm.createContext({ window: {} });
+const context = { window: {} };
+context.requiredPasskeyResponseValue = requiredPasskeyResponseValue;
+context.decodeBase64Url = decodeBase64Url;
+context.encodeBase64Url = encodeBase64Url;
+context.preparePublicKeyOptions = preparePublicKeyOptions;
+context.serializePasskeyCredential = serializePasskeyCredential;
 class TestHTMLElement {}
 class TestHTMLButtonElement extends TestHTMLElement {}
 context.HTMLElement = TestHTMLElement;
 context.HTMLButtonElement = TestHTMLButtonElement;
-vm.runInContext(source.slice(start, end), context);
+Object.assign(context, createPasskeyFlows(context));
 
 function response({
   status = 200,

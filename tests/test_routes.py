@@ -1375,6 +1375,13 @@ class ClientContractTaskRouteTests(AppTestCase):
         )
         cancelled = self.client.post(authentication_url, data={"cancel": "1"})
         self.assertEqual(cancelled.location, f"/clients/{seed.client_id}")
+        with self.client.session_transaction() as browser_session:
+            self.assertFalse(
+                any(
+                    key in browser_session
+                    for key in routes.PENDING_SENSITIVE_ACTION_SESSION_KEYS
+                )
+            )
         self.authorize_sensitive_action(client_path)
         self.assertEqual(self.client.get(client_path).status_code, 200)
         self.assertEqual(
@@ -2110,6 +2117,9 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             ).status_code,
             400,
         )
+        challenge_url = self.client.get("/profile/password/authenticate").location
+        assert challenge_url is not None
+        self.assertEqual(self.client.get(challenge_url).status_code, 200)
         authorized = self.client.post(
             challenge_url,
             data={"password": ADMIN_PASSWORD},
@@ -2123,7 +2133,14 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                 "/reauthenticate/authenticator",
                 data={"totp_digit": list("000000")},
             ).status_code,
-            400,
+            302,
+        )
+        challenge_url = self.client.get("/profile/password/authenticate").location
+        assert challenge_url is not None
+        self.assertEqual(self.client.get(challenge_url).status_code, 200)
+        self.assertEqual(
+            self.client.post(challenge_url, data={"password": ADMIN_PASSWORD}).location,
+            "/reauthenticate/authenticator",
         )
         authorized = self.client.post(
             "/reauthenticate/authenticator",
@@ -2273,12 +2290,14 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                 "/reauthenticate/authenticator",
                 data={"totp_digit": list("000000")},
             ).status_code,
-            400,
+            302,
         )
+        challenge_url = self.client.get("/profile/password/authenticate").location
+        assert challenge_url is not None
+        self.assertEqual(self.client.get(challenge_url).status_code, 200)
         self.assertEqual(
             self.client.post(
-                "/reauthenticate/authenticator",
-                data={"totp_digit": list("000000")},
+                challenge_url, data={"password": ADMIN_PASSWORD}
             ).status_code,
             429,
         )
@@ -2696,6 +2715,9 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                 self.assertEqual(
                     self.client.post(authentication_url, data=data).status_code, 400
                 )
+                authentication_url = self.client.get(path).location
+                assert authentication_url is not None
+                self.assertEqual(self.client.get(authentication_url).status_code, 200)
                 self.assertEqual(
                     self.client.post(authentication_url, data=data).status_code, 429
                 )
@@ -4254,16 +4276,22 @@ class ReportAndSessionRouteTests(AppTestCase):
             user_client.post(f"/sessions/{admin_entry_id}/delete").status_code, 403
         )
         edited = user_client.post(
-            f"/sessions/{self.seed.entry_id}/edit",
+            (
+                f"/sessions/{self.seed.entry_id}/edit?"
+                f"original_contract_id={self.seed.contract_id}"
+            ),
             data={
+                "client_id": str(self.seed.client_id),
+                "contract_id": str(self.seed.contract_id),
                 "assignment": str(self.seed.other_task_id),
                 "started_at": "2026-07-15T08:15:30",
                 "stopped_at": "2026-07-15T09:45:35",
+                "correction_reason": "Correct my pending session",
             },
         )
-        self.assertEqual(edited.status_code, 403)
+        self.assertEqual(edited.status_code, 302)
         self.assertEqual(
-            user_client.post(f"/sessions/{self.seed.entry_id}/delete").status_code, 403
+            user_client.post(f"/sessions/{self.seed.entry_id}/delete").status_code, 302
         )
         with session_scope(self.app) as database:
             task = database.get(Task, self.seed.other_task_id)
@@ -4277,10 +4305,10 @@ class ReportAndSessionRouteTests(AppTestCase):
             database.flush()
             active_id = active.id
         self.assertEqual(
-            user_client.get(f"/sessions/{active_id}/edit").status_code, 403
+            user_client.get(f"/sessions/{active_id}/edit").status_code, 409
         )
         self.assertEqual(
-            user_client.post(f"/sessions/{active_id}/delete").status_code, 403
+            user_client.post(f"/sessions/{active_id}/delete").status_code, 409
         )
 
     def test_manual_sessions_enforce_ownership_time_and_overlap_rules(self) -> None:
@@ -4565,6 +4593,155 @@ class ReportAndSessionRouteTests(AppTestCase):
                 "America/Chicago",
                 original_utc=datetime(2026, 11, 1, 5, 30, 0),
             )
+
+
+class ReviewRegressionTests(AppTestCase):
+    """Cover the focused corrections selected from the programmer review."""
+
+    def test_sensitive_action_totp_requires_the_password_stage(self) -> None:
+        self.login()
+        challenge_url = self.client.get("/profile/password/authenticate").location
+        assert challenge_url is not None
+        self.assertEqual(self.client.get(challenge_url).status_code, 200)
+        bypass = self.client.post(
+            "/reauthenticate/authenticator",
+            data={"totp_digit": list(next_totp(ADMIN_TOTP_SECRET))},
+        )
+        self.assertEqual(bypass.location, "/profile")
+        with self.client.session_transaction() as browser_session:
+            self.assertNotIn("sensitive_action_authorized_path", browser_session)
+
+        self.authorize_sensitive_action("/profile/password/change")
+        self.assertEqual(
+            self.client.get("/profile/password/change").status_code,
+            200,
+        )
+
+    def test_archived_contract_rejects_new_timer_but_stops_legacy_timer(self) -> None:
+        seed = self.seed_contract()
+        self.login()
+        with session_scope(self.app) as database:
+            contract = database.get(Contract, seed.contract_id)
+            task = database.get(Task, seed.task_id)
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert contract is not None and task is not None and admin is not None
+            contract.archived_at = datetime.now()
+            legacy = TimeEntry(user=admin, task=task, started_at=datetime.now())
+            database.add(legacy)
+            database.flush()
+            legacy_id = legacy.id
+        self.assertEqual(
+            self.client.post(
+                "/timer/start", data={"task_id": str(seed.task_id)}
+            ).status_code,
+            409,
+        )
+        stopped = self.client.post(f"/timer/stop/{legacy_id}")
+        self.assertEqual(stopped.status_code, 302)
+        with session_scope(self.app) as database:
+            legacy = database.get(TimeEntry, legacy_id)
+            assert legacy is not None
+            self.assertIsNotNone(legacy.stopped_at)
+
+    def test_pending_pagination_preserves_finalized_page(self) -> None:
+        seed = self.seed_contract()
+        self.login()
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            task = database.get(Task, seed.task_id)
+            assert admin is not None and task is not None
+            for offset in range(26):
+                started = datetime(2026, 7, 16, 8, 0) + timedelta(days=offset)
+                database.add(
+                    TimeEntry(
+                        user=admin, task=task, started_at=started, stopped_at=started
+                    )
+                )
+                database.add(
+                    TimeEntry(
+                        user=admin,
+                        task=task,
+                        started_at=started,
+                        stopped_at=started,
+                        billing_status="invoiced",
+                        invoice_number=f"INV-{offset}",
+                        invoice_date=started.date(),
+                    )
+                )
+        page = self.client.get("/sessions?page=1&finalized_page=2")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'href="/sessions?page=2&amp;finalized_page=2"', page.data)
+        page = self.client.get("/sessions?page=2&finalized_page=2")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b'href="/sessions?page=1&amp;finalized_page=2"', page.data)
+        self.assertIn(b'href="/sessions?page=2&amp;finalized_page=1"', page.data)
+
+    def test_user_corrects_own_pending_entry_without_reassigning_owner(self) -> None:
+        user = self.create_user(totp_secret="")
+        seed = self.seed_contract(entry_user_id=user.id)
+        user_client = self.app.test_client()
+        self.login(
+            user_client,
+            email=user.email,
+            password="Standard-User-Test-Password-0001!",
+            totp_secret="",
+        )
+        edit_url = (
+            f"/sessions/{seed.entry_id}/edit?original_contract_id={seed.contract_id}"
+        )
+        listing = user_client.get(f"/contracts/{seed.contract_id}/sessions")
+        self.assertEqual(listing.status_code, 200)
+        self.assertIn(b'aria-label="Update Session"', listing.data)
+        self.assertIn(b'aria-label="Delete Session"', listing.data)
+        self.assertNotIn(b"Update Payment Status", listing.data)
+        form = user_client.get(edit_url)
+        self.assertEqual(form.status_code, 200)
+        self.assertNotIn(b'name="user_id"', form.data)
+        crafted = user_client.post(
+            edit_url,
+            data={
+                "user_id": "1",
+                "client_id": str(seed.client_id),
+                "contract_id": str(seed.contract_id),
+                "assignment": str(seed.other_task_id),
+                "started_at": "2026-07-15T08:00:00",
+                "stopped_at": "2026-07-15T09:00:00",
+                "correction_reason": "Correct task assignment",
+            },
+        )
+        self.assertEqual(crafted.status_code, 400)
+        corrected = user_client.post(
+            edit_url,
+            data={
+                "client_id": str(seed.client_id),
+                "contract_id": str(seed.contract_id),
+                "assignment": str(seed.other_task_id),
+                "started_at": "2026-07-15T08:00:00",
+                "stopped_at": "2026-07-15T09:00:00",
+                "correction_reason": "Correct task assignment",
+            },
+        )
+        self.assertEqual(corrected.status_code, 302)
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, seed.entry_id)
+            assert entry is not None
+            self.assertEqual(entry.user_id, user.id)
+            self.assertEqual(entry.task_id, seed.other_task_id)
+
+    def test_live_refresh_skips_rendering_after_route_access_checks(self) -> None:
+        self.login()
+        initial = self.client.get("/", headers={"X-Grayhaven-Live-Refresh": "1"})
+        self.assertEqual(initial.status_code, 200)
+        with patch("grayhaven_timetracker.routes.render_template") as render:
+            unchanged = self.client.get(
+                "/",
+                headers={
+                    "X-Grayhaven-Live-Refresh": "1",
+                    "If-None-Match": initial.headers["ETag"],
+                },
+            )
+        self.assertEqual(unchanged.status_code, 304)
+        render.assert_not_called()
 
 
 if __name__ == "__main__":

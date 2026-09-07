@@ -27,6 +27,11 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version: "24"
+
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
@@ -35,6 +40,7 @@ jobs:
 
       - name: Run unit tests
         run: |
+          node --test tests/*.mjs
           python -m coverage run -m unittest discover -s tests -v
           python -m coverage report
           python -m coverage xml
@@ -47,3 +53,29 @@ jobs:
           files: ./coverage.xml
           flags: unittests
           use_oidc: true
+
+  production-runtime:
+    name: Production Runtime (Python 3.14)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run production runtime unit coverage
+        run: |
+          python -m coverage run -m unittest discover -s tests -v
+          python -m coverage report
