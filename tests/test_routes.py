@@ -19,6 +19,7 @@ from flask_wtf.csrf import CSRFError
 from itsdangerous import SignatureExpired
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 from werkzeug.exceptions import Conflict, Forbidden
 
 from grayhaven_timetracker import auth, routes
@@ -4872,6 +4873,51 @@ class ReviewRegressionTests(AppTestCase):
                     )
                 self.assertEqual(unchanged.status_code, 304)
                 render.assert_not_called()
+
+
+class LiveRefreshFallbackTests(AppTestCase):
+    def test_live_refresh_helper_rejects_unauthenticated_request(self) -> None:
+        with self.app.test_request_context(
+            "/", headers={"X-Grayhaven-Live-Refresh": "1"}
+        ):
+            self.assertIsNone(routes.unchanged_live_page_response())
+
+
+class TimerRereadRaceTests(AppTestCase):
+    def test_timer_start_handles_stop_between_commit_and_reread(self) -> None:
+        seed = self.seed_contract()
+        self.login()
+        original_commit = Session.commit
+        with session_scope(self.app) as database:
+            actor_id = database.scalar(select(User.id).where(User.email == ADMIN_EMAIL))
+        assert actor_id is not None
+        handled = False
+        stopped = False
+
+        def commit_and_stop(database: Session) -> None:
+            nonlocal handled, stopped
+            original_commit(database)
+            if handled:
+                return
+            handled = True
+            with session_scope(self.app) as competing_session:
+                entry = competing_session.scalar(
+                    select(TimeEntry).where(
+                        TimeEntry.user_id == actor_id, TimeEntry.stopped_at.is_(None)
+                    )
+                )
+                assert entry is not None
+                entry.stopped_at = entry.started_at + timedelta(seconds=1)
+                stopped = True
+
+        with patch(
+            "sqlalchemy.orm.Session.commit", autospec=True, side_effect=commit_and_stop
+        ):
+            response = self.client.post(
+                "/timer/start", data={"task_id": str(seed.task_id)}
+            )
+        self.assertTrue(stopped)
+        self.assertEqual(response.status_code, 409)
 
 
 if __name__ == "__main__":
