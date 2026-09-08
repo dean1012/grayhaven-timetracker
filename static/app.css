@@ -162,7 +162,9 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .session-summary + .session-directory,
 .session-directory + .session-directory { margin-top: 1.5rem; }
 .my-session-table td[data-label="Rate"],
-.my-session-table td[data-label="Cost"] { white-space: nowrap; }
+.my-session-table td[data-label="Cost"],
+.session-table td[data-label="Rate"],
+.session-table td[data-label="Cost"] { white-space: nowrap; }
 .share-panel { display: flex; align-items: end; justify-content: space-between; gap: 2rem; margin-bottom: 1.5rem; padding: 1.4rem 1.7rem; }
 .report-share-panel { margin-bottom: 1.5rem; padding: 1.4rem 1.7rem; }
 .report-link-row { display: flex; align-items: center; gap: .65rem; }
@@ -286,6 +288,11 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
   .report-title h1 { font-size: 2rem; }
   .report-page > .panel { padding: 1.2rem; }
   .report-contact { text-align: left; }
+}
+
+@media (width <640px) {
+  .report-title { flex-direction: column; }
+  .report-title-meta { text-align: left; }
 }
 
 @media (width <=575px) {
