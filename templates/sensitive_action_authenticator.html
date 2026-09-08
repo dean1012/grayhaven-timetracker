@@ -9,8 +9,9 @@
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       {% include "_totp_bubbles.html" %}
-      <div class="form-actions"><button class="button button-secondary" type="submit" name="cancel" value="1" formnovalidate>Cancel</button><button class="button button-primary" type="submit"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Verify</button></div>
+      <div class="form-actions"><button class="button button-secondary" type="submit" form="cancel-sensitive-action" name="cancel" value="1" formnovalidate>Cancel</button><button class="button button-primary" type="submit"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Verify</button></div>
     </form>
+    <form id="cancel-sensitive-action" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>
   </div>
 </section>
 {% endblock %}
