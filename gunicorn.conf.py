@@ -10,3 +10,4 @@ keepalive = 5
 accesslog = None
 errorlog = "-"
 capture_output = True
+control_socket_disable = True
