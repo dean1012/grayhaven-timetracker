@@ -733,18 +733,25 @@ def user_setup_mailto(
     )
     role = "Administrator" if user.is_admin else "User"
     article = "an" if user.is_admin else "a"
+    introduction = (
+        "Grayhaven Systems LLC has reset your password for the Grayhaven Systems "
+        "LLC Time Tracker application."
+        if password_reset
+        else f"Grayhaven Systems LLC has added you as {article} {role} in the "
+        "Grayhaven Systems LLC Time Tracker application."
+    )
+    password_label = "temporary password" if password_reset else "initial password"
     body = "\n".join(
         [
             f"{escape(user.full_name)},",
             "",
-            f"Grayhaven Systems LLC has added you as {article} {role} in the "
-            "Grayhaven Systems LLC Time Tracker application.",
+            introduction,
             "",
             "<b>You can access the Time Tracker application at the URL below:</b>",
             f'<a href="{escape(application_url, quote=True)}">'
             f"{escape(application_url)}</a>",
             "",
-            "Your username is your e-mail address. Your initial password is: "
+            f"Your username is your e-mail address. Your {password_label} is: "
             f"<b>{escape(temporary_password)}</b>",
             "",
             "<b>Please login and change your password at your earliest "

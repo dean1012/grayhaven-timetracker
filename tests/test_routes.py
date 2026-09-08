@@ -2747,6 +2747,9 @@ class ProfileAndUserAdministrationTests(AppTestCase):
             reset = self.client.post(reset_path, follow_redirects=True)
         self.assertEqual(reset.status_code, 200)
         self.assertIn(temporary_password.encode(), reset.data)
+        self.assertIn(b"reset%20your%20password", reset.data)
+        self.assertIn(b"temporary%20password", reset.data)
+        self.assertNotIn(b"has%20added%20you", reset.data)
         self.assertIn("/login", existing_session.get("/").location)
         with session_scope(self.app) as database:
             invalidation = database.scalar(
