@@ -1553,6 +1553,7 @@ class ClientContractTaskRouteTests(AppTestCase):
             self.client.get("/contracts/9999/edit").location,
             "/?stale=contract_deleted",
         )
+
         replacement_password = "Replacement-Report-Password-For-Test-0001!"
         reset_path = f"/clients/{client_id}/report-password/reset"
         self.authorize_sensitive_action(reset_path)
@@ -1583,6 +1584,42 @@ class ClientContractTaskRouteTests(AppTestCase):
             ).status_code,
             302,
         )
+
+    def test_contract_payment_terms_render_in_client_and_contract_views(self) -> None:
+        seed = self.seed_contract()
+        for payment_terms_days, label in (
+            (0, "Immediately"),
+            (7, "NET 7"),
+            (30, "NET 30"),
+        ):
+            with self.subTest(payment_terms_days=payment_terms_days):
+                with session_scope(self.app) as database:
+                    contract = database.get(Contract, seed.contract_id)
+                    assert contract is not None
+                    contract.payment_terms_days = payment_terms_days
+
+                contract_page = self.client.get(f"/contracts/{seed.contract_id}")
+                self.assertEqual(contract_page.status_code, 200)
+                self.assertIn(b"contract-metadata", contract_page.data)
+                self.assertIn(label.encode(), contract_page.data)
+                self.assertIn(b"fa-file-invoice-dollar", contract_page.data)
+                self.assertIn(b"fa-file-contract", contract_page.data)
+                self.assertNotIn(b"&middot;", contract_page.data)
+
+                client_page = self.client.get(f"/clients/{seed.client_id}")
+                self.assertEqual(client_page.status_code, 200)
+                self.assertIn(b"contract-payment-terms", client_page.data)
+                self.assertIn(label.encode(), client_page.data)
+                self.assertIn(
+                    f'href="/contracts/{seed.contract_id}"'.encode(), client_page.data
+                )
+
+                dashboard = self.client.get("/")
+                self.assertEqual(dashboard.status_code, 200)
+                self.assertIn(
+                    f'href="/contracts/{seed.contract_id}"'.encode(), dashboard.data
+                )
+                self.assertIn(b"icon-button contract-row-action", dashboard.data)
 
     def test_task_and_subtask_deletion_hides_work_data_and_retains_audit(
         self,
@@ -1856,6 +1893,10 @@ class TimerAndPermissionRouteTests(AppTestCase):
         )
 
     def test_standard_user_permissions_and_timer_lifecycle(self) -> None:
+        contract_page = self.client.get(f"/contracts/{self.seed.contract_id}")
+        self.assertEqual(contract_page.status_code, 200)
+        self.assertIn(b"NET 30", contract_page.data)
+        self.assertNotIn(b'title="Update Contract"', contract_page.data)
         self.assertEqual(self.client.get("/users").status_code, 403)
         self.assertEqual(
             self.client.get(f"/reports/{self.seed.contract_id}").status_code, 403
@@ -3807,6 +3848,8 @@ class ReportAndSessionRouteTests(AppTestCase):
         contract_page = self.client.get(f"/contracts/{self.seed.contract_id}")
         self.assertEqual(contract_page.status_code, 200)
         self.assertIn(b"This contract is archived", contract_page.data)
+        self.assertIn(b"contract-metadata", contract_page.data)
+        self.assertIn(b"NET 30", contract_page.data)
         self.assertNotIn(b'title="New Task"', contract_page.data)
         sessions_page = self.client.get(f"/contracts/{self.seed.contract_id}/sessions")
         self.assertIn(b"All session controls are disabled", sessions_page.data)

@@ -51,6 +51,7 @@
       <span class="contract-contact-identity"><i class="fa-solid fa-address-card" aria-hidden="true"></i><strong title="{{ contract.contact_name }}">{{ contract.contact_name }}</strong></span>
       <a class="contract-contact-email external-link" href="mailto:{{ contract.contact_email }}?subject={{ ('RE: ' ~ client.name ~ '/' ~ contract.name ~ ' Contract')|urlencode }}&amp;body={{ (contract.contact_name ~ ',')|urlencode }}" title="{{ contract.contact_email }}"><span class="truncate-text">{{ contract.contact_email }}</span></a>
     </span>
+    <span class="contract-payment-terms" aria-label="Payment Terms: {% if contract.payment_terms_days == 0 %}Immediately{% else %}NET {{ contract.payment_terms_days }}{% endif %}"><span class="contract-payment-terms-label">Payment Terms:</span>{% if contract.payment_terms_days == 0 %}Immediately{% else %}NET {{ contract.payment_terms_days }}{% endif %}</span>
     <span class="contract-rate-details">
       <span class="rate">{{ format_money(contract.hourly_rate) }}/hr</span>
       <a class="icon-button contract-row-action" href="{{ url_for('main.contract', contract_id=contract.id) }}" title="Open {{ contract.name }}" aria-label="Open {{ contract.name }}"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></a>

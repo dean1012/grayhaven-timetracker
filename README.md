@@ -29,7 +29,7 @@ The application provides:
 - Role-based administration and user access with password/TOTP authentication
   and optional passkeys. Sign-in and sensitive-action pages expose an explicit
   passkey alternative while retaining password/TOTP fallback.
-- Clients, contracts, tasks, and optional subtasks.
+- Clients, contracts, payment terms, tasks, and optional subtasks.
 - One active timer per user, manual time entries, and administrative time
   reassignment.
 - Contract archiving and activation with safeguards for active timers.
