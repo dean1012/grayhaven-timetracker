@@ -1588,7 +1588,7 @@ class ClientContractTaskRouteTests(AppTestCase):
     def test_contract_payment_terms_render_in_client_and_contract_views(self) -> None:
         seed = self.seed_contract()
         for payment_terms_days, label in (
-            (0, "Immediately"),
+            (0, "Due Immediately"),
             (7, "NET 7"),
             (30, "NET 30"),
         ):
@@ -1609,6 +1609,8 @@ class ClientContractTaskRouteTests(AppTestCase):
                 client_page = self.client.get(f"/clients/{seed.client_id}")
                 self.assertEqual(client_page.status_code, 200)
                 self.assertIn(b"contract-payment-terms", client_page.data)
+                self.assertNotIn(b"contract-payment-terms-label", client_page.data)
+                self.assertIn(f'">{label}</span>'.encode(), client_page.data)
                 self.assertIn(label.encode(), client_page.data)
                 self.assertIn(
                     f'href="/contracts/{seed.contract_id}"'.encode(), client_page.data

@@ -118,7 +118,6 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .contract-row .rate { color: var(--cool-grey); font-size: .82rem; }
 .contract-row .rate i { margin-left: .7rem; color: var(--cool-grey); }
 .contract-payment-terms { min-width: 0; overflow-wrap: anywhere; color: var(--cool-grey); font-size: .82rem; font-weight: 400; }
-.contract-payment-terms-label { display: none; }
 .contract-rate-details { display: flex; align-items: center; justify-self: end; gap: .35rem; white-space: nowrap; }
 .contract-row-action { color: var(--primary-accent); }
 .contract-row-action i { margin: 0; color: inherit; }
@@ -287,8 +286,6 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
   .contract-contact-identity strong { grid-column: 2; grid-row: 1; }
   .contract-contact-email { grid-column: 2; grid-row: 2; }
   .contract-rate-details { width: 100%; justify-content: space-between; justify-self: stretch; }
-  .contract-payment-terms { display: flex; gap: .35rem; }
-  .contract-payment-terms-label { display: inline; }
 }
 
 @media (width <768px) {

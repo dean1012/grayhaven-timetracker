@@ -453,7 +453,7 @@ def render_invoice_pdf(
             ]
         )
     terms = (
-        "Immediately"
+        "Due Immediately"
         if invoice.payment_terms_days == 0
         else (f"Net {invoice.payment_terms_days}")
     )

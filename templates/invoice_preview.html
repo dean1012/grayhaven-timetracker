@@ -8,7 +8,7 @@
   <section class="summary-grid content-grid-two panel" aria-label="Invoice summary">
     <div class="summary-card"><span>Invoice range</span><p>Start: {{ format_datetime_inline(preview.range_start_utc, timezone_info) }}<br>End: {{ format_datetime_inline(preview.range_end_utc, timezone_info) }}</p></div>
     <div class="summary-card"><span>Hourly rate</span><strong>{{ invoice_money(preview.hourly_rate_cents) }} / hour</strong></div>
-    <div class="summary-card"><span>Payment terms</span><strong>{% if preview.payment_terms_days == 0 %}Immediately{% elif preview.payment_terms_days == 7 %}7 days{% else %}NET 30{% endif %}</strong></div>
+    <div class="summary-card"><span>Payment terms</span><strong>{% if preview.payment_terms_days == 0 %}Due Immediately{% elif preview.payment_terms_days == 7 %}7 days{% else %}NET 30{% endif %}</strong></div>
     <div class="summary-card"><span>Billable sessions</span><strong>{{ preview.entries|length }}</strong></div>
   </section>
 </section>
