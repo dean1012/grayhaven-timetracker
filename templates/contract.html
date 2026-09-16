@@ -11,7 +11,7 @@
 {% endblock %}
 {% block content %}
 <div data-live-region="contract-header"><section class="page-heading">
-  <div><p class="eyebrow">CONTRACT</p><h1 class="truncate-text" title="{{ contract.name }}">{{ contract.name }}</h1><p class="muted">{{ format_money(contract.hourly_rate) }} per hour</p></div>
+  <div><p class="eyebrow">CONTRACT</p><h1 class="truncate-text" title="{{ contract.name }}">{{ contract.name }}</h1><p class="muted contract-metadata"><span><i class="fa-solid fa-file-invoice-dollar" aria-hidden="true"></i>{{ format_money(contract.hourly_rate) }} per hour</span><span><i class="fa-solid fa-file-contract" aria-hidden="true"></i>{% if contract.payment_terms_days == 0 %}Immediately{% else %}NET {{ contract.payment_terms_days }}{% endif %}</span></p></div>
   <div class="heading-actions">
     {% if not contract.archived_at and can('contract:edit') %}<a class="icon-button" href="{{ url_for('main.edit_contract', contract_id=contract.id) }}" title="Update Contract" aria-label="Update Contract"><i class="fa-solid fa-pen" aria-hidden="true"></i></a>{% endif %}
     {% if not contract.archived_at and can('contract:delete') %}<a class="icon-button danger" href="{{ url_for('main.delete_contract', contract_id=contract.id) }}" title="Delete Contract" aria-label="Delete Contract"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>{% endif %}
