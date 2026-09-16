@@ -8,7 +8,7 @@
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       {% include "_totp_bubbles.html" %}
-      <button class="button button-primary" type="submit"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Verify</button>
+      <div class="form-actions"><button class="button button-primary" type="submit"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Verify</button></div>
       <a class="back-link app-back-link" href="{{ url_for('main.login') }}">Back to Sign In</a>
     </form>
   </div>

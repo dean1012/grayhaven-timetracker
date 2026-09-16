@@ -4,6 +4,7 @@ import {
   shouldDeferLiveReplacement,
   summarizeReportSessions,
   isDirtyLiveControl,
+  roundedCostCents,
 } from "./report-helpers.mjs";
 import { initializePasskeyFlows } from "./passkeys.mjs";
 
@@ -80,11 +81,89 @@ if (totpSetup instanceof HTMLElement) {
   }
 }
 
+const moneyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+});
+
 function formatDuration(totalSeconds) {
   const hours = Math.floor(totalSeconds / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatDailyDuration(totalSeconds) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function roundedSessionCostCents(seconds, hourlyRateCents) {
+  const numerator = seconds * hourlyRateCents;
+  if (!Number.isSafeInteger(numerator)) {
+    return null;
+  }
+  return roundedCostCents(seconds, hourlyRateCents);
+}
+
+function localDateKey(timeZone) {
+  try {
+    const values = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date()).reduce((result, part) => {
+      result[part.type] = part.value;
+      return result;
+    }, {});
+    return `${values.year}-${values.month}-${values.day}`;
+  } catch {
+    return "";
+  }
+}
+
+function updatePendingSessionSummary() {
+  const summary = document.querySelector("[data-pending-live-summary]");
+  if (!(summary instanceof HTMLElement) || summary.dataset.runningBaseSeconds === undefined) {
+    return;
+  }
+  const snapshotAt = Date.parse(summary.dataset.snapshotAt || "");
+  const baseTotalSeconds = Number(summary.dataset.baseTotalSeconds);
+  const baseTotalCostCents = Number(summary.dataset.baseTotalCostCents);
+  const runningBaseSeconds = Number(summary.dataset.runningBaseSeconds);
+  const runningRateCents = Number(summary.dataset.runningRateCents);
+  if (!Number.isFinite(snapshotAt) || ![baseTotalSeconds, baseTotalCostCents, runningBaseSeconds, runningRateCents].every(Number.isSafeInteger)) {
+    return;
+  }
+  const delta = Math.max(0, Math.floor((Date.now() - snapshotAt) / 1000));
+  const runningCost = roundedSessionCostCents(runningBaseSeconds + delta, runningRateCents);
+  const baseRunningCost = roundedSessionCostCents(runningBaseSeconds, runningRateCents);
+  const duration = summary.querySelector("[data-pending-total-duration]");
+  const cost = summary.querySelector("[data-pending-total-cost]");
+  if (duration) {
+    duration.textContent = formatDuration(baseTotalSeconds + delta);
+  }
+  if (cost && runningCost !== null && baseRunningCost !== null) {
+    cost.textContent = moneyFormatter.format(
+      (baseTotalCostCents + runningCost - baseRunningCost) / 100,
+    );
+  }
+
+  const daily = document.querySelector("[data-pending-live-daily]");
+  if (!(daily instanceof HTMLElement)) {
+    return;
+  }
+  const today = localDateKey(daily.dataset.pendingTimezone || "");
+  const row = Array.from(daily.querySelectorAll("[data-pending-day]"))
+    .find((candidate) => candidate.dataset.pendingDay === today);
+  const dayDuration = row?.querySelector("[data-pending-day-duration]");
+  const baseDaySeconds = Number(dayDuration?.dataset.baseSeconds);
+  if (dayDuration && Number.isSafeInteger(baseDaySeconds)) {
+    dayDuration.textContent = formatDailyDuration(baseDaySeconds + delta);
+  }
 }
 
 function updateRunningTimers() {
@@ -103,17 +182,23 @@ function updateRunningTimers() {
     }
     const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
     duration.textContent = formatDuration(elapsed);
+    const cost = duration.closest("tr")?.querySelector("[data-session-cost-rate-cents]");
+    if (cost instanceof HTMLElement) {
+      const rateCents = Number(cost.dataset.sessionCostRateCents);
+      const cents = Number.isSafeInteger(rateCents)
+        ? roundedSessionCostCents(elapsed, rateCents)
+        : null;
+      if (cents !== null) {
+        cost.textContent = moneyFormatter.format(cents / 100);
+      }
+    }
   });
+  updatePendingSessionSummary();
 }
 
 updateRunningTimers();
 window.setInterval(updateRunningTimers, 1000);
 
-const moneyFormatter = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-});
-const reportReceivedAt = new WeakMap();
 const reportPageSizes = Object.freeze({ summary: 10, sessions: 25 });
 
 function reportPaginationKey(container) {
@@ -199,9 +284,12 @@ function updateLiveReportSection(section) {
   if (!Number.isSafeInteger(hourlyRateCents)) {
     return { seconds: 0, costCents: 0 };
   }
-  const receivedAt = reportReceivedAt.get(section) || Date.now();
-  reportReceivedAt.set(section, receivedAt);
-  const activeDelta = Math.max(0, Math.floor((Date.now() - receivedAt) / 1000));
+  const snapshotAt = Date.parse(
+    section.closest("[data-live-report]")?.dataset.reportSnapshotAt || "",
+  );
+  const activeDelta = Number.isFinite(snapshotAt)
+    ? Math.max(0, Math.floor((Date.now() - snapshotAt) / 1000))
+    : 0;
   const groups = Array.from(section.querySelectorAll("tr[data-report-group]:not([data-report-session])")).map((row) => ({
     label: row.dataset.reportGroup || "",
     row,
@@ -309,7 +397,11 @@ async function reconcileLiveReport() {
     }
     if (response.redirected) {
       reportReconciliationStopped = true;
-      window.location.replace(response.url);
+      const redirectUrl = new URL(response.url, window.location.origin);
+      if (redirectUrl.origin === window.location.origin && redirectUrl.pathname === "/login") {
+        redirectUrl.searchParams.set("next", window.location.pathname + window.location.search);
+      }
+      window.location.replace(redirectUrl.href);
       return;
     }
     if (response.status === 404) {
@@ -572,49 +664,41 @@ document.addEventListener("keydown", (event) => {
   });
 });
 
-document.querySelectorAll("[data-payment-status-form]").forEach((form) => {
-  const status = form.querySelector("select[name='billing_status']");
-  const reasonField = form.querySelector("[data-correction-reason-field]");
-  const reasonInput = reasonField?.querySelector("textarea[name='correction_reason']");
-  if (
-    !(status instanceof HTMLSelectElement) ||
-    !(reasonField instanceof HTMLElement) ||
-    !(reasonInput instanceof HTMLTextAreaElement)
-  ) {
+document.querySelectorAll("[data-invoice-range-form]").forEach((form) => {
+  const client = form.querySelector("[data-invoice-client]");
+  const project = form.querySelector("[data-invoice-project]");
+  const mode = form.querySelector("[data-invoice-mode]");
+  const customRange = form.querySelector("[data-invoice-custom-range]");
+  if (!(client instanceof HTMLSelectElement) || !(project instanceof HTMLSelectElement)
+    || !(mode instanceof HTMLSelectElement) || !(customRange instanceof HTMLElement)) {
     return;
   }
-  const statusOrder = ["pending_invoice", "invoiced", "client_paid", "disbursed"];
-  const financialInputs = Array.from(form.querySelectorAll("[data-original-value]"));
-  const updateCorrectionReason = () => {
-    const movingBackward =
-      statusOrder.indexOf(status.value) <
-      statusOrder.indexOf(form.dataset.currentPaymentStatus || "");
-    const existingDataChanged = financialInputs.some(
-      (input) =>
-        input.dataset.originalValue !== "" &&
-        input.value !== input.dataset.originalValue,
-    );
-    const required = movingBackward || existingDataChanged;
-    reasonField.hidden = !required;
-    reasonInput.disabled = !required;
-    reasonInput.required = required;
-  };
-  const updateFields = () => {
-    form.querySelectorAll("[data-payment-statuses]").forEach((field) => {
-      const visible = (field.dataset.paymentStatuses || "")
-        .split(" ")
-        .includes(status.value);
-      field.hidden = !visible;
-      field.querySelectorAll("input").forEach((input) => {
-        input.disabled = !visible;
-        input.required = visible && input.hasAttribute("data-payment-status-required");
-      });
+  const rangeInputs = Array.from(customRange.querySelectorAll("input"));
+  const updateProjects = () => {
+    const clientId = client.value;
+    let selectedIsVisible = false;
+    project.querySelectorAll("option[data-client-id]").forEach((option) => {
+      const visible = !clientId || option.dataset.clientId === clientId;
+      option.hidden = !visible;
+      option.disabled = !visible;
+      if (visible && option.selected) {
+        selectedIsVisible = true;
+      }
     });
-    updateCorrectionReason();
+    if (!selectedIsVisible && project.value) {
+      project.value = "";
+    }
   };
-  status.addEventListener("change", updateFields);
-  financialInputs.forEach((input) => {
-    input.addEventListener("input", updateCorrectionReason);
-  });
-  updateFields();
+  const updateRange = () => {
+    const custom = mode.value === "custom";
+    customRange.hidden = !custom;
+    rangeInputs.forEach((input) => {
+      input.disabled = !custom;
+      input.required = custom;
+    });
+  };
+  client.addEventListener("change", updateProjects);
+  mode.addEventListener("change", updateRange);
+  updateProjects();
+  updateRange();
 });

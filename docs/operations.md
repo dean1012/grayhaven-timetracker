@@ -23,7 +23,7 @@ Run these procedures on the managed web host unless a step says otherwise.
 - [Rotate the SQLCipher Passphrase](#rotate-the-sqlcipher-passphrase)
 - [Provision and Recover Users](#provision-and-recover-users)
 - [Manage and Recover Passkeys](#manage-and-recover-passkeys)
-- [Correct Contract and Billing Records](#correct-contract-and-billing-records)
+- [Manage Invoices and Correct Billing Records](#manage-invoices-and-correct-billing-records)
 - [Manage Shared Client Reports](#manage-shared-client-reports)
 - [Change the Timezone](#change-the-timezone)
 - [Review Logs](#review-logs)
@@ -174,6 +174,9 @@ system; this procedure verifies the application-specific database result.
 4. Sign in and verify existing users, representative work records, billing
    metadata, reports, shared-report access, and audit history. Complete one
    controlled write and confirm its audit event.
+
+   The invoice migration gives existing contracts NET 30 payment terms. Review
+   a representative contract before issuing its first invoice after upgrade.
 
 5. Restart the same image and prove startup is idempotent.
 
@@ -830,25 +833,30 @@ deliver the temporary password through the approved recovery channel.
 
 [Back to top](#operations)
 
-## Correct Contract and Billing Records
+## Manage Invoices and Correct Billing Records
 
-To make a correction to completed time:
+To issue an invoice:
 
-1. Sign in with the account that owns the session, or as an administrator.
-2. Open **My Sessions** for your own work, or **Sessions** as an administrator
-   correcting another user's work.
-3. If the session is invoiced, paid, or disbursed, an administrator must move
-   it backward through the billing workflow until it is **Pending Invoice**.
-4. The owner may edit or delete their own stopped pending session when its
-   contract is active, after entering a correction reason and completing the
-   existing reauthentication when required. The owner cannot change its
-   ownership, billing state, or billing metadata. Work assignments may be
-   corrected among visible active contracts and tasks.
-   Administrators may correct other users' pending sessions.
-5. Move a corrected session forward through each billing stage again and
-   enter the accurate invoice, payment, and disbursement metadata.
-6. Review the audit log and confirm that each reversal, correction, and
-   forward transition was recorded.
+1. Sign in as an administrator and open **Invoices**.
+2. In **Generate Invoice**, choose the client and active contract, then select
+   **Since Last Invoice → Now** or **Selected Date / Time Range**.
+3. Select **Preview Invoice** and review the stopped eligible sessions,
+   selected range, daily-rounded billable hours, total, rate, and payment terms.
+4. Select **Generate Invoice** and complete sensitive-action authorization.
+5. Open the generated invoice to download its current PDF rendition.
+
+To record or correct invoice state:
+
+1. Open the invoice and complete sensitive-action authorization for the action.
+2. Mark an unpaid invoice as paid when client payment is received.
+3. Record each worker's disbursement with its date and reference.
+4. Undo a worker disbursement before correcting payment status, then mark the
+   invoice unpaid when payment needs correction. Enter the requested correction
+   reason.
+5. Void an unpaid invoice when its sessions need to return to pending invoice,
+   then make time corrections and issue a replacement invoice. Enter the
+   requested correction reason.
+6. Review the audit log for the invoice action and any corrected time.
 
 Archiving a contract stops its active timers and removes it from normal
 selection and client reports. Activating the contract restores it. Deleted

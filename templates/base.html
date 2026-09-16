@@ -22,7 +22,8 @@
   {% set sessions_active = request.endpoint == 'main.my_sessions' %}
   {% set users_active = request.endpoint in ('main.users', 'main.new_user', 'main.edit_user', 'main.reset_user_password', 'main.reset_user_password_confirmation', 'main.disable_user_totp', 'main.wipe_user_passkeys', 'main.toggle_user_enabled', 'main.toggle_user_admin') %}
   {% set audit_active = request.endpoint == 'main.audit_log' %}
-  {% set dashboard_active = not profile_active and not sessions_active and not users_active and not audit_active %}
+  {% set invoices_active = request.endpoint and request.endpoint.startswith('invoices.') %}
+  {% set dashboard_active = not profile_active and not sessions_active and not users_active and not audit_active and not invoices_active %}
   <header class="app-header">
     <div class="app-header-inner">
       <a class="brand" href="{{ url_for('main.dashboard') }}" aria-label="Grayhaven Systems LLC Time Tracker home">
@@ -32,6 +33,7 @@
       <nav class="app-nav desktop-nav" aria-label="Application navigation">
         <a href="{{ url_for('main.dashboard') }}" {% if dashboard_active %}aria-current="{{ 'page' if request.endpoint == 'main.dashboard' else 'location' }}"{% endif %}><i class="fa-solid fa-gauge-high" aria-hidden="true"></i> Dashboard</a>
         <a href="{{ url_for('main.my_sessions') }}" {% if sessions_active %}aria-current="page"{% endif %}><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> My Sessions</a>
+        {% if can('invoice:manage') %}<a href="{{ url_for('invoices.index') }}" {% if invoices_active %}aria-current="{{ 'page' if request.endpoint == 'invoices.index' else 'location' }}"{% endif %}><i class="fa-solid fa-file-invoice-dollar" aria-hidden="true"></i> Invoices</a>{% endif %}
         <a href="{{ url_for('main.profile') }}" {% if profile_active %}aria-current="{{ 'page' if request.endpoint == 'main.profile' else 'location' }}"{% endif %}><i class="fa-solid fa-user" aria-hidden="true"></i> Profile</a>
         {% if can('user:view') %}<a href="{{ url_for('main.users') }}" {% if users_active %}aria-current="{{ 'page' if request.endpoint == 'main.users' else 'location' }}"{% endif %}><i class="fa-solid fa-users" aria-hidden="true"></i> Users</a>{% endif %}
         {% if can('audit:view') %}<a href="{{ url_for('main.audit_log') }}" {% if audit_active %}aria-current="page"{% endif %}><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Audit</a>{% endif %}
@@ -45,6 +47,7 @@
         <nav class="mobile-nav-links" aria-label="Application navigation">
           <a href="{{ url_for('main.dashboard') }}" {% if dashboard_active %}aria-current="{{ 'page' if request.endpoint == 'main.dashboard' else 'location' }}"{% endif %}><i class="fa-solid fa-gauge-high" aria-hidden="true"></i> Dashboard</a>
           <a href="{{ url_for('main.my_sessions') }}" {% if sessions_active %}aria-current="page"{% endif %}><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> My Sessions</a>
+          {% if can('invoice:manage') %}<a href="{{ url_for('invoices.index') }}" {% if invoices_active %}aria-current="{{ 'page' if request.endpoint == 'invoices.index' else 'location' }}"{% endif %}><i class="fa-solid fa-file-invoice-dollar" aria-hidden="true"></i> Invoices</a>{% endif %}
           <a href="{{ url_for('main.profile') }}" {% if profile_active %}aria-current="{{ 'page' if request.endpoint == 'main.profile' else 'location' }}"{% endif %}><i class="fa-solid fa-user" aria-hidden="true"></i> Profile</a>
           {% if can('user:view') %}<a href="{{ url_for('main.users') }}" {% if users_active %}aria-current="{{ 'page' if request.endpoint == 'main.users' else 'location' }}"{% endif %}><i class="fa-solid fa-users" aria-hidden="true"></i> Users</a>{% endif %}
           {% if can('audit:view') %}<a href="{{ url_for('main.audit_log') }}" {% if audit_active %}aria-current="page"{% endif %}><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Audit</a>{% endif %}

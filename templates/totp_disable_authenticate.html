@@ -9,7 +9,7 @@
     <p class="muted">Your identity has been verified. Confirm that you want to remove authenticator protection.</p>
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <div class="form-actions"><a class="button button-secondary" href="{{ url_for('main.profile') }}">Cancel</a><button class="button button-primary" type="submit"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Disable 2FA</button></div>
+      <div class="form-actions"><a class="button button-secondary" href="{{ url_for('main.profile') }}">Cancel</a><button class="button button-danger" type="submit"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Confirm</button></div>
     </form>
   </div>
 </section>

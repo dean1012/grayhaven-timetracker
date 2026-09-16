@@ -103,6 +103,7 @@ class Client(Base):
     contracts: Mapped[list[Contract]] = relationship(
         back_populates="client", order_by=lambda: Contract.id.desc()
     )
+    invoices: Mapped[list[Invoice]] = relationship(back_populates="client")
 
 
 class Contract(Base):
@@ -119,6 +120,10 @@ class Contract(Base):
             "hourly_rate_cents BETWEEN 0 AND 100000000",
             name="ck_contract_rate",
         ),
+        CheckConstraint(
+            "payment_terms_days IN (0, 7, 30)",
+            name="ck_contract_payment_terms",
+        ),
         Index("uq_contract_client_name", "client_id", "name", unique=True),
         {"sqlite_autoincrement": True},
     )
@@ -130,6 +135,9 @@ class Contract(Base):
     contact_name: Mapped[str] = mapped_column(String(200))
     contact_email: Mapped[str] = mapped_column(String(255))
     hourly_rate_cents: Mapped[int] = mapped_column(Integer)
+    payment_terms_days: Mapped[int] = mapped_column(
+        Integer, default=30, server_default="30"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(UTC).replace(tzinfo=None)
     )
@@ -141,6 +149,7 @@ class Contract(Base):
     tasks: Mapped[list[Task]] = relationship(
         back_populates="contract", order_by="Task.id"
     )
+    invoices: Mapped[list[Invoice]] = relationship(back_populates="contract")
 
     @property
     def hourly_rate(self) -> Decimal:
@@ -231,6 +240,9 @@ class TimeEntry(Base):
         String(32), default="pending_invoice", server_default="pending_invoice"
     )
     invoice_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    invoice_id: Mapped[int | None] = mapped_column(
+        ForeignKey("invoice.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     invoice_date: Mapped[date | None] = mapped_column(nullable=True)
     client_paid_date: Mapped[date | None] = mapped_column(nullable=True)
     disbursement_date: Mapped[date | None] = mapped_column(nullable=True)
@@ -239,10 +251,114 @@ class TimeEntry(Base):
     user: Mapped[User] = relationship(back_populates="time_entries")
     task: Mapped[Task] = relationship(back_populates="time_entries")
     subtask: Mapped[Subtask | None] = relationship(back_populates="time_entries")
+    invoice: Mapped[Invoice | None] = relationship(
+        back_populates="current_entries", foreign_keys=[invoice_id]
+    )
+    invoice_lines: Mapped[list[InvoiceLine]] = relationship(back_populates="entry")
 
     @property
     def contract(self) -> Contract:
         return self.task.contract
+
+
+class Invoice(Base):
+    """Permanent invoice snapshot and its persisted PDF representation."""
+
+    __tablename__ = "invoice"
+    __table_args__ = (
+        CheckConstraint("client_id BETWEEN 1 AND 999", name="ck_invoice_client_id"),
+        CheckConstraint("contract_id BETWEEN 1 AND 999", name="ck_invoice_contract_id"),
+        CheckConstraint(
+            "project_sequence BETWEEN 1 AND 999", name="ck_invoice_sequence"
+        ),
+        CheckConstraint(
+            "status IN ('UNPAID', 'PAID', 'VOID')", name="ck_invoice_status"
+        ),
+        CheckConstraint("range_end_utc > range_start_utc", name="ck_invoice_range"),
+        CheckConstraint("hourly_rate_cents >= 0", name="ck_invoice_rate"),
+        CheckConstraint("total_seconds >= 0", name="ck_invoice_total_seconds"),
+        CheckConstraint("total_cents >= 0", name="ck_invoice_total_cents"),
+        CheckConstraint(
+            "(status = 'PAID' AND paid_date IS NOT NULL) OR "
+            "(status != 'PAID' AND paid_date IS NULL)",
+            name="ck_invoice_paid_date",
+        ),
+        Index("uq_invoice_number", "invoice_number", unique=True),
+        Index(
+            "uq_invoice_contract_sequence",
+            "contract_id",
+            "project_sequence",
+            unique=True,
+        ),
+        Index("ix_invoice_contract_issued", "contract_id", "issued_at", "id"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("client.id", ondelete="RESTRICT"))
+    contract_id: Mapped[int] = mapped_column(
+        ForeignKey("contract.id", ondelete="RESTRICT")
+    )
+    project_sequence: Mapped[int] = mapped_column(Integer)
+    invoice_number: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16), default="UNPAID")
+    issued_at: Mapped[datetime] = mapped_column(DateTime)
+    range_start_utc: Mapped[datetime] = mapped_column(DateTime)
+    range_end_utc: Mapped[datetime] = mapped_column(DateTime)
+    timezone_name: Mapped[str] = mapped_column(String(100))
+    client_name: Mapped[str] = mapped_column(String(200))
+    project_name: Mapped[str] = mapped_column(String(200))
+    contact_name: Mapped[str] = mapped_column(String(200))
+    contact_email: Mapped[str] = mapped_column(String(255))
+    hourly_rate_cents: Mapped[int] = mapped_column(Integer)
+    payment_terms_days: Mapped[int] = mapped_column(Integer)
+    total_seconds: Mapped[int] = mapped_column(Integer)
+    total_cents: Mapped[int] = mapped_column(Integer)
+    due_date: Mapped[date] = mapped_column()
+    paid_date: Mapped[date | None] = mapped_column(nullable=True)
+    pdf_bytes: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+
+    client: Mapped[Client] = relationship(back_populates="invoices")
+    contract: Mapped[Contract] = relationship(back_populates="invoices")
+    lines: Mapped[list[InvoiceLine]] = relationship(
+        back_populates="invoice", order_by="InvoiceLine.id"
+    )
+    current_entries: Mapped[list[TimeEntry]] = relationship(
+        back_populates="invoice", foreign_keys=[TimeEntry.invoice_id]
+    )
+
+
+class InvoiceLine(Base):
+    """Immutable time-entry details captured when an invoice is generated."""
+
+    __tablename__ = "invoice_line"
+    __table_args__ = (
+        CheckConstraint("total_seconds >= 0", name="ck_invoice_line_seconds"),
+        Index("ix_invoice_line_invoice", "invoice_id", "id"),
+        Index("ix_invoice_line_entry", "time_entry_id"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    invoice_id: Mapped[int] = mapped_column(
+        ForeignKey("invoice.id", ondelete="RESTRICT")
+    )
+    time_entry_id: Mapped[int] = mapped_column(
+        ForeignKey("time_entry.id", ondelete="RESTRICT")
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_account.id", ondelete="RESTRICT")
+    )
+    worker_name: Mapped[str] = mapped_column(String(201))
+    task_name: Mapped[str] = mapped_column(String(200))
+    subtask_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    started_at_utc: Mapped[datetime] = mapped_column(DateTime)
+    stopped_at_utc: Mapped[datetime] = mapped_column(DateTime)
+    total_seconds: Mapped[int] = mapped_column(Integer)
+    started_before_range: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    invoice: Mapped[Invoice] = relationship(back_populates="lines")
+    entry: Mapped[TimeEntry] = relationship(back_populates="invoice_lines")
 
 
 class ApplicationMetadata(Base):

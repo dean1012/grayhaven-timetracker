@@ -50,6 +50,11 @@ The primary modules are:
 - `permissions.py`: centralized role and object-state checks.
 - `routes.py`: authenticated workflows and shared-report endpoints.
 - `reports.py`: report queries and summaries.
+- `invoices.py`: invoice preview, issuance, payment, void, and disbursement
+  operations.
+- `invoice_routes.py`: administrator invoice workflows and PDF downloads.
+- `invoice_time.py` and `invoice_pdf.py`: local-day billing calculations and
+  invoice rendering.
 - `models.py`: SQLAlchemy entities and database constraints.
 - `database.py`: SQLCipher connection policy, schema initialization, and
   ordered migrations.
@@ -117,10 +122,12 @@ Client
         └── Subtask (optional)
 ```
 
-A contract owns its billing rate and operational state. The rate is fixed after
-creation so historical value cannot be silently re-priced. Archiving a contract
-stops its active timers and removes its work from operational selection and
-reporting. Activation restores normal availability.
+A contract owns its billing rate, payment terms, and operational state. The
+rate and terms are set at creation and remain fixed. Supported terms are
+immediate payment, 7 days, and NET 30. Schema migration assigns NET 30 to
+existing contracts that predate payment terms. Archiving a contract stops its
+active timers and removes its work from operational selection and reporting.
+Activation restores normal availability.
 
 Deletion is intentionally constrained. Finalized time must first be returned to
 the pending-invoice state. Deleting eligible clients, contracts, tasks,
@@ -142,36 +149,47 @@ are displayed in the configured timezone.
 Users can create manual entries and edit or delete their own stopped sessions
 while those sessions remain pending invoice and belong to an active contract.
 They may correct the assignment among visible active contracts and tasks, but
-cannot change the owner, billing state, or billing metadata. Administrators
-can also move pending sessions between users. Corrections and destructive
-actions are recorded with reasons and audit context.
+cannot change the owner or invoice metadata. Administrators can also move
+pending sessions between users. Corrections and destructive actions are
+recorded with reasons and audit context.
 
-Each session's exact elapsed seconds and contract rate determine its amount.
-Amounts are rounded to cents with ROUND_HALF_UP per session, then summed for
-groups and reports. Two one-minute sessions at $55/hour therefore total $1.84.
+Stopped pending sessions are eligible when their stop time falls inside the
+selected invoice range. A session that started before the range is included in
+full. Exact elapsed time is allocated to each local calendar day, and each
+day's hours are rounded to the nearest hundredth with ROUND_HALF_UP. The
+rounded daily hours are summed, multiplied by the contract rate, then rounded
+to cents with ROUND_HALF_UP.
 
-Once a session advances beyond pending invoice, ordinary edits are blocked. An
-administrator must reverse its billing state before correcting the underlying
-time.
+Sessions claimed by an invoice are no longer available for ordinary time
+corrections. The invoice correction workflow returns them to a correctable
+state when appropriate.
 
 [Back to top](#application-architecture)
 
 ## Billing Lifecycle
 
-Each time session moves through an explicit lifecycle:
+Administrators select a client and active contract, choose a custom range or
+the period since the last issued invoice, and review a preview before generating
+an invoice. Generation requires sensitive-action authorization and claims the
+previewed sessions atomically. Each invoice receives a per-contract sequence
+number and stores immutable snapshots of its client, contract, contact, rate,
+payment terms, selected sessions, and total.
 
 ```text
-Pending invoice → Invoiced → Client paid → Disbursed
+Pending invoice session → Unpaid invoice → Paid invoice → Worker disbursement
 ```
 
-The transitions capture the applicable invoice number, invoice date, client
-payment date, disbursement date, and transaction number. Administrators can
-reverse a transition when correcting operational mistakes. Reversal clears
-metadata that no longer applies to the resulting state.
+The due date applies the invoice's terms in calendar days and moves forward
+past weekends and observed dates for fixed-date United States federal holidays.
+Administrators mark an unpaid invoice as paid, then record disbursements for
+one worker at a time with a date and reference. A payment can be corrected to
+unpaid after all disbursements are undone. An unpaid invoice can be voided,
+returning its sessions to pending invoice; the invoice remains as a permanent
+voided record. Correction actions require sensitive-action authorization, and
+reversals and voids record a reason in the audit history.
 
-This lifecycle records the state of external billing work. The application does
-not generate or send invoices, transfer money, or synchronize with an
-accounting platform.
+Invoice downloads render a PDF from the invoice's immutable data snapshots
+whenever an administrator requests one.
 
 [Back to top](#application-architecture)
 

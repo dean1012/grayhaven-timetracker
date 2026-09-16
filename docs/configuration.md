@@ -97,6 +97,7 @@ The runtime branding directory must contain:
 
 ```text
 grayhaven-logo-wordmark-dark.svg
+grayhaven-logo-wordmark-light.png
 favicon.ico
 favicon-16.png
 favicon-32.png

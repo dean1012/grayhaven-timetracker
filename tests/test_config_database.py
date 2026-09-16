@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pyotp
 from argon2 import PasswordHasher
-from sqlalchemy import delete, select, text
+from sqlalchemy import create_engine, delete, select, text
 from sqlalchemy.exc import IntegrityError
 
 from grayhaven_timetracker import create_app
@@ -41,6 +41,7 @@ from grayhaven_timetracker.database import (
     database_is_encrypted,
     dispose_app_database,
     initialize_database,
+    migrate_schema_3_to_4,
     rollback_request_session,
     session_scope,
     sql_literal,
@@ -319,6 +320,7 @@ class ConfigurationTests(unittest.TestCase):
                 validate_branding(str(root))
             assets = (
                 "grayhaven-logo-wordmark-dark.svg",
+                "grayhaven-logo-wordmark-light.png",
                 "favicon.ico",
                 "favicon-16.png",
                 "favicon-32.png",
@@ -340,6 +342,7 @@ class ConfigurationTests(unittest.TestCase):
             branding = root / "branding"
             assets = (
                 "grayhaven-logo-wordmark-dark.svg",
+                "grayhaven-logo-wordmark-light.png",
                 "favicon.ico",
                 "favicon-16.png",
                 "favicon-32.png",
@@ -385,6 +388,57 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class DatabaseAndModelTests(AppTestCase):
+    def test_schema_three_invoice_migration_is_complete_and_idempotent(self) -> None:
+        engine = create_engine("sqlite://")
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE contract (id INTEGER PRIMARY KEY)"))
+            connection.execute(text("CREATE TABLE time_entry (id INTEGER PRIMARY KEY)"))
+            migrate_schema_3_to_4(connection)
+            migrate_schema_3_to_4(connection)
+            contract_columns = set(
+                connection.execute(
+                    text("SELECT name FROM pragma_table_info('contract')")
+                ).scalars()
+            )
+            entry_columns = set(
+                connection.execute(
+                    text("SELECT name FROM pragma_table_info('time_entry')")
+                ).scalars()
+            )
+            objects = set(
+                connection.execute(
+                    text("SELECT name FROM sqlite_master WHERE name LIKE '%invoice%'")
+                ).scalars()
+            )
+        self.assertIn("payment_terms_days", contract_columns)
+        self.assertIn("invoice_id", entry_columns)
+        self.assertEqual(
+            objects,
+            {
+                "invoice",
+                "invoice_line",
+                "ix_invoice_contract_issued",
+                "ix_invoice_line_entry",
+                "ix_invoice_line_invoice",
+                "ix_time_entry_invoice_id",
+                "uq_invoice_contract_sequence",
+                "uq_invoice_number",
+            },
+        )
+
+    def test_schema_three_partial_invoice_migration_fails_closed(self) -> None:
+        engine = create_engine("sqlite://")
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE TABLE contract (id INTEGER PRIMARY KEY, "
+                    "payment_terms_days INTEGER NOT NULL DEFAULT 30)"
+                )
+            )
+            connection.execute(text("CREATE TABLE time_entry (id INTEGER PRIMARY KEY)"))
+            with self.assertRaisesRegex(DatabaseError, "partial invoice migration"):
+                migrate_schema_3_to_4(connection)
+
     def test_report_duration_and_empty_cost_allocation_boundaries(self) -> None:
         self.assertEqual(
             duration_seconds(datetime(2026, 7, 15, 1), datetime(2026, 7, 15, 0)), 0

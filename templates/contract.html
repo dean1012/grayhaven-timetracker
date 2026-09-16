@@ -46,7 +46,7 @@
           <form method="post" action="{{ url_for('main.start_timer') }}" autocomplete="off" data-protonpass-ignore="true">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="task_id" value="{{ task.id }}">
-            <button class="icon-button accent" type="submit" title="{{ 'Stop the active timer first' if active_entry else 'Start task timer' }}" aria-label="Start timer for {{ task.name }}" {% if active_entry %}disabled{% endif %}><i class="fa-solid fa-play" aria-hidden="true"></i></button>
+            <button class="icon-button accent" type="submit" title="Start {{ task.name }} timer" aria-label="Start {{ task.name }} timer" {% if active_entry %}disabled{% endif %}><i class="fa-solid fa-play" aria-hidden="true"></i></button>
           </form>
           {% endif %}
           {% if not contract.archived_at and can('task:edit') %}
@@ -64,7 +64,7 @@
           {% endif %}
         </div>
       </div>
-    <div class="hierarchy-children">
+    <div class="hierarchy-children contract-subtasks">
       {% for subtask in task.subtasks %}
       <div class="hierarchy-child">
         <div class="hierarchy-child-leading" aria-hidden="true"></div>
@@ -79,7 +79,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <input type="hidden" name="task_id" value="{{ task.id }}">
             <input type="hidden" name="subtask_id" value="{{ subtask.id }}">
-            <button class="icon-button accent" title="Start subtask timer" aria-label="Start timer for {{ subtask.name }}" {% if active_entry %}disabled{% endif %}><i class="fa-solid fa-play" aria-hidden="true"></i></button>
+            <button class="icon-button accent" type="submit" title="Start {{ subtask.name }} timer" aria-label="Start {{ subtask.name }} timer" {% if active_entry %}disabled{% endif %}><i class="fa-solid fa-play" aria-hidden="true"></i></button>
           </form>
           {% endif %}
           {% if not contract.archived_at and can('task:edit') %}

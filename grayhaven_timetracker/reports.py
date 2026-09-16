@@ -9,10 +9,11 @@ from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from zoneinfo import ZoneInfo
 
+from markupsafe import Markup
 from sqlalchemy import or_, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
-from .models import Client, Contract, Task, TimeEntry
+from .models import Client, Contract, Invoice, Task, TimeEntry
 
 MONEY_QUANTUM = Decimal("0.01")
 
@@ -88,6 +89,41 @@ def allocate_session_costs(
     return tuple(calculate_cost(seconds, hourly_rate_cents) for seconds in durations)
 
 
+def invoice_entry_costs(database: Session, invoice_ids: set[int]) -> dict[int, Decimal]:
+    """Allocate frozen invoice cents consistently across every claimed entry."""
+    if not invoice_ids:
+        return {}
+    invoices = database.scalars(
+        select(Invoice)
+        .where(Invoice.id.in_(invoice_ids), Invoice.status != "VOID")
+        .options(selectinload(Invoice.lines))
+    ).all()
+    result: dict[int, Decimal] = {}
+    for invoice in invoices:
+        if invoice.total_seconds == 0:
+            result.update((line.time_entry_id, Decimal(0)) for line in invoice.lines)
+            continue
+        amounts: dict[int, int] = {}
+        remainders: list[tuple[int, int, int]] = []
+        for line in invoice.lines:
+            cents, remainder = divmod(
+                invoice.total_cents * line.total_seconds, invoice.total_seconds
+            )
+            amounts[line.time_entry_id] = cents
+            remainders.append((remainder, line.id, line.time_entry_id))
+        # Largest fractional shares receive the residual cents. Stable line IDs
+        # break ties, independently of pagination, worker filters, or payment state.
+        residual = invoice.total_cents - sum(amounts.values())
+        for _, _, entry_id in sorted(remainders, key=lambda row: (-row[0], row[1]))[
+            :residual
+        ]:
+            amounts[entry_id] += 1
+        result.update(
+            (entry_id, Decimal(cents) / 100) for entry_id, cents in amounts.items()
+        )
+    return result
+
+
 def format_duration(seconds: int) -> str:
     """Format seconds as hours, minutes, and seconds."""
     hours, remainder = divmod(int(seconds), 3600)
@@ -99,6 +135,14 @@ def format_datetime(value: datetime, display_timezone: ZoneInfo) -> str:
     """Format a stored UTC timestamp in the configured reporting timezone."""
     localized = value.replace(tzinfo=UTC).astimezone(display_timezone)
     return localized.strftime("%Y-%m-%d %I:%M:%S %p %Z")
+
+
+def format_datetime_html(value: datetime, display_timezone: ZoneInfo) -> Markup:
+    """Display the date above the time and timezone throughout HTML views."""
+    date, time = format_datetime(value, display_timezone).split(" ", 1)
+    return Markup(
+        '<time class="display-datetime" datetime="{}">{}<br>{}</time>'
+    ).format(value.replace(tzinfo=UTC).isoformat(), date, time)
 
 
 def format_money(value: Decimal) -> str:
@@ -256,6 +300,7 @@ def build_client_report(
         )
         for contract in contracts
     ]
+    sections = [section for section in sections if section.sessions]
     sections.sort(
         key=lambda section: (
             not any(session.active for session in section.sessions),

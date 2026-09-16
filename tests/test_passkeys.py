@@ -878,7 +878,7 @@ class PasskeyRouteTests(AppTestCase):
         self.authorize_sensitive_action(path)
         confirmation = self.client.get(path)
         self.assertEqual(confirmation.status_code, 200)
-        self.assertIn(b"Wipe All Passkeys", confirmation.data)
+        self.assertIn(b"WIPE PASSKEYS", confirmation.data)
 
     def test_password_totp_fallbacks_and_explicit_passkeys(self) -> None:
         login_page = self.client.get("/login")

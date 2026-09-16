@@ -33,16 +33,12 @@ The application provides:
 - One active timer per user, manual time entries, and administrative time
   reassignment.
 - Contract archiving and activation with safeguards for active timers.
-- A billing lifecycle from pending invoice through invoiced, client paid, and
-  disbursed.
+- Invoice previews and generated PDFs, client-payment tracking, and
+  worker-by-worker disbursements.
 - Internal reports and permanent password-protected client report links.
 - Append-only audit records and structured JSON application logs.
 - An encrypted SQLCipher database with verification, online backup, and key
   rotation utilities.
-
-The application tracks billing state and related metadata. It does not create
-or send invoices, process payments, perform payroll, or replace an accounting
-system.
 
 [Back to top](#grayhaven-systems-llc-time-tracker)
 

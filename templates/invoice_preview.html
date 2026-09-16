@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Preview Invoice · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}">Dashboard</a></li><li><a class="breadcrumb-label" href="{{ url_for('invoices.index') }}">Invoices</a></li><li aria-current="page"><span class="breadcrumb-label">Preview Invoice</span></li></ol></nav>{% endblock %}
+{% block content %}
+<section class="page-heading"><div><p class="eyebrow">BILLING</p><h1>Preview Invoice</h1><p class="muted">Review the invoice details before generating.</p></div></section>
+<section class="panel session-summary session-directory">
+  <div class="panel-heading"><div><h2>{{ preview.client_name }}</h2><p class="muted">{{ preview.project_name }}</p></div><span class="status-pill status-warning">Preview</span></div>
+  <section class="summary-grid content-grid-two panel" aria-label="Invoice summary">
+    <div class="summary-card"><span>Invoice range</span><p>Start: {{ format_datetime_inline(preview.range_start_utc, timezone_info) }}<br>End: {{ format_datetime_inline(preview.range_end_utc, timezone_info) }}</p></div>
+    <div class="summary-card"><span>Hourly rate</span><strong>{{ invoice_money(preview.hourly_rate_cents) }} / hour</strong></div>
+    <div class="summary-card"><span>Payment terms</span><strong>{% if preview.payment_terms_days == 0 %}Immediately{% elif preview.payment_terms_days == 7 %}7 days{% else %}NET 30{% endif %}</strong></div>
+    <div class="summary-card"><span>Billable sessions</span><strong>{{ preview.entries|length }}</strong></div>
+  </section>
+</section>
+{% if preview.entries|selectattr('started_before_range')|list %}
+<div class="alert-stack"><div class="alert alert-warning alert-with-icon" role="status"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i><span class="alert-message">Some sessions started before the selected range but finished inside it. They are included in full.</span></div></div>
+{% endif %}
+<section class="panel session-directory">
+  <div class="panel-heading"><div><h2>Invoice Totals</h2></div></div>
+  <section class="summary-grid content-grid-two panel"><div class="summary-card"><span>Billable hours</span><strong>{{ preview.billable_hours }} hours</strong></div><div class="summary-card"><span>Total cost</span><strong>{{ invoice_money(preview.total_cents) }}</strong></div></section>
+  <div class="panel-heading"><div><h2>Invoiced Sessions</h2></div></div>
+  <div class="table-container"><table class="data-table responsive-table">
+    <caption class="visually-hidden">Read-only invoice session preview</caption>
+    <thead><tr><th scope="col">Worker</th><th scope="col">Task / Subtask</th><th scope="col">Start</th><th scope="col">End</th><th scope="col">Duration</th></tr></thead>
+    <tbody>{% for entry in preview.entries %}<tr>
+      <td class="cell-primary" data-label="Worker">{{ entry.worker_name }}</td>
+      <td data-label="Task / Subtask"><div>{{ entry.task_name }}{% if entry.subtask_name %}<br><span class="muted">{{ entry.subtask_name }}</span>{% endif %}</div></td>
+      <td data-label="Start"><div>{{ format_datetime(entry.started_at_utc, timezone_info) }}{% if entry.started_before_range %} <span aria-label="Started before range">*</span>{% endif %}</div></td>
+      <td data-label="End"><div>{{ format_datetime(entry.stopped_at_utc, timezone_info) }}</div></td>
+      <td class="cell-numeric" data-label="Duration"><div>{{ human_duration(entry.total_seconds) }}</div></td>
+    </tr>{% endfor %}</tbody>
+  </table></div>
+</section>
+<section class="panel form-panel narrow-content">
+  <form method="post" action="{{ url_for('invoices.generate') }}" class="form-stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="nonce" value="{{ draft.nonce }}">
+    <div class="form-actions"><a class="button button-secondary" href="{{ url_for('invoices.index') }}">Cancel</a><a class="button button-secondary" href="{{ url_for('invoices.new') }}">Edit Range</a><button class="button button-primary" type="submit"><i class="fa-solid fa-file-invoice" aria-hidden="true"></i> Generate Invoice</button></div>
+  </form>
+</section>
+{% endblock %}
