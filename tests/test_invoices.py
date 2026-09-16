@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import base64
+import shutil
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from unittest import TestCase
 
+from reportlab import rl_config
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
@@ -478,9 +481,27 @@ class InvoiceRouteTests(AppTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.seed = self.seed_contract()
-        self.app.config["BRANDING_PATH"] = str(
-            Path(__file__).resolve().parents[1] / "branding"
+        branding = self.root / "invoice-branding"
+        fonts = branding / "fonts"
+        fonts.mkdir(parents=True)
+        (branding / "grayhaven-logo-wordmark-light.png").write_bytes(
+            base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+                "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+            )
         )
+        search_paths = [Path(path) for path in rl_config.TTFSearchPath]
+        regular = next(
+            path / "Vera.ttf" for path in search_paths if (path / "Vera.ttf").is_file()
+        )
+        bold = next(
+            path / "VeraBd.ttf"
+            for path in search_paths
+            if (path / "VeraBd.ttf").is_file()
+        )
+        shutil.copyfile(regular, fonts / "inter-400.ttf")
+        shutil.copyfile(bold, fonts / "inter-700.ttf")
+        self.app.config["BRANDING_PATH"] = str(branding)
 
     def test_standard_user_cannot_access_invoice_routes(self) -> None:
         user = self.create_user()
