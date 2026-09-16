@@ -1465,6 +1465,17 @@ class ClientContractTaskRouteTests(AppTestCase):
                     },
                 )
                 self.assertEqual(response.status_code, 400)
+        invalid_terms = self.client.post(
+            f"/contracts/new/{client_id}",
+            data={
+                "name": "Contract",
+                "contact_name": "Contract Contact",
+                "contact_email": "contract@example.invalid",
+                "hourly_rate": "55",
+                "payment_terms_days": "14",
+            },
+        )
+        self.assertEqual(invalid_terms.status_code, 400)
         created_contract = self.client.post(
             f"/contracts/new/{client_id}",
             data={
@@ -3226,6 +3237,12 @@ class ReportAndSessionRouteTests(AppTestCase):
                     TimeEntry(
                         user=admin,
                         task=task,
+                        started_at=datetime(2026, 7, 13, 8, 0),
+                        stopped_at=datetime(2026, 7, 13, 9, 0),
+                    ),
+                    TimeEntry(
+                        user=admin,
+                        task=task,
                         started_at=datetime(2026, 7, 11, 8, 0),
                         stopped_at=datetime(2026, 7, 11, 9, 0),
                         billing_status="invoiced",
@@ -3245,7 +3262,7 @@ class ReportAndSessionRouteTests(AppTestCase):
                     TimeEntry(
                         user=admin,
                         task=task,
-                        started_at=datetime(2026, 7, 13, 8, 0),
+                        started_at=datetime(2026, 7, 14, 8, 0),
                         billing_status="disbursed",
                         invoice_number="INV-102",
                         invoice_date=date(2026, 7, 13),
@@ -3263,6 +3280,9 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertIn(b"data-pending-live-summary", page.data)
         self.assertIn(b"data-pending-live-daily", page.data)
         self.assertIn(b'data-pending-day="2026-07-10"', page.data)
+        self.assertIn(b'data-pending-day="2026-07-13"', page.data)
+        self.assertNotIn(b'data-pending-day="2026-07-11"', page.data)
+        self.assertNotIn(b'data-pending-day="2026-07-12"', page.data)
         self.assertIn(b"data-pending-day-duration", page.data)
         self.assertNotIn("ETag", page.headers)
         self.assertIn(b"Pending Invoice", page.data)
@@ -3275,6 +3295,36 @@ class ReportAndSessionRouteTests(AppTestCase):
         redirected = self.client.get("/sessions?page=99&finalized_page=99")
         self.assertEqual(redirected.status_code, 302)
         self.assertIn("/sessions?page=1", redirected.location)
+
+    def test_my_sessions_tracks_running_pending_time_and_empty_state(self) -> None:
+        self.login()
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            task = database.get(Task, self.seed.other_task_id)
+            assert admin is not None and task is not None
+            entry = TimeEntry(
+                user=admin,
+                task=task,
+                started_at=datetime.now() - timedelta(minutes=1),
+            )
+            database.add(entry)
+            database.flush()
+            entry_id = entry.id
+        running = self.client.get("/sessions")
+        self.assertEqual(running.status_code, 200)
+        self.assertIn(b"data-running-base-seconds", running.data)
+        self.assertIn(b"data-running-rate-cents", running.data)
+
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, entry_id)
+            assert entry is not None
+            entry.billing_status = "invoiced"
+            entry.invoice_number = "INV-EMPTY"
+            entry.invoice_date = date(2026, 7, 15)
+        empty = self.client.get("/sessions")
+        self.assertEqual(empty.status_code, 200)
+        self.assertIn(b"No pending invoice time has been recorded.", empty.data)
+        self.assertNotIn(b"data-running-base-seconds", empty.data)
 
     def test_session_assignment_apis_reject_missing_or_archived_resources(self) -> None:
         self.login()

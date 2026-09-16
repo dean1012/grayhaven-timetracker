@@ -7,12 +7,16 @@ import shutil
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import TestCase
+from unittest.mock import patch
 
 from reportlab import rl_config
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
+from grayhaven_timetracker import invoice_routes
+from grayhaven_timetracker import invoices as invoice_domain
 from grayhaven_timetracker.database import session_scope
 from grayhaven_timetracker.invoice_pdf import _daily_summary_rows, render_invoice_pdf
 from grayhaven_timetracker.invoice_time import (
@@ -80,6 +84,18 @@ class InvoiceTimeTests(TestCase):
         self.assertEqual(
             daily_seconds([spring_forward], ZoneInfo("America/Chicago")),
             [(date(2026, 3, 8), 60)],
+        )
+
+    def test_daily_allocation_omits_zero_second_segments(self) -> None:
+        from zoneinfo import ZoneInfo
+
+        instant = datetime(2026, 7, 15, 12)
+        self.assertEqual(
+            daily_seconds(
+                [TimeSpan(instant, instant + timedelta(seconds=1), 0)],
+                ZoneInfo("UTC"),
+            ),
+            [],
         )
 
     def test_due_dates_advance_over_weekends_and_observed_holidays(self) -> None:
@@ -437,6 +453,206 @@ class InvoiceDomainTests(AppTestCase):
             self.assertGreater(costs[self.seed.entry_id], costs[sibling_id])
             self.assertEqual(invoice_entry_costs(database, set()), {})
 
+    def test_zero_duration_invoice_allocates_zero_cost(self) -> None:
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, self.seed.entry_id)
+            assert entry is not None
+            entry.stopped_at = entry.started_at
+            database.commit()
+            proposed = preview_invoice(
+                database,
+                contract_id=self.seed.contract_id,
+                range_start_utc=entry.started_at,
+                range_end_utc=entry.started_at + timedelta(seconds=1),
+                timezone_name="UTC",
+            )
+            invoice = create_invoice(
+                database,
+                contract_id=self.seed.contract_id,
+                range_start_utc=entry.started_at,
+                range_end_utc=entry.started_at + timedelta(seconds=1),
+                timezone_name="UTC",
+                expected_fingerprint=proposed.fingerprint,
+            )
+            database.commit()
+            self.assertEqual(invoice.total_seconds, 0)
+            self.assertEqual(
+                invoice_entry_costs(database, {invoice.id}),
+                {self.seed.entry_id: Decimal(0)},
+            )
+
+    def test_invoice_number_limits_are_reported_before_generation(self) -> None:
+        with session_scope(self.app) as database:
+            client = Client(
+                id=1000,
+                name="Large Identifier Client",
+                contact_name="Billing Contact",
+                contact_email="billing@example.invalid",
+            )
+            contract = Contract(
+                id=1000,
+                client=client,
+                name="Large Identifier Project",
+                contact_name="Billing Contact",
+                contact_email="billing@example.invalid",
+                hourly_rate_cents=5500,
+                payment_terms_days=30,
+            )
+            database.add(contract)
+            database.flush()
+            with self.assertRaisesRegex(InvoiceDomainError, "IDs through 999"):
+                preview_invoice(database, contract_id=contract.id, timezone_name="UTC")
+
+    def test_invoice_sequence_stops_after_999(self) -> None:
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, self.seed.entry_id)
+            contract = database.get(Contract, self.seed.contract_id)
+            assert entry is not None and entry.stopped_at is not None
+            assert contract is not None
+            proposed = preview_invoice(
+                database,
+                contract_id=contract.id,
+                range_start_utc=entry.started_at,
+                range_end_utc=entry.stopped_at + timedelta(seconds=1),
+                timezone_name="UTC",
+            )
+            database.add(
+                Invoice(
+                    client_id=contract.client_id,
+                    contract_id=contract.id,
+                    project_sequence=999,
+                    invoice_number=(f"{contract.client_id:03d}-{contract.id:03d}-999"),
+                    status="UNPAID",
+                    issued_at=datetime(2026, 7, 1),
+                    range_start_utc=datetime(2026, 6, 1),
+                    range_end_utc=datetime(2026, 6, 2),
+                    timezone_name="UTC",
+                    client_name=contract.client.name,
+                    project_name=contract.name,
+                    contact_name=contract.contact_name,
+                    contact_email=contract.contact_email,
+                    hourly_rate_cents=contract.hourly_rate_cents,
+                    payment_terms_days=contract.payment_terms_days,
+                    total_seconds=0,
+                    total_cents=0,
+                    due_date=date(2026, 8, 12),
+                    pdf_bytes=b"%PDF-test",
+                )
+            )
+            database.commit()
+            with self.assertRaisesRegex(InvoiceDomainError, "sequence 999"):
+                create_invoice(
+                    database,
+                    contract_id=contract.id,
+                    range_start_utc=entry.started_at,
+                    range_end_utc=entry.stopped_at + timedelta(seconds=1),
+                    timezone_name="UTC",
+                    expected_fingerprint=proposed.fingerprint,
+                )
+
+    def test_generation_detects_an_entry_claim_change_after_preview(self) -> None:
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, self.seed.entry_id)
+            assert entry is not None and entry.stopped_at is not None
+            proposed = preview_invoice(
+                database,
+                contract_id=self.seed.contract_id,
+                range_start_utc=entry.started_at,
+                range_end_utc=entry.stopped_at + timedelta(seconds=1),
+                timezone_name="UTC",
+            )
+            original_scalars = database.scalars
+            scalar_calls = 0
+
+            def simulate_claim_change(statement, *args, **kwargs):
+                nonlocal scalar_calls
+                scalar_calls += 1
+                if scalar_calls == 2:
+                    return iter(())
+                return original_scalars(statement, *args, **kwargs)
+
+            with (
+                patch.object(database, "scalars", side_effect=simulate_claim_change),
+                self.assertRaisesRegex(InvoiceDomainError, "entries changed"),
+            ):
+                create_invoice(
+                    database,
+                    contract_id=self.seed.contract_id,
+                    range_start_utc=entry.started_at,
+                    range_end_utc=entry.stopped_at + timedelta(seconds=1),
+                    timezone_name="UTC",
+                    expected_fingerprint=proposed.fingerprint,
+                )
+
+    def test_claim_integrity_guards_reject_malformed_invoice_state(self) -> None:
+        invoice = SimpleNamespace(id=7, invoice_number="001-001-001")
+        entry = SimpleNamespace(
+            id=9,
+            invoice_number=invoice.invoice_number,
+            billing_status="invoiced",
+        )
+        database = SimpleNamespace()
+        database.scalars = lambda _statement: iter(())
+        with self.assertRaisesRegex(InvoiceDomainError, "claims are inconsistent"):
+            invoice_domain._claimed_entries(database, invoice)
+
+        results = iter((iter((entry.id,)), iter((entry,))))
+        database.scalars = lambda _statement: next(results)
+        entry.invoice_number = "different"
+        with self.assertRaisesRegex(InvoiceDomainError, "metadata is inconsistent"):
+            invoice_domain._claimed_entries(database, invoice)
+
+    def test_transition_guards_reject_malformed_claim_states(self) -> None:
+        invoice = SimpleNamespace(id=7, status="UNPAID", timezone_name="UTC")
+        entry = SimpleNamespace(billing_status="client_paid")
+        with (
+            patch.object(invoice_domain, "_immediate_transaction") as transaction,
+            patch.object(invoice_domain, "_invoice", return_value=invoice),
+            patch.object(invoice_domain, "_claimed_entries", return_value=[entry]),
+        ):
+            transaction.return_value.__enter__.return_value = None
+            with self.assertRaisesRegex(
+                InvoiceDomainError, "not awaiting client payment"
+            ):
+                mark_invoice_paid(SimpleNamespace(), invoice.id)
+
+            invoice.status = "PAID"
+            entry.billing_status = "invoiced"
+            with self.assertRaisesRegex(InvoiceDomainError, "invalid payment state"):
+                mark_invoice_unpaid(SimpleNamespace(), invoice.id)
+
+            invoice.status = "UNPAID"
+            entry.billing_status = "disbursed"
+            with self.assertRaisesRegex(InvoiceDomainError, "cannot be voided"):
+                void_invoice(SimpleNamespace(), invoice.id)
+
+            entry.billing_status = "client_paid"
+            with self.assertRaisesRegex(InvoiceDomainError, "invalid payment state"):
+                void_invoice(SimpleNamespace(), invoice.id)
+
+    def test_timestamp_and_contract_guards_fail_closed(self) -> None:
+        invalid_timestamp = SimpleNamespace(tzinfo=object())
+        invalid_timestamp.astimezone = lambda _timezone: (_ for _ in ()).throw(
+            OverflowError
+        )
+        with self.assertRaisesRegex(InvoiceDomainError, "valid UTC timestamp"):
+            invoice_domain._utc_timestamp(invalid_timestamp, "Invoice range start")
+
+        malformed_contract = SimpleNamespace(
+            archived_at=None,
+            payment_terms_days=14,
+        )
+        database = SimpleNamespace(scalar=lambda _statement: malformed_contract)
+        with self.assertRaisesRegex(InvoiceDomainError, "invalid payment terms"):
+            invoice_domain._build_preview(
+                database,
+                contract_id=1,
+                range_start_utc=None,
+                range_end_utc=None,
+                timezone_name="UTC",
+                now=datetime(2026, 7, 15),
+            )
+
     def test_pdf_daily_summary_shows_weekdays_without_work(self) -> None:
         invoice = Invoice(
             range_start_utc=datetime(2026, 7, 13),
@@ -454,6 +670,17 @@ class InvoiceDomainTests(AppTestCase):
             [date(2026, 7, day) for day in range(13, 18)],
         )
         self.assertIn(None, [hours for _, hours in rows])
+
+        weekend_range = Invoice(
+            range_start_utc=datetime(2026, 7, 17),
+            range_end_utc=datetime(2026, 7, 21),
+            timezone_name="UTC",
+        )
+        weekend_rows = _daily_summary_rows(weekend_range, [], UTC)
+        self.assertEqual(
+            [day for day, _ in weekend_rows],
+            [date(2026, 7, 17), date(2026, 7, 20)],
+        )
 
     def test_pdf_rejects_incomplete_runtime_assets(self) -> None:
         with self.assertRaisesRegex(ValueError, "Both regular and bold"):
@@ -568,7 +795,31 @@ class InvoiceRouteTests(AppTestCase):
         self.assertTrue(download.data.startswith(b"%PDF-"))
         self.assertIn("001-001-001", download.headers["Content-Disposition"])
 
+        with session_scope(self.app) as database:
+            malformed_invoice = database.get(Invoice, invoice_id)
+            assert malformed_invoice is not None
+            malformed_line = malformed_invoice.lines[0]
+            _ = malformed_line.entry
+            database.expunge_all()
+        malformed_line.entry = None
+        with patch.object(
+            invoice_routes, "get_invoice", return_value=malformed_invoice
+        ):
+            malformed_detail = self.client.get(f"/invoices/{invoice_id}")
+        self.assertEqual(malformed_detail.status_code, 200)
+
         paid_path = f"/invoices/{invoice_id}/paid"
+        self.authorize_sensitive_action(paid_path)
+        with (
+            patch.object(invoice_routes, "get_invoice", return_value=malformed_invoice),
+            patch.object(
+                invoice_routes, "mark_invoice_paid", return_value=malformed_invoice
+            ),
+            patch.object(invoice_routes, "audit_invoice"),
+        ):
+            malformed_action = self.client.post(paid_path)
+        self.assertEqual(malformed_action.status_code, 302)
+
         self.assertIn("/reauthenticate?", self.client.get(paid_path).location)
         self.authorize_sensitive_action(paid_path)
         paid = self.client.post(paid_path)
