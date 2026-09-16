@@ -10,7 +10,7 @@
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>Email Address<span class="input-with-icon"><i class="fa-solid fa-envelope" aria-hidden="true"></i><input type="email" name="email" autocomplete="username webauthn" maxlength="255" required autofocus></span></label>
       <label>Password<span class="input-with-icon"><i class="fa-solid fa-lock" aria-hidden="true"></i><input type="password" name="password" autocomplete="current-password" maxlength="1024" required></span></label>
-      <button class="button button-primary" type="submit"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i> Sign In</button>
+      <div class="form-actions"><button class="button button-primary" type="submit"><i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i> Sign In</button></div>
       <p class="muted" role="status" data-conditional-passkey-status hidden></p>
     </form>
     <div class="passkey-choice" data-explicit-passkey-login data-options-url="{{ url_for('main.login_passkey_options', next=request.args.get('next')) }}" data-verify-url="{{ url_for('main.login_passkey_verify') }}"><div data-passkey-alternative hidden><p class="passkey-divider"><span>or sign in with</span></p><button class="button button-secondary" type="button" data-passkey-start><i class="fa-solid fa-key" aria-hidden="true"></i> Passkey</button></div><p class="muted" role="status" data-passkey-status hidden></p></div>

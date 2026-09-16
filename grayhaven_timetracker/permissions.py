@@ -11,6 +11,7 @@ from flask import abort, redirect, request, session, url_for
 from .auth import current_user
 
 AUDIT_VIEW = "audit:view"
+INVOICE_MANAGE = "invoice:manage"
 REPORT_VIEW = "report:view"
 REPORT_SHARE = "report:share"
 CLIENT_ADD = "client:add"
@@ -44,6 +45,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
     "admin": frozenset(
         {
             AUDIT_VIEW,
+            INVOICE_MANAGE,
             REPORT_VIEW,
             REPORT_SHARE,
             CLIENT_ADD,

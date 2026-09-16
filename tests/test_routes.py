@@ -1465,6 +1465,17 @@ class ClientContractTaskRouteTests(AppTestCase):
                     },
                 )
                 self.assertEqual(response.status_code, 400)
+        invalid_terms = self.client.post(
+            f"/contracts/new/{client_id}",
+            data={
+                "name": "Contract",
+                "contact_name": "Contract Contact",
+                "contact_email": "contract@example.invalid",
+                "hourly_rate": "55",
+                "payment_terms_days": "14",
+            },
+        )
+        self.assertEqual(invalid_terms.status_code, 400)
         created_contract = self.client.post(
             f"/contracts/new/{client_id}",
             data={
@@ -3094,255 +3105,6 @@ class ReportAndSessionRouteTests(AppTestCase):
             404,
         )
 
-    def test_session_payment_status_requires_metadata_and_is_reversible(self) -> None:
-        self.login()
-        status_url = f"/sessions/{self.seed.entry_id}/status"
-        self.authorize_sensitive_action(status_url)
-        status_form = self.client.get(status_url)
-        self.assertEqual(status_form.status_code, 200)
-        self.assertIn(b"data-payment-status-form", status_form.data)
-        self.assertIn(
-            b'data-current-payment-status="pending_invoice"', status_form.data
-        )
-        self.assertIn(b"data-correction-reason-field hidden", status_form.data)
-        self.assertIn(
-            b'data-payment-statuses="invoiced client_paid disbursed" hidden',
-            status_form.data,
-        )
-        self.assertIn(
-            b'data-payment-statuses="client_paid disbursed" hidden',
-            status_form.data,
-        )
-        self.assertIn(b'data-payment-statuses="disbursed" hidden', status_form.data)
-        invalid_status = self.client.post(
-            status_url,
-            data={
-                "billing_status": "invalid",
-                "correction_reason": "Reject invalid status",
-            },
-        )
-        self.assertEqual(invalid_status.status_code, 400)
-        invoiced = self.client.post(
-            status_url,
-            data={
-                "billing_status": "invoiced",
-                "invoice_number": "INV-001",
-                "invoice_date": "2026-07-17",
-            },
-        )
-        self.assertEqual(invoiced.status_code, 302)
-        with session_scope(self.app) as database:
-            entry = database.get(TimeEntry, self.seed.entry_id)
-            assert entry is not None
-            self.assertEqual(entry.billing_status, "invoiced")
-            self.assertEqual(entry.invoice_number, "INV-001")
-            self.assertEqual(entry.invoice_date, date(2026, 7, 17))
-            audit_events = database.scalars(
-                select(AuditEvent).where(
-                    AuditEvent.event == "time_entry_status_updated"
-                )
-            ).all()
-            self.assertNotIn("correction_reason", audit_events[-1].details)
-
-        self.authorize_sensitive_action(status_url)
-        corrected_without_reason = self.client.post(
-            status_url,
-            data={
-                "billing_status": "invoiced",
-                "invoice_number": "INV-002",
-                "invoice_date": "2026-07-17",
-            },
-        )
-        self.assertEqual(corrected_without_reason.status_code, 400)
-        corrected = self.client.post(
-            status_url,
-            data={
-                "billing_status": "invoiced",
-                "invoice_number": "INV-002",
-                "invoice_date": "2026-07-17",
-                "correction_reason": "Correct invoice number",
-            },
-        )
-        self.assertEqual(corrected.status_code, 302)
-
-        self.assertEqual(
-            self.client.get(f"/sessions/{self.seed.entry_id}/edit").status_code, 409
-        )
-        self.assertEqual(
-            self.client.post(f"/sessions/{self.seed.entry_id}/delete").status_code, 409
-        )
-        self.assertEqual(
-            self.client.get(f"/tasks/{self.seed.task_id}/delete").status_code, 409
-        )
-
-        self.authorize_sensitive_action(status_url)
-        missing_reason = self.client.post(
-            status_url,
-            data={"billing_status": "pending_invoice"},
-        )
-        self.assertEqual(missing_reason.status_code, 400)
-        pending = self.client.post(
-            status_url,
-            data={
-                "billing_status": "pending_invoice",
-                "correction_reason": "Correct invoice assignment",
-            },
-        )
-        self.assertEqual(pending.status_code, 302)
-        with session_scope(self.app) as database:
-            entry = database.get(TimeEntry, self.seed.entry_id)
-            assert entry is not None
-            self.assertEqual(entry.billing_status, "pending_invoice")
-            self.assertIsNone(entry.invoice_number)
-            self.assertIsNone(entry.invoice_date)
-            audit_events = database.scalars(
-                select(AuditEvent).where(
-                    AuditEvent.event == "time_entry_status_updated"
-                )
-            ).all()
-            self.assertTrue(audit_events)
-            details = audit_events[-1].details
-            self.assertEqual(details["changes"]["Status"]["from"], "Invoiced")
-            self.assertEqual(details["changes"]["Status"]["to"], "Pending Invoice")
-            self.assertEqual(details["correction_reason"], "Correct invoice assignment")
-
-    def test_payment_status_rejects_missing_and_malformed_metadata(self) -> None:
-        self.login()
-        with session_scope(self.app) as database:
-            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
-            assert admin is not None
-            admin.totp_secret = None
-            reset_totp_replay_state(database, admin.id)
-        status_url = f"/sessions/{self.seed.entry_id}/status"
-        self.assertEqual(self.client.get("/sessions/9999/status").status_code, 404)
-        with session_scope(self.app) as database:
-            task = database.get(Task, self.seed.task_id)
-            user = database.get(User, self.user.id)
-            assert task is not None and user is not None
-            active = TimeEntry(
-                user_id=user.id, task_id=task.id, started_at=datetime.now()
-            )
-            database.add(active)
-            database.flush()
-            active_id = active.id
-        self.assertEqual(
-            self.client.get(f"/sessions/{active_id}/status").status_code, 409
-        )
-        with session_scope(self.app) as database:
-            database.delete(database.get(TimeEntry, active_id))
-        base: dict[str, str] = {}
-        invoice_fields = {
-            "invoice_number": "INV-2",
-            "invoice_date": "2026-07-17",
-        }
-        self.authorize_sensitive_action(status_url, totp_secret="")
-        invalid_cases = (
-            {"billing_status": "invoiced"},
-            {"billing_status": "invoiced", "invoice_number": "INV-2"},
-            {
-                "billing_status": "invoiced",
-                "invoice_number": "INV-2",
-                "invoice_date": "not-a-date",
-            },
-            {"billing_status": "client_paid", "client_paid_date": "2026-07-17"},
-            {
-                "billing_status": "disbursed",
-                "disbursement_date": "2026-07-17",
-                "transaction_number": "TX-1",
-            },
-        )
-        for extra in invalid_cases:
-            with self.subTest(extra=extra):
-                response = self.client.post(status_url, data={**base, **extra})
-                self.assertEqual(response.status_code, 400)
-
-        invoiced = self.client.post(
-            status_url,
-            data={
-                **base,
-                "billing_status": "invoiced",
-                **invoice_fields,
-            },
-        )
-        self.assertEqual(invoiced.status_code, 302)
-        self.authorize_sensitive_action(status_url, totp_secret="")
-        self.assertEqual(
-            self.client.post(
-                status_url,
-                data={
-                    **invoice_fields,
-                    "billing_status": "disbursed",
-                    "disbursement_date": "2026-07-19",
-                    "transaction_number": "TX-1",
-                },
-            ).status_code,
-            400,
-        )
-        self.assertEqual(
-            self.client.post(
-                status_url,
-                data={**base, **invoice_fields, "billing_status": "client_paid"},
-            ).status_code,
-            400,
-        )
-        self.assertEqual(
-            self.client.post(
-                status_url,
-                data={
-                    **base,
-                    **invoice_fields,
-                    "billing_status": "client_paid",
-                    "client_paid_date": "not-a-date",
-                },
-            ).status_code,
-            400,
-        )
-        paid = self.client.post(
-            status_url,
-            data={
-                **base,
-                **invoice_fields,
-                "billing_status": "client_paid",
-                "client_paid_date": "2026-07-18",
-            },
-        )
-        self.assertEqual(paid.status_code, 302)
-        self.authorize_sensitive_action(status_url, totp_secret="")
-        paid_fields = {**invoice_fields, "client_paid_date": "2026-07-18"}
-        for extra in (
-            {"billing_status": "disbursed", "transaction_number": "TX-1"},
-            {
-                "billing_status": "disbursed",
-                "disbursement_date": "not-a-date",
-                "transaction_number": "TX-1",
-            },
-            {"billing_status": "disbursed", "disbursement_date": "2026-07-19"},
-        ):
-            with self.subTest(extra=extra):
-                self.assertEqual(
-                    self.client.post(
-                        status_url, data={**base, **paid_fields, **extra}
-                    ).status_code,
-                    400,
-                )
-        disbursed = self.client.post(
-            status_url,
-            data={
-                **paid_fields,
-                "billing_status": "disbursed",
-                "disbursement_date": "2026-07-19",
-                "transaction_number": "TX-1",
-            },
-        )
-        self.assertEqual(disbursed.status_code, 302)
-        with session_scope(self.app) as database:
-            audit_events = database.scalars(
-                select(AuditEvent).where(
-                    AuditEvent.event == "time_entry_status_updated"
-                )
-            ).all()
-            self.assertNotIn("correction_reason", audit_events[-1].details)
-
     def test_admin_can_update_and_delete_a_pending_session_with_reason(self) -> None:
         self.login()
         edit_url = f"/sessions/{self.seed.entry_id}/edit"
@@ -3475,6 +3237,12 @@ class ReportAndSessionRouteTests(AppTestCase):
                     TimeEntry(
                         user=admin,
                         task=task,
+                        started_at=datetime(2026, 7, 13, 8, 0),
+                        stopped_at=datetime(2026, 7, 13, 9, 0),
+                    ),
+                    TimeEntry(
+                        user=admin,
+                        task=task,
                         started_at=datetime(2026, 7, 11, 8, 0),
                         stopped_at=datetime(2026, 7, 11, 9, 0),
                         billing_status="invoiced",
@@ -3494,7 +3262,7 @@ class ReportAndSessionRouteTests(AppTestCase):
                     TimeEntry(
                         user=admin,
                         task=task,
-                        started_at=datetime(2026, 7, 13, 8, 0),
+                        started_at=datetime(2026, 7, 14, 8, 0),
                         billing_status="disbursed",
                         invoice_number="INV-102",
                         invoice_date=date(2026, 7, 13),
@@ -3509,6 +3277,14 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertIn(b"My Sessions", page.data)
         self.assertIn(b"responsive-table my-session-table", page.data)
         self.assertIn(b'data-label="Invoice"', page.data)
+        self.assertIn(b"data-pending-live-summary", page.data)
+        self.assertIn(b"data-pending-live-daily", page.data)
+        self.assertIn(b'data-pending-day="2026-07-10"', page.data)
+        self.assertIn(b'data-pending-day="2026-07-13"', page.data)
+        self.assertNotIn(b'data-pending-day="2026-07-11"', page.data)
+        self.assertNotIn(b'data-pending-day="2026-07-12"', page.data)
+        self.assertIn(b"data-pending-day-duration", page.data)
+        self.assertNotIn("ETag", page.headers)
         self.assertIn(b"Pending Invoice", page.data)
         self.assertIn(b"Invoiced", page.data)
         self.assertIn(b"Client Paid", page.data)
@@ -3519,6 +3295,36 @@ class ReportAndSessionRouteTests(AppTestCase):
         redirected = self.client.get("/sessions?page=99&finalized_page=99")
         self.assertEqual(redirected.status_code, 302)
         self.assertIn("/sessions?page=1", redirected.location)
+
+    def test_my_sessions_tracks_running_pending_time_and_empty_state(self) -> None:
+        self.login()
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            task = database.get(Task, self.seed.other_task_id)
+            assert admin is not None and task is not None
+            entry = TimeEntry(
+                user=admin,
+                task=task,
+                started_at=datetime.now() - timedelta(minutes=1),
+            )
+            database.add(entry)
+            database.flush()
+            entry_id = entry.id
+        running = self.client.get("/sessions")
+        self.assertEqual(running.status_code, 200)
+        self.assertIn(b"data-running-base-seconds", running.data)
+        self.assertIn(b"data-running-rate-cents", running.data)
+
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, entry_id)
+            assert entry is not None
+            entry.billing_status = "invoiced"
+            entry.invoice_number = "INV-EMPTY"
+            entry.invoice_date = date(2026, 7, 15)
+        empty = self.client.get("/sessions")
+        self.assertEqual(empty.status_code, 200)
+        self.assertIn(b"No pending invoice time has been recorded.", empty.data)
+        self.assertNotIn(b"data-running-base-seconds", empty.data)
 
     def test_session_assignment_apis_reject_missing_or_archived_resources(self) -> None:
         self.login()
@@ -4008,7 +3814,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertIn(b'data-label="Actions"', sessions_page.data)
         archived_report = self.client.get(f"/reports/{self.seed.client_id}")
         self.assertIn(
-            b"No active contracts are currently available for this client.",
+            b"No pending invoice sessions are available for this client.",
             archived_report.data,
         )
 

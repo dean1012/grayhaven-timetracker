@@ -9,7 +9,7 @@ import secrets
 from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from html import escape
 from pathlib import Path
@@ -70,6 +70,7 @@ from .auth import (
     verify_password_constant_time,
 )
 from .database import get_session, health_check
+from .invoice_time import TimeSpan, daily_seconds
 from .models import (
     AuditEvent,
     Client,
@@ -129,8 +130,10 @@ from .reports import (
     calculate_cost,
     duration_seconds,
     format_datetime,
+    format_datetime_html,
     format_duration,
     format_money,
+    invoice_entry_costs,
     report_state_etag,
 )
 
@@ -997,8 +1000,11 @@ def datetime_local_value(value: datetime, timezone_name: str) -> str:
 
 
 def register_routes(app: Flask) -> None:
+    from .invoice_routes import invoices
+
     app.before_request(load_current_user)
     app.register_blueprint(main)
+    app.register_blueprint(invoices)
 
     @app.errorhandler(404)
     def redirect_missing_resource(error: Any) -> Any:
@@ -1128,6 +1134,7 @@ def register_routes(app: Flask) -> None:
             or request.method != "GET"
             or response.status_code != 200
             or response.mimetype != "text/html"
+            or getattr(g, "live_page_time_sensitive", False)
         ):
             return response
         etag = live_page_etag()
@@ -1144,7 +1151,8 @@ def register_routes(app: Flask) -> None:
             "app_version": app.config["APP_VERSION"],
             "can": can,
             "contact_url": app.config["CONTACT_URL"],
-            "format_datetime": format_datetime,
+            "format_datetime": format_datetime_html,
+            "format_datetime_inline": format_datetime,
             "format_duration": format_duration,
             "format_money": format_money,
             "logged_user": current_user(),
@@ -2029,6 +2037,14 @@ def client_report_password_confirmation(client_id: int) -> Any:
     )
 
 
+def parse_payment_terms(default: int = 30) -> int:
+    """Accept only the supported project invoice terms."""
+    value = request.form.get("payment_terms_days", str(default))
+    if value not in {"0", "7", "30"}:
+        raise ValueError("Select valid invoice payment terms.")
+    return int(value)
+
+
 @main.route("/contracts/new/<int:client_id>", methods=["GET", "POST"])
 @permission_required(CONTRACT_ADD)
 def new_contract(client_id: int) -> Any:
@@ -2057,6 +2073,7 @@ def new_contract(client_id: int) -> Any:
             contact_name=form_text("contact_name", "Contact Name", 200),
             contact_email=normalize_email(request.form.get("contact_email", "")),
             hourly_rate_cents=int(rate * 100),
+            payment_terms_days=parse_payment_terms(),
             created_at=now_utc(),
         )
     except (InvalidOperation, ValueError) as exc:
@@ -2080,6 +2097,7 @@ def new_contract(client_id: int) -> Any:
             "Contact Name": contract_item.contact_name,
             "Contact Email": contract_item.contact_email,
             "Billable Rate": audit_rate(contract_item.hourly_rate_cents),
+            "Payment Terms (days)": contract_item.payment_terms_days,
         },
     )
     return redirect(url_for("main.contract", contract_id=contract_item.id))
@@ -2136,7 +2154,10 @@ def edit_contract(contract_id: int) -> Any:
             contact_email=(previous_values["contact_email"], item.contact_email),
         ),
     )
-    flash("Contract details updated. The billable rate was not changed.", "success")
+    flash(
+        "Contract details updated. Billable rate and invoice terms were not changed.",
+        "success",
+    )
     return redirect(url_for("main.contract", contract_id=item.id))
 
 
@@ -2834,6 +2855,10 @@ def contract_sessions(contract_id: int) -> Any:
     )
     entries = database.scalars(statement).all()
     snapshot_at = now_utc()
+    claimed_costs = invoice_entry_costs(
+        database,
+        {entry.invoice_id for entry in entries if entry.invoice_id is not None},
+    )
     session_rows = [
         {
             "entry": entry,
@@ -2842,12 +2867,15 @@ def contract_sessions(contract_id: int) -> Any:
                 entry.started_at,
                 entry.stopped_at or max(snapshot_at, entry.started_at),
             ),
-            "cost": calculate_cost(
-                duration_seconds(
-                    entry.started_at,
-                    entry.stopped_at or max(snapshot_at, entry.started_at),
+            "cost": claimed_costs.get(
+                entry.id,
+                calculate_cost(
+                    duration_seconds(
+                        entry.started_at,
+                        entry.stopped_at or max(snapshot_at, entry.started_at),
+                    ),
+                    entry.task.contract.hourly_rate_cents,
                 ),
-                entry.task.contract.hourly_rate_cents,
             ),
             "can_edit": (
                 entry.stopped_at is not None
@@ -2900,9 +2928,20 @@ def my_sessions() -> Any:
     if page < 1 or finalized_page < 1:
         abort(400)
     user = cast(User, current_user())
-    if response := unchanged_live_page_response():
-        return response
     database = get_session()
+    has_running_timer = (
+        database.scalar(
+            select(TimeEntry.id)
+            .where(TimeEntry.user_id == user.id, TimeEntry.stopped_at.is_(None))
+            .limit(1)
+        )
+        is not None
+    )
+    # Time continues to change without an audit event while a timer is running.
+    # Reuse the existing live refresh to reconcile every displayed total and day.
+    g.live_page_time_sensitive = has_running_timer
+    if not has_running_timer and (response := unchanged_live_page_response()):
+        return response
     base_condition = TimeEntry.user_id == user.id
     pending_condition = base_condition & (TimeEntry.billing_status == "pending_invoice")
     finalized_condition = base_condition & (
@@ -2972,12 +3011,15 @@ def my_sessions() -> Any:
                     entry.started_at,
                     entry.stopped_at or max(snapshot_at, entry.started_at),
                 ),
-                "cost": calculate_cost(
-                    duration_seconds(
-                        entry.started_at,
-                        entry.stopped_at or max(snapshot_at, entry.started_at),
+                "cost": claimed_costs.get(
+                    entry.id,
+                    calculate_cost(
+                        duration_seconds(
+                            entry.started_at,
+                            entry.stopped_at or max(snapshot_at, entry.started_at),
+                        ),
+                        entry.task.contract.hourly_rate_cents,
                     ),
-                    entry.task.contract.hourly_rate_cents,
                 ),
             }
             for entry in entries
@@ -2989,6 +3031,8 @@ def my_sessions() -> Any:
     }
     summary_rows = database.execute(
         select(
+            TimeEntry.id,
+            TimeEntry.invoice_id,
             TimeEntry.billing_status,
             TimeEntry.started_at,
             TimeEntry.stopped_at,
@@ -2997,16 +3041,48 @@ def my_sessions() -> Any:
         .join(TimeEntry.task)
         .join(Task.contract)
         .where(base_condition)
+    ).all()
+    claimed_costs = invoice_entry_costs(
+        database, {row.invoice_id for row in summary_rows if row.invoice_id is not None}
     )
-    for status, started_at, stopped_at, hourly_rate_cents in summary_rows:
+    pending_spans: list[TimeSpan] = []
+    pending_running: dict[str, int] | None = None
+    for entry_id, _, status, started_at, stopped_at, hourly_rate_cents in summary_rows:
         seconds = duration_seconds(
             started_at,
             stopped_at or max(snapshot_at, started_at),
         )
         summary[status]["seconds"] += seconds
-        summary[status]["cost"] += calculate_cost(seconds, hourly_rate_cents)
+        summary[status]["cost"] += claimed_costs.get(
+            entry_id, calculate_cost(seconds, hourly_rate_cents)
+        )
+        if status == "pending_invoice":
+            pending_spans.append(
+                TimeSpan(
+                    started_at, stopped_at or max(snapshot_at, started_at), seconds
+                )
+            )
+            if stopped_at is None:
+                pending_running = {
+                    "base_seconds": seconds,
+                    "hourly_rate_cents": hourly_rate_cents,
+                }
+    timezone_info = ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"]))
+    pending_days = dict(daily_seconds(pending_spans, timezone_info))
+    pending_daily = []
+    if pending_days:
+        day = min(pending_days)
+        last_day = max(pending_days)
+        while day <= last_day:
+            seconds = pending_days.get(day, 0)
+            if seconds or day.weekday() < 5:
+                pending_daily.append((day, seconds))
+            day += timedelta(days=1)
     return render_template(
         "my_sessions.html",
+        snapshot_at=snapshot_at,
+        pending_running=pending_running,
+        pending_daily=pending_daily,
         session_rows=build_rows(pending_entries),
         finalized_rows=build_rows(finalized_entries),
         pending_total=pending_total,
@@ -3036,7 +3112,7 @@ def my_sessions() -> Any:
             if finalized_page < finalized_page_count
             else None
         ),
-        timezone_info=ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"])),
+        timezone_info=timezone_info,
     )
 
 
@@ -3392,190 +3468,6 @@ def delete_time_entry(entry_id: int) -> Any:
     consume_sensitive_action_authorization()
     flash("Time session deleted.", "success")
     return redirect(url_for("main.contract_sessions", contract_id=contract_id))
-
-
-@main.route("/sessions/<int:entry_id>/status", methods=["GET", "POST"])
-@permission_required(TIME_ENTRY_EDIT_ANY)
-def edit_time_entry_status(entry_id: int) -> Any:
-    """Change payment status with administrator reauthentication and audit detail."""
-    database = get_session()
-    entry = database.scalar(
-        select(TimeEntry)
-        .where(TimeEntry.id == entry_id)
-        .options(
-            selectinload(TimeEntry.task).selectinload(Task.contract),
-            selectinload(TimeEntry.subtask),
-            selectinload(TimeEntry.user),
-        )
-    )
-    if entry is None:
-        abort(404)
-    if entry.stopped_at is None:
-        abort(409, "Stop the active timer before changing payment status.")
-    require_active_contract(entry.task.contract)
-    actor = cast(User, current_user())
-    status_labels = {
-        "pending_invoice": "Pending Invoice",
-        "invoiced": "Invoiced",
-        "client_paid": "Client Paid",
-        "disbursed": "Disbursed",
-    }
-    confirmation = {
-        "eyebrow": "UPDATE PAYMENT STATUS",
-        "title": "Update Session Status",
-        "description": (
-            "Update the payment status and required financial metadata for this "
-            "session."
-        ),
-        "cancel_url": url_for(
-            "main.contract_sessions", contract_id=entry.task.contract_id
-        ),
-        "breadcrumb_parent_label": entry.task.contract.name,
-        "breadcrumb_parent_url": url_for(
-            "main.contract", contract_id=entry.task.contract_id
-        ),
-        "breadcrumb_label": "Update Session Status",
-        "entry": entry,
-        "status_labels": status_labels,
-    }
-    if response := require_sensitive_action_authorization(
-        actor, cast(str, confirmation["cancel_url"])
-    ):
-        return response
-    if request.method != "POST":
-        return render_template("session_status_form.html", **confirmation)
-    try:
-        target_status = request.form.get("billing_status", "").strip()
-        if target_status not in status_labels:
-            raise ValueError("Select a valid payment status.")
-        original_status = entry.billing_status
-        original_metadata = (
-            entry.invoice_number,
-            entry.invoice_date,
-            entry.client_paid_date,
-            entry.disbursement_date,
-            entry.transaction_number,
-        )
-        old_values = {
-            "status": status_labels[original_status],
-            "invoice_number": entry.invoice_number or "None",
-            "invoice_date": str(entry.invoice_date or "None"),
-            "client_paid_date": str(entry.client_paid_date or "None"),
-            "disbursement_date": str(entry.disbursement_date or "None"),
-            "transaction_number": entry.transaction_number or "None",
-        }
-        invoice_number = None
-        invoice_date = None
-        client_paid_date = None
-        disbursement_date = None
-        transaction_number = None
-        if target_status != "pending_invoice":
-            if target_status in {"client_paid", "disbursed"} and (
-                not entry.invoice_number or not entry.invoice_date
-            ):
-                raise ValueError(
-                    "The session must have invoice details before client payment."
-                )
-            invoice_number = required_text(
-                request.form.get("invoice_number", ""), "Invoice Number", maximum=100
-            )
-            raw_invoice_date = request.form.get("invoice_date", "")
-            if not raw_invoice_date:
-                raise ValueError("Invoice Date is required.")
-            invoice_date = date.fromisoformat(raw_invoice_date)
-        if target_status in {"client_paid", "disbursed"}:
-            if target_status == "disbursed" and not entry.client_paid_date:
-                raise ValueError(
-                    "The session must have client payment details before disbursement."
-                )
-            raw_client_paid_date = request.form.get("client_paid_date", "")
-            if not raw_client_paid_date:
-                raise ValueError("Client Paid Date is required.")
-            client_paid_date = date.fromisoformat(raw_client_paid_date)
-        if target_status == "disbursed":
-            raw_disbursement_date = request.form.get("disbursement_date", "")
-            if not raw_disbursement_date:
-                raise ValueError("Disbursement Date is required.")
-            disbursement_date = date.fromisoformat(raw_disbursement_date)
-            transaction_number = required_text(
-                request.form.get("transaction_number", ""),
-                "Transaction Number",
-                maximum=100,
-            )
-        candidate_metadata = (
-            invoice_number,
-            invoice_date,
-            client_paid_date,
-            disbursement_date,
-            transaction_number,
-        )
-        status_order = tuple(status_labels)
-        moving_backward = status_order.index(target_status) < status_order.index(
-            original_status
-        )
-        existing_metadata_changed = any(
-            original is not None and original != candidate
-            for original, candidate in zip(
-                original_metadata, candidate_metadata, strict=True
-            )
-        )
-        reason_required = moving_backward or existing_metadata_changed
-        reason = correction_reason() if reason_required else None
-        entry.billing_status = target_status
-        entry.invoice_number = invoice_number
-        entry.invoice_date = invoice_date
-        entry.client_paid_date = client_paid_date
-        entry.disbursement_date = disbursement_date
-        entry.transaction_number = transaction_number
-        database.commit()
-    except (ValueError, OverflowError) as exc:
-        database.rollback()
-        flash(str(exc), "error")
-        return render_template("session_status_form.html", **confirmation), 400
-    new_values = {
-        "status": status_labels[entry.billing_status],
-        "invoice_number": entry.invoice_number or "None",
-        "invoice_date": str(entry.invoice_date or "None"),
-        "client_paid_date": str(entry.client_paid_date or "None"),
-        "disbursement_date": str(entry.disbursement_date or "None"),
-        "transaction_number": entry.transaction_number or "None",
-    }
-    audit_details: dict[str, Any] = {
-        **audit_time_entry_details(entry),
-        "changes": audit_changes(
-            **{
-                "status": (old_values["status"], new_values["status"]),
-                "invoice_number": (
-                    old_values["invoice_number"],
-                    new_values["invoice_number"],
-                ),
-                "invoice_date": (
-                    old_values["invoice_date"],
-                    new_values["invoice_date"],
-                ),
-                "client_paid_date": (
-                    old_values["client_paid_date"],
-                    new_values["client_paid_date"],
-                ),
-                "disbursement_date": (
-                    old_values["disbursement_date"],
-                    new_values["disbursement_date"],
-                ),
-                "transaction_number": (
-                    old_values["transaction_number"],
-                    new_values["transaction_number"],
-                ),
-            }
-        ),
-    }
-    if reason is not None:
-        audit_details["correction_reason"] = reason
-    audit("time_entry_status_updated", actor_id=actor.id, **audit_details)
-    consume_sensitive_action_authorization()
-    flash("Session payment status updated.", "success")
-    return redirect(
-        url_for("main.contract_sessions", contract_id=entry.task.contract_id)
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -10,7 +10,7 @@
     <form method="post" class="form-stack">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       {% if correction_reason_required %}<label>Correction Reason<textarea name="correction_reason" rows="3" maxlength="1000" required autocomplete="off" data-protonpass-ignore="true"></textarea></label>{% endif %}
-      <div class="form-actions"><a class="button button-secondary" href="{{ cancel_url }}">Cancel</a><button class="button {{ submit_class|default('button-primary') }}" type="submit"><i class="fa-solid {{ submit_icon|default('fa-trash' if 'DELETE' in eyebrow else 'fa-shield-halved') }}" aria-hidden="true"></i> {{ submit_label }}</button></div>
+      <div class="form-actions"><a class="button button-secondary" href="{{ cancel_url }}">Cancel</a><button class="button {{ submit_class|default('button-primary') }}" type="submit"><i class="fa-solid {{ submit_icon|default('fa-trash' if 'DELETE' in eyebrow else 'fa-shield-halved') }}" aria-hidden="true"></i> Confirm</button></div>
     </form>
   </div>
 </section>

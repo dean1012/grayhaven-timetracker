@@ -88,3 +88,84 @@ test("defers a live replacement while work could be lost", () => {
   editorState.openDisclosure = false;
   assert.equal(shouldDeferLiveReplacement(editorState), false);
 });
+
+test("running timer refresh updates total, cost, and today's daily row", async () => {
+  class Element {
+    constructor(dataset = {}) {
+      this.dataset = dataset;
+      this.textContent = "";
+    }
+  }
+  class SelectElement extends Element {}
+  class ButtonElement extends Element {}
+  class InputElement extends Element {}
+
+  const totalDuration = new Element();
+  const totalCost = new Element();
+  const dayDuration = new Element({ baseSeconds: "90" });
+  const dayRow = new Element({ pendingDay: new Date().toISOString().slice(0, 10) });
+  dayRow.querySelector = (selector) =>
+    selector === "[data-pending-day-duration]" ? dayDuration : null;
+  const summary = new Element({
+    snapshotAt: "2026-01-01T00:00:00Z",
+    baseTotalSeconds: "100",
+    baseTotalCostCents: "200",
+    runningBaseSeconds: "10",
+    runningRateCents: "3600",
+  });
+  summary.querySelector = (selector) => ({
+    "[data-pending-total-duration]": totalDuration,
+    "[data-pending-total-cost]": totalCost,
+  })[selector] || null;
+  const daily = new Element({ pendingTimezone: "UTC" });
+  daily.querySelectorAll = (selector) =>
+    selector === "[data-pending-day]" ? [dayRow] : [];
+
+  const originalNow = Date.now;
+  const originalGlobals = {
+    document: globalThis.document,
+    window: globalThis.window,
+    HTMLElement: globalThis.HTMLElement,
+    HTMLSelectElement: globalThis.HTMLSelectElement,
+    HTMLButtonElement: globalThis.HTMLButtonElement,
+    HTMLInputElement: globalThis.HTMLInputElement,
+  };
+  Date.now = () => Date.parse("2026-01-01T00:00:05Z");
+  globalThis.HTMLElement = Element;
+  globalThis.HTMLSelectElement = SelectElement;
+  globalThis.HTMLButtonElement = ButtonElement;
+  globalThis.HTMLInputElement = InputElement;
+  globalThis.document = {
+    hidden: false,
+    activeElement: null,
+    addEventListener() {},
+    querySelector(selector) {
+      if (selector === "[data-pending-live-summary]") return summary;
+      if (selector === "[data-pending-live-daily]") return daily;
+      return null;
+    },
+    querySelectorAll() { return []; },
+  };
+  globalThis.window = {
+    location: {
+      href: "https://example.invalid/sessions",
+      origin: "https://example.invalid",
+      pathname: "/sessions",
+      search: "",
+    },
+    history: { replaceState() {} },
+    addEventListener() {},
+    setInterval() { return 1; },
+    setTimeout() { return 1; },
+    clearInterval() {},
+  };
+  try {
+    await import(`../static/app.js?daily-summary=${Date.now()}`);
+    assert.equal(totalDuration.textContent, "0:01:45");
+    assert.equal(totalCost.textContent, "$2.05");
+    assert.equal(dayDuration.textContent, "00:01:35");
+  } finally {
+    Date.now = originalNow;
+    Object.assign(globalThis, originalGlobals);
+  }
+});

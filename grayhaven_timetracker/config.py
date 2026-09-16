@@ -156,6 +156,7 @@ def validate_branding(path: str) -> None:
     branding_path = Path(path)
     required_assets = (
         "grayhaven-logo-wordmark-dark.svg",
+        "grayhaven-logo-wordmark-light.png",
         "favicon.ico",
         "favicon-16.png",
         "favicon-32.png",

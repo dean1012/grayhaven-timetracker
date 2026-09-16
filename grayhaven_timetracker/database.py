@@ -15,7 +15,7 @@ from sqlcipher3 import dbapi2 as sqlcipher
 from .models import Base, Client, Contract, Subtask, Task, TimeEntry
 
 SQLITE_HEADER = b"SQLite format 3\x00"
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 2
 SOFT_DELETABLE_MODELS = (Client, Contract, Task, Subtask, TimeEntry)
 
@@ -165,7 +165,139 @@ def migrate_schema_2_to_3(connection: Any) -> None:
         connection.execute(text(statement))
 
 
-MIGRATIONS: dict[int, Callable[[Any], None]] = {2: migrate_schema_2_to_3}
+def migrate_schema_3_to_4(connection: Any) -> None:
+    """Add permanent invoice snapshots and current entry claims."""
+    contract_columns = set(
+        connection.execute(text("SELECT name FROM pragma_table_info('contract')"))
+        .scalars()
+        .all()
+    )
+    entry_columns = set(
+        connection.execute(text("SELECT name FROM pragma_table_info('time_entry')"))
+        .scalars()
+        .all()
+    )
+    invoice_objects = set(
+        connection.execute(
+            text(
+                "SELECT name FROM sqlite_master WHERE name IN "
+                "('invoice', 'invoice_line', 'uq_invoice_number', "
+                "'uq_invoice_contract_sequence', 'ix_invoice_contract_issued', "
+                "'ix_invoice_line_invoice', 'ix_invoice_line_entry', "
+                "'ix_time_entry_invoice_id')"
+            )
+        ).scalars()
+    )
+    expected_objects = {
+        "invoice",
+        "invoice_line",
+        "uq_invoice_number",
+        "uq_invoice_contract_sequence",
+        "ix_invoice_contract_issued",
+        "ix_invoice_line_invoice",
+        "ix_invoice_line_entry",
+        "ix_time_entry_invoice_id",
+    }
+    additions = (
+        "payment_terms_days" in contract_columns,
+        "invoice_id" in entry_columns,
+        invoice_objects == expected_objects,
+    )
+    if all(additions):
+        return
+    if any(additions) or invoice_objects:
+        raise DatabaseError("Schema 3 contains a partial invoice migration")
+    statements = (
+        """
+        ALTER TABLE contract ADD COLUMN payment_terms_days INTEGER NOT NULL
+        DEFAULT 30 CHECK (payment_terms_days IN (0, 7, 30))
+        """,
+        """
+        CREATE TABLE invoice (
+            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            client_id INTEGER NOT NULL CHECK (client_id BETWEEN 1 AND 999),
+            contract_id INTEGER NOT NULL CHECK (contract_id BETWEEN 1 AND 999),
+            project_sequence INTEGER NOT NULL
+                CHECK (project_sequence BETWEEN 1 AND 999),
+            invoice_number VARCHAR(32) NOT NULL,
+            status VARCHAR(16) NOT NULL
+                CHECK (status IN ('UNPAID', 'PAID', 'VOID')),
+            issued_at DATETIME NOT NULL,
+            range_start_utc DATETIME NOT NULL,
+            range_end_utc DATETIME NOT NULL,
+            timezone_name VARCHAR(100) NOT NULL,
+            client_name VARCHAR(200) NOT NULL,
+            project_name VARCHAR(200) NOT NULL,
+            contact_name VARCHAR(200) NOT NULL,
+            contact_email VARCHAR(255) NOT NULL,
+            hourly_rate_cents INTEGER NOT NULL CHECK (hourly_rate_cents >= 0),
+            payment_terms_days INTEGER NOT NULL
+                CHECK (payment_terms_days IN (0, 7, 30)),
+            total_seconds INTEGER NOT NULL CHECK (total_seconds >= 0),
+            total_cents INTEGER NOT NULL CHECK (total_cents >= 0),
+            due_date DATE NOT NULL,
+            paid_date DATE,
+            pdf_bytes BLOB NOT NULL,
+            FOREIGN KEY(client_id) REFERENCES client(id) ON DELETE RESTRICT,
+            FOREIGN KEY(contract_id) REFERENCES contract(id) ON DELETE RESTRICT,
+            CONSTRAINT ck_invoice_range CHECK (range_end_utc > range_start_utc),
+            CONSTRAINT ck_invoice_paid_date CHECK (
+                (status = 'PAID' AND paid_date IS NOT NULL)
+                OR (status != 'PAID' AND paid_date IS NULL)
+            )
+        )
+        """,
+        """
+        CREATE UNIQUE INDEX uq_invoice_number ON invoice (invoice_number)
+        """,
+        """
+        CREATE UNIQUE INDEX uq_invoice_contract_sequence
+        ON invoice (contract_id, project_sequence)
+        """,
+        """
+        CREATE INDEX ix_invoice_contract_issued
+        ON invoice (contract_id, issued_at, id)
+        """,
+        """
+        CREATE TABLE invoice_line (
+            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            invoice_id INTEGER NOT NULL,
+            time_entry_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            worker_name VARCHAR(201) NOT NULL,
+            task_name VARCHAR(200) NOT NULL,
+            subtask_name VARCHAR(200),
+            started_at_utc DATETIME NOT NULL,
+            stopped_at_utc DATETIME NOT NULL,
+            total_seconds INTEGER NOT NULL CHECK (total_seconds >= 0),
+            started_before_range BOOLEAN NOT NULL,
+            FOREIGN KEY(invoice_id) REFERENCES invoice(id) ON DELETE RESTRICT,
+            FOREIGN KEY(time_entry_id) REFERENCES time_entry(id) ON DELETE RESTRICT,
+            FOREIGN KEY(user_id) REFERENCES user_account(id) ON DELETE RESTRICT
+        )
+        """,
+        """
+        CREATE INDEX ix_invoice_line_invoice ON invoice_line (invoice_id, id)
+        """,
+        """
+        CREATE INDEX ix_invoice_line_entry ON invoice_line (time_entry_id)
+        """,
+        """
+        ALTER TABLE time_entry ADD COLUMN invoice_id INTEGER
+        REFERENCES invoice(id) ON DELETE RESTRICT
+        """,
+        """
+        CREATE INDEX ix_time_entry_invoice_id ON time_entry (invoice_id)
+        """,
+    )
+    for statement in statements:
+        connection.execute(text(statement))
+
+
+MIGRATIONS: dict[int, Callable[[Any], None]] = {
+    2: migrate_schema_2_to_3,
+    3: migrate_schema_3_to_4,
+}
 
 
 def installed_schema_version(connection: Any) -> int | None:
@@ -334,6 +466,51 @@ def initialize_database(engine: Engine) -> None:
             CREATE TRIGGER IF NOT EXISTS audit_event_delete_guard
             BEFORE DELETE ON audit_event
             BEGIN SELECT RAISE(ABORT, 'audit events are immutable'); END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS invoice_delete_guard
+            BEFORE DELETE ON invoice
+            BEGIN SELECT RAISE(ABORT, 'invoices are permanent'); END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS invoice_frozen_update_guard
+            BEFORE UPDATE OF client_id, contract_id, project_sequence,
+                invoice_number, issued_at, range_start_utc, range_end_utc,
+                timezone_name, client_name, project_name, contact_name,
+                contact_email, hourly_rate_cents, payment_terms_days,
+                total_seconds, total_cents, due_date, pdf_bytes
+            ON invoice
+            BEGIN SELECT RAISE(ABORT, 'invoice snapshots are immutable'); END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS invoice_line_update_guard
+            BEFORE UPDATE ON invoice_line
+            BEGIN SELECT RAISE(ABORT, 'invoice lines are immutable'); END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS invoice_line_delete_guard
+            BEFORE DELETE ON invoice_line
+            BEGIN SELECT RAISE(ABORT, 'invoice lines are immutable'); END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS time_entry_invoice_insert_guard
+            BEFORE INSERT ON time_entry
+            WHEN NEW.invoice_id IS NOT NULL AND NOT EXISTS (
+                SELECT 1 FROM invoice
+                WHERE id = NEW.invoice_id
+                  AND invoice_number = NEW.invoice_number
+            )
+            BEGIN SELECT RAISE(ABORT, 'entry invoice metadata is inconsistent'); END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS time_entry_invoice_update_guard
+            BEFORE UPDATE OF invoice_id, invoice_number ON time_entry
+            WHEN NEW.invoice_id IS NOT NULL AND NOT EXISTS (
+                SELECT 1 FROM invoice
+                WHERE id = NEW.invoice_id
+                  AND invoice_number = NEW.invoice_number
+            )
+            BEGIN SELECT RAISE(ABORT, 'entry invoice metadata is inconsistent'); END
             """,
         )
         for trigger in triggers:

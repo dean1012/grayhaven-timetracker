@@ -1155,10 +1155,6 @@ body:has(.dialog-nonmodal[open])::after {
   padding: 2.2rem;
 }
 
-.narrow-content > .form-panel + .form-panel {
-  margin-top: 1.5rem;
-}
-
 .form-stack {
   display: grid;
   gap: 1.25rem;
@@ -1923,6 +1919,27 @@ body:has(.dialog-nonmodal[open])::after {
     opacity: 1;
     transform: scale(1.08);
   }
+}
+
+/* Block components carry their spacing in normal document flow. */
+:is(.panel, .content-card, .alert, .alert-stack, .disclosure, .summary-grid) {
+  margin-block: 0;
+}
+
+:is(.panel, .content-card, .alert, .alert-stack, .disclosure, .summary-grid):where(
+  :has(~ :not([hidden], script, style, template, .notification-region:empty))
+) {
+  margin-block-end: var(--space-md);
+}
+
+/* Existing gap-based layouts own the distance between their direct children. */
+:is(
+  .content-grid, .dialog-content, .form-stack, .alert-stack, .notification-region
+)
+  > :is(
+    .panel, .content-card, .alert, .alert-stack, .disclosure, .summary-grid
+  ) {
+  margin-block: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

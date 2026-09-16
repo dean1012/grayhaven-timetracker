@@ -4,7 +4,7 @@
 {% block content %}
 <section class="page-heading">
   <div><p class="eyebrow">ACCESS MANAGEMENT</p><h1>Users</h1></div>
-  {% if can('user:add') %}<a class="icon-button accent" href="{{ url_for('main.new_user') }}" title="New User" aria-label="New User"><i class="fa-solid fa-user-plus" aria-hidden="true"></i></a>{% endif %}
+  {% if can('user:add') %}<div class="heading-actions"><a class="icon-button accent" href="{{ url_for('main.new_user') }}" title="New User" aria-label="New User"><i class="fa-solid fa-user-plus" aria-hidden="true"></i></a></div>{% endif %}
 </section>
 <section class="panel user-directory" data-live-region="user-directory">
   <div class="table-summary"><span>{{ total }} user{{ '' if total == 1 else 's' }}</span><span>Page {{ page }} of {{ page_count }}</span></div>
@@ -22,7 +22,7 @@
           <td data-label="Passkeys"><span class="user-totp-cell"><span class="status-pill {{ 'status-success' if passkey_counts.get(user.id, 0) else 'status-neutral' }}">{{ 'Configured' if passkey_counts.get(user.id, 0) else 'Not Configured' }}</span>{% if passkey_counts.get(user.id, 0) and user.id != logged_user.id and can('user:edit') %}<a class="icon-button stop" href="{{ url_for('main.wipe_user_passkeys', user_id=user.id) }}" title="Wipe All Passkeys" aria-label="Wipe All Passkeys"><i class="fa-solid fa-ban" aria-hidden="true"></i></a>{% endif %}</span></td>
           <td class="cell-status" data-label="Status"><span class="status-pill {{ 'status-success' if user.is_enabled else 'status-danger' }}">{{ 'Enabled' if user.is_enabled else 'Disabled' }}</span></td>
           <td class="cell-actions" data-label="Actions">
-            <div class="row-actions">
+            <div class="row-actions table-row-actions">
               {% if user.id == logged_user.id %}<span class="status-pill status-success">Current Account</span>{% endif %}
               {% if can('user:edit') and user.id != logged_user.id %}<a class="icon-button accent" href="{{ url_for('main.edit_user', user_id=user.id) }}" title="Update User" aria-label="Update User"><i class="fa-solid fa-pen" aria-hidden="true"></i></a>{% endif %}
               {% if user.id != logged_user.id %}

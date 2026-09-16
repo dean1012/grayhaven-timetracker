@@ -23,6 +23,8 @@
       <label>Contact Email<input type="email" name="contact_email" value="{{ request.form.get('contact_email', contract.contact_email if editing else client.contact_email) }}" maxlength="255" required autocomplete="off" data-protonpass-ignore="true"></label>
       {% if not editing %}
       <label>Billable Rate<span class="money-input"><span class="money-prefix" aria-hidden="true">$</span><input type="number" name="hourly_rate" value="{{ request.form.get('hourly_rate', '') }}" min="0" max="1000000" step="0.01" required autocomplete="off" data-protonpass-ignore="true"><span class="money-suffix">per hour</span></span></label>
+      {% set terms = request.form.get('payment_terms_days', '30') %}
+      <label>Invoice Due<span class="select-control"><select name="payment_terms_days" required><option value="0" {% if terms == '0' %}selected{% endif %}>Immediately</option><option value="7" {% if terms == '7' %}selected{% endif %}>7 days</option><option value="30" {% if terms == '30' %}selected{% endif %}>NET 30</option></select><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span></label>
       {% endif %}
       <div class="form-actions">
         <a class="button button-secondary" href="{{ url_for('main.contract', contract_id=contract.id) if editing else url_for('main.client', client_id=client.id) }}">Cancel</a>
