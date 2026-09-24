@@ -15,7 +15,7 @@ from sqlcipher3 import dbapi2 as sqlcipher
 from .models import Base, Client, Contract, Subtask, Task, TimeEntry
 
 SQLITE_HEADER = b"SQLite format 3\x00"
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 2
 SOFT_DELETABLE_MODELS = (Client, Contract, Task, Subtask, TimeEntry)
 
@@ -433,11 +433,32 @@ def migrate_schema_5_to_6(connection: Any) -> None:  # pragma: no cover
     )
 
 
+def migrate_schema_6_to_7(connection: Any) -> None:  # pragma: no cover
+    """Keep payment and refund references with issued invoices."""
+    columns = set(
+        connection.execute(text("SELECT name FROM pragma_table_info('invoice')"))
+        .scalars()
+        .all()
+    )
+    additions = ("paid_transaction_id" in columns, "refund_transaction_id" in columns)
+    if all(additions):
+        return
+    if any(additions):
+        raise DatabaseError("Schema 6 contains a partial transaction migration")
+    connection.execute(
+        text("ALTER TABLE invoice ADD COLUMN paid_transaction_id VARCHAR(100)")
+    )
+    connection.execute(
+        text("ALTER TABLE invoice ADD COLUMN refund_transaction_id VARCHAR(100)")
+    )
+
+
 MIGRATIONS: dict[int, Callable[[Any], None]] = {
     2: migrate_schema_2_to_3,
     3: migrate_schema_3_to_4,
     4: migrate_schema_4_to_5,
     5: migrate_schema_5_to_6,
+    6: migrate_schema_6_to_7,
 }
 
 

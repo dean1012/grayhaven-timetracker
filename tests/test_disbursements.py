@@ -15,6 +15,8 @@ from grayhaven_timetracker.invoices import (
     create_invoice,
     mark_invoice_paid,
     preview_invoice,
+    refund_invoice,
+    require_available_transaction_id,
 )
 from grayhaven_timetracker.models import AuditEvent, Disbursement, TimeEntry, User
 from tests.helpers import AppTestCase
@@ -46,7 +48,7 @@ class DisbursementRouteTests(AppTestCase):
             database.commit()
             self.invoice_id = invoice.id
         with session_scope(self.app) as database:
-            mark_invoice_paid(database, self.invoice_id)
+            mark_invoice_paid(database, self.invoice_id, transaction_id="PAYMENT-1")
             database.commit()
         self.login()
 
@@ -72,6 +74,8 @@ class DisbursementRouteTests(AppTestCase):
             },
         )
         self.assertEqual(invalid.status_code, 409)
+        self.assertIn(b'value="ACH-1"', invalid.data)
+        self.assertIn(b'value="56.00"', invalid.data)
         created = self.client.post(
             new_path,
             data={
@@ -82,6 +86,21 @@ class DisbursementRouteTests(AppTestCase):
             },
         )
         self.assertEqual(created.status_code, 302)
+        self.authorize_sensitive_action(new_path)
+        duplicate = self.client.post(
+            new_path,
+            data={
+                "date": date.today().isoformat(),
+                "type": "DISBURSEMENT",
+                "transaction_id": "ACH-1",
+                "amount": "1.00",
+                "notes": "Sample note",
+            },
+        )
+        self.assertEqual(duplicate.status_code, 409)
+        self.assertIn(b"Transaction ID is already in use.", duplicate.data)
+        self.assertIn(b'value="ACH-1"', duplicate.data)
+        self.assertIn(b"Sample note", duplicate.data)
         with session_scope(self.app) as database:
             item = database.scalar(select(Disbursement))
             assert item is not None
@@ -273,3 +292,51 @@ class DisbursementRouteTests(AppTestCase):
                     amount_cents=5000,
                     notes=None,
                 )
+
+    def test_transaction_ids_are_required_and_never_reusable(self) -> None:
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, self.seed.entry_id)
+            assert entry is not None
+            entry.transaction_number = "LEGACY-1"
+            database.commit()
+            for reference in (None, "", "  "):
+                with self.subTest(reference=reference):
+                    with self.assertRaisesRegex(InvoiceDomainError, "required"):
+                        require_available_transaction_id(database, reference)
+            for reference in ("LEGACY-1", "PAYMENT-1"):
+                with self.subTest(reference=reference):
+                    with self.assertRaisesRegex(InvoiceDomainError, "already in use"):
+                        require_available_transaction_id(database, reference)
+            item = create_disbursement(
+                database,
+                user_id=self.worker_id,
+                actor_id=self.worker_id,
+                kind="DISBURSEMENT",
+                date_value=date.today(),
+                transaction_id="ACH-1",
+                amount_cents=100,
+                notes=None,
+            )
+            database.commit()
+            for reference in ("ACH-1", "PAYMENT-1", "LEGACY-1"):
+                with self.subTest(reference=reference):
+                    with self.assertRaisesRegex(InvoiceDomainError, "already in use"):
+                        create_disbursement(
+                            database,
+                            user_id=self.worker_id,
+                            actor_id=self.worker_id,
+                            kind="DISBURSEMENT",
+                            date_value=date.today(),
+                            transaction_id=reference,
+                            amount_cents=100,
+                            notes=None,
+                        )
+                    database.rollback()
+            self.assertEqual(item.transaction_id, "ACH-1")
+            with self.assertRaisesRegex(InvoiceDomainError, "already in use"):
+                refund_invoice(database, self.invoice_id, transaction_id="ACH-1")
+            database.rollback()
+            refund_invoice(database, self.invoice_id, transaction_id="REFUND-1")
+            database.commit()
+            with self.assertRaisesRegex(InvoiceDomainError, "already in use"):
+                require_available_transaction_id(database, "REFUND-1")

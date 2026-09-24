@@ -334,6 +334,11 @@ def download(invoice_id: int) -> Response:
             invoice.pdf_bytes,
             invoice.display_status,
             pdf_version=invoice.pdf_version,
+            transaction_id=(
+                invoice.refund_transaction_id
+                if invoice.refunded
+                else invoice.paid_transaction_id
+            ),
             font_regular_path=branding / "fonts/inter-400.ttf",
             font_bold_path=branding / "fonts/inter-700.ttf",
         ),
@@ -377,6 +382,7 @@ def action(invoice_id: int, action: str) -> Any:
         "action": action,
         "action_label": labels[action],
         "reason_required": reason_required,
+        "form_values": {},
         "today": now_utc()
         .replace(tzinfo=ZoneInfo("UTC"))
         .astimezone(ZoneInfo(invoice.timezone_name))
@@ -389,9 +395,13 @@ def action(invoice_id: int, action: str) -> Any:
         reason = correction_reason() if reason_required else None
         prior = {"status": invoice.display_status, "paid_date": invoice.paid_date}
         if action == "paid":
-            invoice = mark_invoice_paid(database, invoice_id)
+            invoice = mark_invoice_paid(
+                database, invoice_id, transaction_id=request.form.get("transaction_id")
+            )
         elif action == "refund":
-            invoice = refund_invoice(database, invoice_id)
+            invoice = refund_invoice(
+                database, invoice_id, transaction_id=request.form.get("transaction_id")
+            )
         elif action == "void":
             invoice = void_invoice(database, invoice_id)
         audit_invoice(
@@ -411,6 +421,7 @@ def action(invoice_id: int, action: str) -> Any:
             else "Invoice data changed or is busy. Please reload and try again.",
             "error",
         )
+        context["form_values"] = request.form
         return render_template("invoice_action.html", **context), 409
     consume_sensitive_action_authorization()
     flash(f"Invoice {invoice.invoice_number}: {labels[action]} completed.", "success")

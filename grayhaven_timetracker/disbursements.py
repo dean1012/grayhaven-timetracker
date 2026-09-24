@@ -11,6 +11,7 @@ from .invoice_summary import worker_snapshot_records
 from .invoices import (
     InvoiceDomainError,
     _immediate_transaction,
+    require_available_transaction_id,
     utc_now,
 )
 from .models import Disbursement, Invoice, InvoiceLine, User
@@ -103,6 +104,8 @@ def create_disbursement(
             raise InvoiceDomainError(
                 "Amount exceeds the worker's pending disbursement."
             )
+        if reference is not None:
+            reference = require_available_transaction_id(database, reference)
         item = Disbursement(
             user_id=user_id,
             date=date_value,

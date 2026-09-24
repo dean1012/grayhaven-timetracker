@@ -848,9 +848,10 @@ To issue an invoice:
 To record or correct invoice state:
 
 1. Open the invoice and complete sensitive-action authorization for the action.
-2. Mark an unpaid invoice as paid when client payment is received.
-3. Refund a paid invoice when needed. Enter a correction reason; worker
-   balances remain available for disbursement.
+2. Mark an unpaid invoice as paid when client payment is received. Enter its
+   transaction ID.
+3. Refund a paid invoice when needed. Enter the refund transaction ID and a
+   correction reason; worker balances remain available for disbursement.
 4. Void an unpaid invoice when its sessions need to return to pending invoice,
    then make time corrections and issue a replacement invoice. Enter the
    requested correction reason.
@@ -858,9 +859,9 @@ To record or correct invoice state:
 
 To record a worker transaction, open **Disbursements**, select the worker, and
 add a dated Disbursement, In-Kind Transaction, or Retained Earnings entry.
-Disbursement and In-Kind Transaction entries require a transaction ID.
-Retained Earnings are available only for LLC Members. Correcting or archiving
-an entry requires sensitive-action authorization and a correction reason.
+Payment, refund, Disbursement, and In-Kind Transaction entries require a
+transaction ID that has never been used in Time Tracker. Retained Earnings are
+available only for LLC Members. Entries are final once recorded.
 
 Archiving a contract stops its active timers and removes it from normal
 selection and client reports. Activating it restores normal availability.

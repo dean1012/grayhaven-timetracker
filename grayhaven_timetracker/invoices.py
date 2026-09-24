@@ -431,6 +431,39 @@ def _immediate_transaction(database: Session) -> Iterator[None]:
         raise
 
 
+def require_available_transaction_id(database: Session, value: str | None) -> str:
+    """Reserve a reference across every recorded financial transaction."""
+    reference = (value or "").strip()
+    if not reference:
+        raise InvoiceDomainError("Transaction ID is required.")
+    if len(reference) > 100:
+        raise InvoiceDomainError("Transaction ID is too long.")
+    occupied = (
+        database.scalar(
+            select(Disbursement.id)
+            .where(Disbursement.transaction_id == reference)
+            .limit(1)
+        )
+        or database.scalar(
+            select(Invoice.id).where(Invoice.paid_transaction_id == reference).limit(1)
+        )
+        or database.scalar(
+            select(Invoice.id)
+            .where(Invoice.refund_transaction_id == reference)
+            .limit(1)
+        )
+        or database.scalar(
+            select(TimeEntry.id)
+            .where(TimeEntry.transaction_number == reference)
+            .execution_options(include_hidden=True)
+            .limit(1)
+        )
+    )
+    if occupied is not None:
+        raise InvoiceDomainError("Transaction ID is already in use.")
+    return reference
+
+
 def create_invoice(
     database: Session,
     *,
@@ -589,7 +622,11 @@ def _claimed_entries(database: Session, invoice: Invoice) -> list[TimeEntry]:
 
 
 def mark_invoice_paid(
-    database: Session, invoice_id: int, paid_date: date | None = None
+    database: Session,
+    invoice_id: int,
+    paid_date: date | None = None,
+    *,
+    transaction_id: str | None = None,
 ) -> Invoice:
     """Record client payment for one unpaid invoice."""
     with _immediate_transaction(database):
@@ -599,6 +636,7 @@ def mark_invoice_paid(
         entries = _claimed_entries(database, invoice)
         if any(entry.billing_status != "invoiced" for entry in entries):
             raise InvoiceDomainError("Invoice entries are not awaiting client payment.")
+        reference = require_available_transaction_id(database, transaction_id)
         local_paid_date = (
             paid_date
             or utc_now()
@@ -616,13 +654,16 @@ def mark_invoice_paid(
             raise InvoiceDomainError("Payment date cannot be in the future.")
         invoice.status = "PAID"
         invoice.paid_date = local_paid_date
+        invoice.paid_transaction_id = reference
         for entry in entries:
             entry.billing_status = "client_paid"
             entry.client_paid_date = local_paid_date
         return invoice
 
 
-def refund_invoice(database: Session, invoice_id: int) -> Invoice:
+def refund_invoice(
+    database: Session, invoice_id: int, *, transaction_id: str | None = None
+) -> Invoice:
     """Mark a paid invoice refunded without changing worker entitlements."""
     with _immediate_transaction(database):
         invoice = _invoice(database, invoice_id)
@@ -633,7 +674,9 @@ def refund_invoice(database: Session, invoice_id: int) -> Invoice:
             for entry in _claimed_entries(database, invoice)
         ):
             raise InvoiceDomainError("Invoice entries have an invalid payment state.")
+        reference = require_available_transaction_id(database, transaction_id)
         invoice.refunded = True
+        invoice.refund_transaction_id = reference
         return invoice
 
 

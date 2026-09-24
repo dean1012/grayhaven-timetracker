@@ -191,6 +191,7 @@ def new(user_id: int) -> Any:
             user=user,
             today=date.today(),
             pending=outstanding_cents(get_session(), user_id),
+            form_values={},
         )
     database = get_session()
     try:
@@ -212,6 +213,7 @@ def new(user_id: int) -> Any:
             user=user,
             today=date.today(),
             pending=outstanding_cents(database, user_id),
+            form_values=request.form,
         ), 409
     consume_sensitive_action_authorization()
     flash("Disbursement saved.", "success")

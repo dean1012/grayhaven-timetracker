@@ -60,6 +60,7 @@ def invoice_pdf_with_status(
     status: str,
     *,
     pdf_version: int,
+    transaction_id: str | None = None,
     font_regular_path: Path | None = None,
     font_bold_path: Path | None = None,
 ) -> bytes:
@@ -100,12 +101,19 @@ def invoice_pdf_with_status(
     if len(heading_positions) != 1:
         raise ValueError("The stored invoice PDF has no unique status heading.")
     del content.operations[heading_positions[0]]
-    _, bold_font = _fonts(font_regular_path, font_bold_path)
+    regular_font, bold_font = _fonts(font_regular_path, font_bold_path)
     overlay_buffer = BytesIO()
     overlay = canvas.Canvas(overlay_buffer, pagesize=LETTER)
     overlay.setFillColor(_STATUS_COLORS[status])
     overlay.setFont(bold_font, 22)
     overlay.drawCentredString(475.2, 720.3, _STATUS_LABELS[status])
+    if transaction_id and status in {"PAID", "REFUNDED"}:
+        reference = f"#{transaction_id}"
+        font_size = min(
+            11, 150 / max(1, pdfmetrics.stringWidth(reference, regular_font, 1))
+        )
+        overlay.setFont(regular_font, max(7, font_size))
+        overlay.drawCentredString(475.2, 701.5, reference)
     overlay.save()
     overlay_buffer.seek(0)
     writer = PdfWriter()

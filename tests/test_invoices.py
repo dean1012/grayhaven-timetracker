@@ -378,7 +378,9 @@ class InvoiceDomainTests(AppTestCase):
             with self.assertRaisesRegex(InvoiceDomainError, "Only a paid invoice"):
                 refund_invoice(database, invoice_id)
         with session_scope(self.app) as database:
-            mark_invoice_paid(database, invoice_id, date(2026, 7, 17))
+            mark_invoice_paid(
+                database, invoice_id, date(2026, 7, 17), transaction_id="PAYMENT-1"
+            )
             database.commit()
         with session_scope(self.app) as database:
             with self.assertRaisesRegex(InvoiceDomainError, "Only an unpaid invoice"):
@@ -386,7 +388,7 @@ class InvoiceDomainTests(AppTestCase):
             with self.assertRaisesRegex(InvoiceDomainError, "Only an unpaid invoice"):
                 void_invoice(database, invoice_id)
         with session_scope(self.app) as database:
-            refunded = refund_invoice(database, invoice_id)
+            refunded = refund_invoice(database, invoice_id, transaction_id="REFUND-1")
             self.assertEqual(refunded.display_status, "REFUNDED")
             database.commit()
         with session_scope(self.app) as database:
@@ -409,7 +411,7 @@ class InvoiceDomainTests(AppTestCase):
             worker = database.get(User, worker_id)
             assert worker is not None
             worker.user_type = "llc_member"
-            mark_invoice_paid(database, invoice_id)
+            mark_invoice_paid(database, invoice_id, transaction_id="PAYMENT-1")
             database.commit()
         with session_scope(self.app) as database:
             self.assertEqual(outstanding_cents(database, worker_id), 5500)
@@ -564,6 +566,7 @@ class InvoiceDomainTests(AppTestCase):
                     database,
                     invoice_id,
                     datetime.now(UTC).date() + timedelta(days=1),
+                    transaction_id="PAYMENT-FUTURE",
                 )
         with session_scope(self.app) as database:
             with self.assertRaisesRegex(InvoiceDomainError, "Only a paid invoice"):
@@ -878,6 +881,42 @@ class InvoiceRouteTests(AppTestCase):
         shutil.copyfile(bold, fonts / "inter-700.ttf")
         self.app.config["BRANDING_PATH"] = str(branding)
 
+    def test_payment_reference_errors_preserve_form_values(self) -> None:
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, self.seed.entry_id)
+            assert entry is not None and entry.stopped_at is not None
+            proposed = preview_invoice(
+                database,
+                contract_id=self.seed.contract_id,
+                range_start_utc=entry.started_at,
+                range_end_utc=entry.stopped_at + timedelta(seconds=1),
+                timezone_name="UTC",
+            )
+            invoice = create_invoice(
+                database,
+                contract_id=self.seed.contract_id,
+                range_start_utc=proposed.range_start_utc,
+                range_end_utc=proposed.range_end_utc,
+                timezone_name="UTC",
+                expected_fingerprint=proposed.fingerprint,
+            )
+            database.commit()
+            invoice_id = PublicInvoiceId(invoice.id, invoice.invoice_number)
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, self.seed.entry_id)
+            assert entry is not None
+            entry.transaction_number = "ALREADY-USED"
+        self.login()
+        path = f"/invoices/{invoice_id}/paid"
+        self.authorize_sensitive_action(path)
+        missing = self.client.post(path, data={"transaction_id": " "})
+        self.assertEqual(missing.status_code, 409)
+        self.assertIn(b"Transaction ID is required.", missing.data)
+        duplicate = self.client.post(path, data={"transaction_id": "ALREADY-USED"})
+        self.assertEqual(duplicate.status_code, 409)
+        self.assertIn(b"Transaction ID is already in use.", duplicate.data)
+        self.assertIn(b'value="ALREADY-USED"', duplicate.data)
+
     def test_standard_user_cannot_access_invoice_routes(self) -> None:
         user = self.create_user()
         browser = self.app.test_client()
@@ -976,13 +1015,14 @@ class InvoiceRouteTests(AppTestCase):
 
         self.assertIn("/reauthenticate?", self.client.get(paid_path).location)
         self.authorize_sensitive_action(paid_path)
-        paid = self.client.post(paid_path)
+        paid = self.client.post(paid_path, data={"transaction_id": "PAYMENT-1"})
         self.assertEqual(paid.status_code, 302)
         with session_scope(self.app) as database:
             invoice = database.get(Invoice, invoice_id)
             entry = database.get(TimeEntry, self.seed.entry_id)
             assert invoice is not None and entry is not None
             self.assertEqual(invoice.status, "PAID")
+            self.assertEqual(invoice.paid_transaction_id, "PAYMENT-1")
             self.assertEqual(
                 (invoice.total_cents, invoice.worker_summary_json, invoice.pdf_version),
                 billing_snapshot,
@@ -996,9 +1036,13 @@ class InvoiceRouteTests(AppTestCase):
         self.assertEqual(self.client.get(paid_path).status_code, 409)
         paid_pdf = self.client.get(f"/invoices/{invoice_id}/download").data
         self.assertNotEqual(paid_pdf, original_pdf)
+        self.assertIn(
+            "#PAYMENT-1", PdfReader(BytesIO(paid_pdf)).pages[0].extract_text()
+        )
 
         detail = self.client.get(f"/invoices/{invoice_id}")
         self.assertEqual(detail.status_code, 200)
+        self.assertIn(b"#PAYMENT-1", detail.data)
         self.assertIn(b"Admin Operator", detail.data)
         self.assertEqual(self.client.get("/invoices/9999").status_code, 404)
         self.assertEqual(self.client.get("/invoices/not-an-action").status_code, 404)
@@ -1019,7 +1063,11 @@ class InvoiceRouteTests(AppTestCase):
         self.assertEqual(self.client.post(refund_path).status_code, 409)
         self.assertEqual(
             self.client.post(
-                refund_path, data={"correction_reason": "Client refund recorded"}
+                refund_path,
+                data={
+                    "correction_reason": "Client refund recorded",
+                    "transaction_id": "REFUND-1",
+                },
             ).status_code,
             302,
         )
@@ -1027,6 +1075,7 @@ class InvoiceRouteTests(AppTestCase):
             invoice = database.get(Invoice, invoice_id)
             assert invoice is not None
             self.assertEqual(invoice.display_status, "REFUNDED")
+            self.assertEqual(invoice.refund_transaction_id, "REFUND-1")
             self.assertTrue(invoice.pdf_bytes.startswith(b"%PDF-"))
             self.assertEqual(
                 (invoice.total_cents, invoice.worker_summary_json, invoice.pdf_version),
@@ -1035,6 +1084,9 @@ class InvoiceRouteTests(AppTestCase):
             self.assertEqual(invoice.pdf_bytes, original_pdf)
         refunded_pdf = self.client.get(f"/invoices/{invoice_id}/download").data
         self.assertNotEqual(refunded_pdf, paid_pdf)
+        self.assertIn(
+            "#REFUND-1", PdfReader(BytesIO(refunded_pdf)).pages[0].extract_text()
+        )
         self.assertEqual(self.client.get(refund_path).status_code, 409)
         self.assertEqual(self.client.get(paid_path).status_code, 409)
         self.assertEqual(self.client.get("/invoices?page=invalid").status_code, 400)

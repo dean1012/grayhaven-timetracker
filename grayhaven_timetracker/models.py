@@ -384,6 +384,10 @@ class Invoice(Base):
     total_cents: Mapped[int] = mapped_column(Integer)
     due_date: Mapped[date] = mapped_column()
     paid_date: Mapped[date | None] = mapped_column(nullable=True)
+    paid_transaction_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    refund_transaction_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
     refunded: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     pdf_version: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
     worker_summary_json: Mapped[str] = mapped_column(

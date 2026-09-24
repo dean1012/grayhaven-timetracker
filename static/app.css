@@ -19,7 +19,9 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .disbursement-balance { grid-template-columns: minmax(0, 1fr); }
 .paid-disbursement-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: .5rem; }
 .paid-disbursement-heading span { margin-bottom: .4rem; }
-.paid-disbursement-heading .icon-button { flex: 0 0 auto; color: var(--primary-accent); }
+.paid-disbursement-heading .icon-button { flex: 0 0 auto; color: var(--primary-accent); transform: translateY(-2px); }
+.invoice-status-group { display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; gap: .15rem; }
+.invoice-status-reference { font-size: .875rem; font-weight: 400; line-height: 1.2; overflow-wrap: anywhere; }
 .invoice-title { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; }
 #invoice-status { font-size: .65em; line-height: 1; padding: .25em .5em; }
 .display-datetime { display: inline-block; white-space: nowrap; vertical-align: middle; }
