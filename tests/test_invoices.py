@@ -227,6 +227,25 @@ class InvoiceDomainTests(AppTestCase):
                 self.assertEqual(text.splitlines().count(name), 2)
                 self.assertIn("PAID", text.splitlines())
 
+    def test_long_transaction_reference_wraps_in_pdf(self) -> None:
+        invoice_id = self.create_test_invoice()
+        with session_scope(self.app) as database:
+            invoice = database.get(Invoice, invoice_id)
+            assert invoice is not None
+            source = invoice.pdf_bytes
+        rendered = invoice_pdf_with_status(
+            source, "PAID", pdf_version=2, transaction_id="W" * 100
+        )
+        first_page = PdfReader(BytesIO(rendered)).pages[0]
+        lines = (first_page.extract_text() or "").splitlines()
+        reference_lines = [
+            line.strip()
+            for line in lines
+            if line.strip().startswith("#W") or set(line.strip()) == {"W"}
+        ]
+        self.assertLessEqual(len(reference_lines), 3)
+        self.assertEqual("".join(reference_lines), "#" + "W" * 100)
+
     def test_archived_clients_are_not_offered_for_invoice_generation(self) -> None:
         with session_scope(self.app) as database:
             client = database.get(Client, self.seed.client_id)

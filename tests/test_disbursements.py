@@ -303,6 +303,8 @@ class DisbursementRouteTests(AppTestCase):
                 with self.subTest(reference=reference):
                     with self.assertRaisesRegex(InvoiceDomainError, "required"):
                         require_available_transaction_id(database, reference)
+            with self.assertRaisesRegex(InvoiceDomainError, "invalid characters"):
+                require_available_transaction_id(database, "bad\nreference")
             for reference in ("LEGACY-1", "PAYMENT-1"):
                 with self.subTest(reference=reference):
                     with self.assertRaisesRegex(InvoiceDomainError, "already in use"):

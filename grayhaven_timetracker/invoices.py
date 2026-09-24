@@ -438,6 +438,8 @@ def require_available_transaction_id(database: Session, value: str | None) -> st
         raise InvoiceDomainError("Transaction ID is required.")
     if len(reference) > 100:
         raise InvoiceDomainError("Transaction ID is too long.")
+    if any(ord(character) < 32 or ord(character) == 127 for character in reference):
+        raise InvoiceDomainError("Transaction ID contains invalid characters.")
     occupied = (
         database.scalar(
             select(Disbursement.id)
