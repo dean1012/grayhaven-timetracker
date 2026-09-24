@@ -60,6 +60,21 @@ class DisbursementRouteTests(AppTestCase):
         self.assertEqual(
             self.client.get(f"/disbursements/{self.worker_id}").status_code, 200
         )
+        detail_path = f"/disbursements/{self.worker_id}"
+        initial = self.client.get(
+            detail_path, headers={"X-Grayhaven-Live-Refresh": "1"}
+        )
+        self.assertIn(b'aria-label="Add Disbursement"', initial.data)
+        self.assertEqual(
+            self.client.get(
+                detail_path,
+                headers={
+                    "X-Grayhaven-Live-Refresh": "1",
+                    "If-None-Match": initial.headers["ETag"],
+                },
+            ).status_code,
+            304,
+        )
         self.assertEqual(self.client.get("/my/disbursements").status_code, 200)
 
         new_path = f"/disbursements/{self.worker_id}/new"
@@ -112,6 +127,27 @@ class DisbursementRouteTests(AppTestCase):
                     select(AuditEvent).where(AuditEvent.event == "disbursement_created")
                 )
             )
+
+        self.authorize_sensitive_action(new_path)
+        completed = self.client.post(
+            new_path,
+            data={
+                "date": date.today().isoformat(),
+                "type": "DISBURSEMENT",
+                "transaction_id": "ACH-2",
+                "amount": "45.00",
+            },
+        )
+        self.assertEqual(completed.status_code, 302)
+        refreshed = self.client.get(
+            detail_path,
+            headers={
+                "X-Grayhaven-Live-Refresh": "1",
+                "If-None-Match": initial.headers["ETag"],
+            },
+        )
+        self.assertEqual(refreshed.status_code, 200)
+        self.assertIn(b'aria-label="Add Disbursement unavailable"', refreshed.data)
 
         self.assertIn(b"ACH-1", self.client.get("/my/disbursements").data)
         for action in ("edit", "archive", "unarchive", "delete"):

@@ -193,10 +193,10 @@ invoice. A paid invoice can be marked refunded without changing the worker's
 earned balance. Refunds and voids are permanent and require a correction reason
 and sensitive-action authorization.
 
-Invoice PDFs are stored when generated. Downloads overlay the current status
-and its transaction ID on the stored PDF so later calculation changes do not
-alter issued invoices. Status updates render through the invoice's saved PDF
-layout version.
+Invoice PDFs are stored when generated. Downloads overlay the current status,
+its date, and any transaction ID on the stored PDF so later calculation changes
+do not alter issued invoices. Status updates render through the invoice's saved
+PDF layout version.
 
 The invoice detail page and PDF present the billing contact, contract rate,
 rounded billable work by worker and day, and exact session details. Daily

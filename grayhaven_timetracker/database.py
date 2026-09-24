@@ -15,7 +15,7 @@ from sqlcipher3 import dbapi2 as sqlcipher
 from .models import Base, Client, Contract, Subtask, Task, TimeEntry
 
 SQLITE_HEADER = b"SQLite format 3\x00"
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 2
 SOFT_DELETABLE_MODELS = (Client, Contract, Task, Subtask, TimeEntry)
 
@@ -453,12 +453,29 @@ def migrate_schema_6_to_7(connection: Any) -> None:  # pragma: no cover
     )
 
 
+def migrate_schema_7_to_8(connection: Any) -> None:  # pragma: no cover
+    """Record status dates separately from the original invoice due date."""
+    columns = set(
+        connection.execute(text("SELECT name FROM pragma_table_info('invoice')"))
+        .scalars()
+        .all()
+    )
+    additions = ("voided_date" in columns, "refunded_date" in columns)
+    if all(additions):
+        return
+    if any(additions):
+        raise DatabaseError("Schema 7 contains a partial status-date migration")
+    connection.execute(text("ALTER TABLE invoice ADD COLUMN voided_date DATE"))
+    connection.execute(text("ALTER TABLE invoice ADD COLUMN refunded_date DATE"))
+
+
 MIGRATIONS: dict[int, Callable[[Any], None]] = {
     2: migrate_schema_2_to_3,
     3: migrate_schema_3_to_4,
     4: migrate_schema_4_to_5,
     5: migrate_schema_5_to_6,
     6: migrate_schema_6_to_7,
+    7: migrate_schema_7_to_8,
 }
 
 

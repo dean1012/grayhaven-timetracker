@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from html import escape
 from io import BytesIO
@@ -16,7 +17,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from pypdf import PdfReader, PdfWriter
-from pypdf.generic import ContentStream
+from pypdf.generic import ContentStream, TextStringObject
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import LETTER
@@ -53,6 +54,7 @@ _STATUS_COLORS = {
     "VOID": colors.HexColor("#AAB2BF"),
     "REFUNDED": colors.HexColor("#AAB2BF"),
 }
+_STATUS_DATE_LABELS = {"PAID": "Paid", "VOID": "Voided", "REFUNDED": "Refunded"}
 
 
 def invoice_pdf_with_status(
@@ -60,6 +62,7 @@ def invoice_pdf_with_status(
     status: str,
     *,
     pdf_version: int,
+    status_date: date | None = None,
     transaction_id: str | None = None,
     font_regular_path: Path | None = None,
     font_bold_path: Path | None = None,
@@ -69,6 +72,8 @@ def invoice_pdf_with_status(
         return pdf_bytes
     if status not in _STATUS_LABELS or pdf_version != 2:
         raise ValueError("Unsupported invoice PDF status or version.")
+    if status_date is None:
+        raise ValueError("The invoice status date is unavailable.")
     reader = PdfReader(BytesIO(pdf_bytes))
     if not reader.pages:
         raise ValueError("The stored invoice PDF has no pages.")
@@ -101,6 +106,33 @@ def invoice_pdf_with_status(
     if len(heading_positions) != 1:
         raise ValueError("The stored invoice PDF has no unique status heading.")
     del content.operations[heading_positions[0]]
+    due_positions = [
+        index
+        for index, (operands, operator) in enumerate(content.operations)
+        if operator == b"Tj" and len(operands) == 1 and str(operands[0]) == "Due"
+    ]
+    if len(due_positions) != 1:
+        raise ValueError("The stored invoice PDF has no unique due date heading.")
+    due_date_position = next(
+        (
+            index
+            for index in range(due_positions[0] + 1, len(content.operations))
+            if content.operations[index][1] == b"Tj"
+        ),
+        None,
+    )
+    if due_date_position is None or not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}", str(content.operations[due_date_position][0][0])
+    ):
+        raise ValueError("The stored invoice PDF has no recognizable due date.")
+    content.operations[due_positions[0]] = (
+        [TextStringObject(_STATUS_DATE_LABELS[status])],
+        b"Tj",
+    )
+    content.operations[due_date_position] = (
+        [TextStringObject(status_date.isoformat())],
+        b"Tj",
+    )
     regular_font, bold_font = _fonts(font_regular_path, font_bold_path)
     overlay_buffer = BytesIO()
     overlay = canvas.Canvas(overlay_buffer, pagesize=LETTER)

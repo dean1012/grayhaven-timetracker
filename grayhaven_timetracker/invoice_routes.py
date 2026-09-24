@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -334,6 +334,13 @@ def download(invoice_id: int) -> Response:
             invoice.pdf_bytes,
             invoice.display_status,
             pdf_version=invoice.pdf_version,
+            status_date=(
+                invoice.refunded_date
+                if invoice.refunded
+                else invoice.paid_date
+                if invoice.status == "PAID"
+                else invoice.voided_date
+            ),
             transaction_id=(
                 invoice.refund_transaction_id
                 if invoice.refunded
@@ -394,13 +401,25 @@ def action(invoice_id: int, action: str) -> Any:
     try:
         reason = correction_reason() if reason_required else None
         prior = {"status": invoice.display_status, "paid_date": invoice.paid_date}
+        status_date = None
+        if action in {"paid", "refund"}:
+            try:
+                status_date = date.fromisoformat(request.form.get("status_date", ""))
+            except ValueError as exc:
+                raise ValueError("Enter a valid date.") from exc
         if action == "paid":
             invoice = mark_invoice_paid(
-                database, invoice_id, transaction_id=request.form.get("transaction_id")
+                database,
+                invoice_id,
+                paid_date=status_date,
+                transaction_id=request.form.get("transaction_id"),
             )
         elif action == "refund":
             invoice = refund_invoice(
-                database, invoice_id, transaction_id=request.form.get("transaction_id")
+                database,
+                invoice_id,
+                transaction_id=request.form.get("transaction_id"),
+                refunded_date=status_date,
             )
         elif action == "void":
             invoice = void_invoice(database, invoice_id)
@@ -411,6 +430,8 @@ def action(invoice_id: int, action: str) -> Any:
             previous=prior,
             status=invoice.display_status,
             paid_date=invoice.paid_date,
+            voided_date=invoice.voided_date,
+            refunded_date=invoice.refunded_date,
         )
         database.commit()
     except (ValueError, IntegrityError, OperationalError) as exc:

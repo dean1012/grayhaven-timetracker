@@ -664,7 +664,11 @@ def mark_invoice_paid(
 
 
 def refund_invoice(
-    database: Session, invoice_id: int, *, transaction_id: str | None = None
+    database: Session,
+    invoice_id: int,
+    *,
+    transaction_id: str | None = None,
+    refunded_date: date | None = None,
 ) -> Invoice:
     """Mark a paid invoice refunded without changing worker entitlements."""
     with _immediate_transaction(database):
@@ -677,8 +681,24 @@ def refund_invoice(
         ):
             raise InvoiceDomainError("Invoice entries have an invalid payment state.")
         reference = require_available_transaction_id(database, transaction_id)
+        local_refunded_date = (
+            refunded_date
+            or utc_now()
+            .replace(tzinfo=UTC)
+            .astimezone(_timezone(invoice.timezone_name))
+            .date()
+        )
+        today = (
+            utc_now()
+            .replace(tzinfo=UTC)
+            .astimezone(_timezone(invoice.timezone_name))
+            .date()
+        )
+        if local_refunded_date > today:
+            raise InvoiceDomainError("Refund date cannot be in the future.")
         invoice.refunded = True
         invoice.refund_transaction_id = reference
+        invoice.refunded_date = local_refunded_date
         return invoice
 
 
@@ -693,6 +713,12 @@ def void_invoice(database: Session, invoice_id: int) -> Invoice:
             raise InvoiceDomainError("Invoice entries have an invalid payment state.")
         invoice.status = "VOID"
         invoice.paid_date = None
+        invoice.voided_date = (
+            utc_now()
+            .replace(tzinfo=UTC)
+            .astimezone(_timezone(invoice.timezone_name))
+            .date()
+        )
         for entry in entries:
             entry.billing_status = "pending_invoice"
             entry.invoice_id = None

@@ -384,6 +384,8 @@ class Invoice(Base):
     total_cents: Mapped[int] = mapped_column(Integer)
     due_date: Mapped[date] = mapped_column()
     paid_date: Mapped[date | None] = mapped_column(nullable=True)
+    voided_date: Mapped[date | None] = mapped_column(nullable=True)
+    refunded_date: Mapped[date | None] = mapped_column(nullable=True)
     paid_transaction_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     refund_transaction_id: Mapped[str | None] = mapped_column(
         String(100), nullable=True

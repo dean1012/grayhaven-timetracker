@@ -34,6 +34,7 @@ from .permissions import (
 from .routes import (
     consume_sensitive_action_authorization,
     require_sensitive_action_authorization,
+    unchanged_live_page_response,
 )
 
 disbursement_pages = Blueprint("disbursements", __name__)
@@ -142,6 +143,8 @@ def my_history() -> Any:
 def _history(user_id: int, *, admin: bool) -> Any:
     database = get_session()
     user = _user(user_id)
+    if response := unchanged_live_page_response():
+        return response
     page = _page()
     query = select(Disbursement).where(
         Disbursement.user_id == user_id, Disbursement.archived_at.is_(None)
@@ -173,6 +176,7 @@ def _history(user_id: int, *, admin: bool) -> Any:
         page=page,
         page_count=page_count,
         pending=outstanding_cents(database, user_id) if admin else None,
+        live_page=True,
     )
 
 

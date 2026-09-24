@@ -3184,6 +3184,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         redirected = self.client.get(edit_url)
         self.assertEqual(redirected.status_code, 302)
         self.assertIn("original_contract_id", redirected.location)
+        self.assertIn("/reauthenticate?", self.client.get(redirected.location).location)
         with session_scope(self.app) as database:
             second = Contract(
                 client_id=self.seed.client_id,
@@ -3223,6 +3224,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         with session_scope(self.app) as database:
             database.delete(database.get(TimeEntry, active_id))
+        self.authorize_sensitive_action(edit_url)
         invalid_update = self.client.post(
             f"{edit_url}?original_contract_id={self.seed.contract_id}",
             data={
@@ -4191,11 +4193,25 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertEqual(
             user_client.post(f"/sessions/{admin_entry_id}/delete").status_code, 403
         )
+        edit_url = f"/sessions/{self.seed.entry_id}/edit"
+        canonical_edit = user_client.get(edit_url)
+        self.assertEqual(canonical_edit.status_code, 302)
+        self.assertIn(
+            "/reauthenticate?", user_client.get(canonical_edit.location).location
+        )
+        denied_edit = user_client.post(
+            f"{edit_url}?original_contract_id={self.seed.contract_id}",
+            data={"correction_reason": "Attempt without reauthentication"},
+        )
+        self.assertIn("/reauthenticate?", denied_edit.location)
+        self.authorize_sensitive_action(
+            edit_url,
+            client=user_client,
+            password=self.USER_PASSWORD,
+            totp_secret=self.USER_SECRET,
+        )
         edited = user_client.post(
-            (
-                f"/sessions/{self.seed.entry_id}/edit?"
-                f"original_contract_id={self.seed.contract_id}"
-            ),
+            (f"{edit_url}?original_contract_id={self.seed.contract_id}"),
             data={
                 "client_id": str(self.seed.client_id),
                 "contract_id": str(self.seed.contract_id),
@@ -4388,6 +4404,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         edit_redirect = self.client.get(f"/sessions/{self.seed.entry_id}/edit")
         self.assertEqual(edit_redirect.status_code, 302)
+        self.authorize_sensitive_action(f"/sessions/{self.seed.entry_id}/edit")
         self.assertEqual(
             self.client.get(edit_redirect.location).status_code,
             200,
@@ -4669,6 +4686,12 @@ class ReviewRegressionTests(AppTestCase):
         self.assertIn(b'aria-label="Update Session"', listing.data)
         self.assertIn(b'aria-label="Delete Session"', listing.data)
         self.assertNotIn(b"Update Payment Status", listing.data)
+        self.authorize_sensitive_action(
+            f"/sessions/{seed.entry_id}/edit",
+            client=user_client,
+            password="Standard-User-Test-Password-0001!",
+            totp_secret="",
+        )
         form = user_client.get(edit_url)
         self.assertEqual(form.status_code, 200)
         self.assertNotIn(b'name="user_id"', form.data)
@@ -4716,6 +4739,7 @@ class ReviewRegressionTests(AppTestCase):
             self.assertEqual(entry.task_id, seed.other_task_id)
 
         self.login()
+        self.authorize_sensitive_action(f"/sessions/{seed.entry_id}/edit")
         invalid_admin_owner = self.client.post(
             edit_url,
             data={

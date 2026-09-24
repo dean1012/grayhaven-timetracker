@@ -3464,6 +3464,11 @@ def edit_time_entry(entry_id: int) -> Any:
                 "main.contract_sessions", notice, contract_id=original_contract_id
             )
         return stale_resource_redirect("main.dashboard", notice)
+    actor = cast(User, current_user())
+    if response := require_sensitive_action_authorization(
+        actor, url_for("main.contract_sessions", contract_id=original_contract_id)
+    ):
+        return response
     client_item = contract_item.client
     can_reassign = can(TIME_ENTRY_EDIT_ANY)
     previous_details = audit_time_entry_details(entry)
@@ -3584,7 +3589,7 @@ def edit_time_entry(entry_id: int) -> Any:
         abort(409, "This time overlaps another session for the user.")
     audit(
         "time_entry_updated",
-        actor_id=cast(User, current_user()).id,
+        actor_id=actor.id,
         **audit_time_entry_details(entry),
         changes=audit_changes(
             client=(
@@ -3625,6 +3630,7 @@ def edit_time_entry(entry_id: int) -> Any:
         ),
         correction_reason=reason,
     )
+    consume_sensitive_action_authorization()
     flash("Time session updated.", "success")
     return redirect(url_for("main.contract_sessions", contract_id=original_contract_id))
 
