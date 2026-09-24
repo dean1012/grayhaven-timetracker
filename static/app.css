@@ -90,11 +90,10 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .error-actions { margin-top: 1rem; }
 .client-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
 .client-card { min-height: 290px; padding: 1.8rem; }
-.card-heading, .report-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-.card-heading > div { min-width: 0; }
-.card-heading > i { color: var(--primary-accent); font-size: 2.2rem; }
-.card-heading h2 { font-size: 1.45rem; }
-.card-heading h2 .external-link { min-width: 0; max-width: 100%; }
+.report-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.client-card .panel-heading > div { min-width: 0; }
+.client-card .panel-heading .content-card-icon { margin-bottom: 0; }
+.client-card .panel-heading h2 .external-link { min-width: 0; max-width: 100%; }
 .contact-line { display: flex; align-items: center; gap: .45rem; min-width: 0; margin: 1.3rem 0; color: var(--cool-grey); font-size: .87rem; }
 .client-contact-name, .client-contact-email { flex: 0 1 auto; min-width: 0; }
 .contact-line i { color: var(--primary-accent); }

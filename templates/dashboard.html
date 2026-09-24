@@ -10,7 +10,7 @@
 <div class="client-grid">
 {% for client in clients %}
   <article class="client-card panel">
-    <div class="card-heading"><div><p class="eyebrow">CLIENT</p><h2><a class="external-link" href="{{ url_for('main.client', client_id=client.id) }}" title="{{ client.name }}"><span class="truncate-text">{{ client.name }}</span></a></h2></div><i class="fa-solid fa-building" aria-hidden="true"></i></div>
+    <div class="panel-heading"><div><p class="eyebrow">CLIENT</p><h2><a class="external-link" href="{{ url_for('main.client', client_id=client.id) }}" title="{{ client.name }}"><span class="truncate-text">{{ client.name }}</span></a></h2></div><i class="content-card-icon fa-solid fa-building" aria-hidden="true"></i></div>
     <div class="contract-list">
       {% for contract in client.contracts %}
       <div class="contract-row contract-row-summary">
