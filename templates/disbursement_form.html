@@ -8,7 +8,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>Date<input type="date" name="date" value="{{ form_values.get('date', today.isoformat()) }}" required></label>
     <label>Type<select name="type" data-disbursement-type required><option value="DISBURSEMENT" {{ 'selected' if form_values.get('type', 'DISBURSEMENT') == 'DISBURSEMENT' }}>Disbursement</option>{% if user.user_type == 'llc_member' %}<option value="IN_KIND" {{ 'selected' if form_values.get('type') == 'IN_KIND' }}>In-Kind Transaction</option><option value="RETAINED_EARNINGS" {{ 'selected' if form_values.get('type') == 'RETAINED_EARNINGS' }}>Retained Earnings</option>{% endif %}</select></label>
-    <label data-disbursement-reference>Transaction ID<input name="transaction_id" value="{{ form_values.get('transaction_id', '') }}" maxlength="100" required autocomplete="off" data-protonpass-ignore="true"></label>
+    <label data-disbursement-reference>Transaction ID<input name="transaction_id" value="{{ form_values.get('transaction_id', '') }}" maxlength="20" required autocomplete="off" data-protonpass-ignore="true"></label>
     <label>Amount<span class="money-input"><span class="money-prefix" aria-hidden="true">$</span><input type="number" name="amount" value="{{ form_values.get('amount', '') }}" min="0.01" step="0.01" required><span class="money-suffix">of {{ disbursement_money(pending) }}</span></span></label>
     <label>Notes<textarea name="notes" rows="4" maxlength="2000">{{ form_values.get('notes', '') }}</textarea></label>
     <div class="form-actions"><a class="button button-secondary" href="{{ url_for('disbursements.detail', user_id=user.id) }}">Cancel</a><button class="button button-primary" type="submit">Confirm</button></div>

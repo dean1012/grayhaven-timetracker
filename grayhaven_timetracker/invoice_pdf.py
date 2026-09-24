@@ -109,31 +109,11 @@ def invoice_pdf_with_status(
     overlay.drawCentredString(475.2, 720.3, _STATUS_LABELS[status])
     if transaction_id and status in {"PAID", "REFUNDED"}:
         reference = f"#{transaction_id}"
-        width_at_one = pdfmetrics.stringWidth(reference, regular_font, 1)
-        single_line_size = min(11, 190 / width_at_one)
-        if single_line_size >= 7:
-            overlay.setFont(regular_font, single_line_size)
-            overlay.drawCentredString(475.2, 701.5, reference)
-        else:
-            font_size = min(8, 570 / width_at_one)
-            while True:
-                lines = [""]
-                for character in reference:
-                    candidate = lines[-1] + character
-                    if (
-                        lines[-1]
-                        and pdfmetrics.stringWidth(candidate, regular_font, font_size)
-                        > 190
-                    ):
-                        lines.append(character)
-                    else:
-                        lines[-1] = candidate
-                if len(lines) <= 3:
-                    break
-                font_size *= 0.95
-            overlay.setFont(regular_font, font_size)
-            for index, line in enumerate(lines):
-                overlay.drawCentredString(475.2, 713.5 - index * 7.5, line)
+        reference_size = min(
+            11, 190 / pdfmetrics.stringWidth(reference, regular_font, 1)
+        )
+        overlay.setFont(regular_font, reference_size)
+        overlay.drawCentredString(475.2, 701.5, reference)
     overlay.save()
     overlay_buffer.seek(0)
     writer = PdfWriter()

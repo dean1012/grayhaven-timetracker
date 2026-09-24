@@ -69,7 +69,7 @@ def _validated_values(
             raise InvoiceDomainError("Retained Earnings cannot have a transaction ID.")
     elif reference is None:
         raise InvoiceDomainError("Transaction ID is required.")
-    if reference is not None and len(reference) > 100:
+    if reference is not None and len(reference) > 20:
         raise InvoiceDomainError("Transaction ID is too long.")
     normalized_notes = (notes or "").strip() or None
     if normalized_notes is not None and len(normalized_notes) > 2000:

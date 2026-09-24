@@ -247,7 +247,7 @@ class DisbursementRouteTests(AppTestCase):
                 {"amount_cents": 0},
                 {"date_value": date.today() + timedelta(days=1)},
                 {"transaction_id": None},
-                {"transaction_id": "A" * 101},
+                {"transaction_id": "A" * 21},
                 {"notes": "N" * 2001},
                 {"kind": "RETAINED_EARNINGS", "transaction_id": "ACH-1"},
             )
@@ -305,6 +305,11 @@ class DisbursementRouteTests(AppTestCase):
                         require_available_transaction_id(database, reference)
             with self.assertRaisesRegex(InvoiceDomainError, "invalid characters"):
                 require_available_transaction_id(database, "bad\nreference")
+            with self.assertRaisesRegex(InvoiceDomainError, "too long"):
+                require_available_transaction_id(database, "W" * 21)
+            self.assertEqual(
+                require_available_transaction_id(database, "W" * 20), "W" * 20
+            )
             for reference in ("LEGACY-1", "PAYMENT-1"):
                 with self.subTest(reference=reference):
                     with self.assertRaisesRegex(InvoiceDomainError, "already in use"):

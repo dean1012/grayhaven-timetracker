@@ -860,8 +860,9 @@ To record or correct invoice state:
 To record a worker transaction, open **Disbursements**, select the worker, and
 add a dated Disbursement, In-Kind Transaction, or Retained Earnings entry.
 Payment, refund, Disbursement, and In-Kind Transaction entries require a
-transaction ID that has never been used in Time Tracker. Retained Earnings are
-available only for LLC Members. Entries are final once recorded.
+transaction ID of up to 20 characters that has never been used in Time Tracker.
+Retained Earnings are available only for LLC Members. Entries are final once
+recorded.
 
 Archiving a contract stops its active timers and removes it from normal
 selection and client reports. Activating it restores normal availability.
