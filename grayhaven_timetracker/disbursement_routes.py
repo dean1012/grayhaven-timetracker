@@ -74,12 +74,12 @@ def _amount_cents(raw: str) -> int:
     try:
         value = Decimal(raw)
     except (InvalidOperation, ValueError) as exc:
-        raise ValueError("Enter a valid amount") from exc
+        raise ValueError("Enter a valid amount.") from exc
     if not value.is_finite() or value <= 0 or value != value.quantize(Decimal("0.01")):
-        raise ValueError("Amount must be positive with no more than two decimals")
+        raise ValueError("Amount must be positive with no more than two decimals.")
     cents = int(value * 100)
     if cents > 1_000_000_000:
-        raise ValueError("Amount is too large")
+        raise ValueError("Amount is too large.")
     return cents
 
 
@@ -87,7 +87,7 @@ def _form_values() -> dict[str, Any]:
     try:
         date_value = date.fromisoformat(request.form.get("date", ""))
     except ValueError as exc:
-        raise ValueError("Enter a valid date") from exc
+        raise ValueError("Enter a valid date.") from exc
     return {
         "kind": request.form.get("type", ""),
         "date_value": date_value,

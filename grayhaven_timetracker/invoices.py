@@ -87,14 +87,14 @@ def _utc_timestamp(value: datetime, label: str) -> datetime:
     try:
         return value.astimezone(UTC).replace(tzinfo=None)
     except (OverflowError, ValueError) as exc:
-        raise InvoiceDomainError(f"{label} must be a valid UTC timestamp") from exc
+        raise InvoiceDomainError(f"{label} must be a valid UTC timestamp.") from exc
 
 
 def _timezone(name: str) -> ZoneInfo:
     try:
         return ZoneInfo(name)
     except (ZoneInfoNotFoundError, ValueError) as exc:
-        raise InvoiceDomainError("The invoice timezone is invalid") from exc
+        raise InvoiceDomainError("The invoice timezone is invalid.") from exc
 
 
 def _total_cents(billable_hours: Decimal, hourly_rate_cents: int) -> int:
@@ -141,7 +141,7 @@ def migrate_invoice_snapshots(
         select(User.id).where(User.role == "admin").order_by(User.id).limit(1)
     )
     if admin_id is None:
-        raise InvoiceDomainError("Invoice migration requires an administrator")
+        raise InvoiceDomainError("Invoice migration requires an administrator.")
     for invoice in legacy:
         timezone = _timezone(invoice.timezone_name)
         invoice.worker_summary_json = build_worker_summary_json(
@@ -164,18 +164,18 @@ def migrate_invoice_snapshots(
                 continue
             if len(disbursed) != len(entries) or len(entries) != len(lines):
                 raise InvoiceDomainError(
-                    "Legacy disbursement cannot be migrated automatically"
+                    "Legacy disbursement cannot be migrated automatically."
                 )
             dates = {entry.disbursement_date for entry in disbursed}
             references = {entry.transaction_number for entry in disbursed}
             if len(dates) != 1 or len(references) != 1:
                 raise InvoiceDomainError(
-                    "Legacy disbursement has inconsistent transaction details"
+                    "Legacy disbursement has inconsistent transaction details."
                 )
             disbursement_date = dates.pop()
             reference = references.pop()
             if disbursement_date is None or not reference:
-                raise InvoiceDomainError("Legacy disbursement details are incomplete")
+                raise InvoiceDomainError("Legacy disbursement details are incomplete.")
             amount = invoice_total_cents(lines, timezone, invoice.hourly_rate_cents)
             if amount:
                 database.add(
@@ -233,7 +233,7 @@ def _observed_holidays(year: int) -> set[date]:
 def calculate_due_date(issued_date: date, payment_terms_days: int) -> date:
     """Apply calendar-day terms, then move forward over weekends and holidays."""
     if payment_terms_days not in {0, 7, 30}:
-        raise InvoiceDomainError("Payment terms must be 0, 7, or 30 days")
+        raise InvoiceDomainError("Payment terms must be 0, 7, or 30 days.")
     due_date = issued_date + timedelta(days=payment_terms_days)
     holidays = _observed_holidays(due_date.year)
     while due_date.weekday() >= 5 or due_date in holidays:
@@ -250,7 +250,7 @@ def _resolve_range(
     now: datetime,
 ) -> tuple[datetime, datetime]:
     if (range_start_utc is None) != (range_end_utc is None):
-        raise InvoiceDomainError("Provide both invoice range bounds or neither")
+        raise InvoiceDomainError("Provide both invoice range bounds or neither.")
     if range_start_utc is not None and range_end_utc is not None:
         start = _utc_timestamp(range_start_utc, "Range start")
         end = _utc_timestamp(range_end_utc, "Range end")
@@ -276,12 +276,12 @@ def _resolve_range(
                 )
             )
             if first_started is None:
-                raise InvoiceDomainError("There are no eligible entries to invoice")
+                raise InvoiceDomainError("There are no eligible entries to invoice.")
             start = first_started
     if end <= start:
-        raise InvoiceDomainError("Invoice range end must be after its start")
+        raise InvoiceDomainError("Invoice range end must be after its start.")
     if end > now:
-        raise InvoiceDomainError("Invoice range end cannot be in the future")
+        raise InvoiceDomainError("Invoice range end cannot be in the future.")
     return start, end
 
 
@@ -315,11 +315,11 @@ def _build_preview(
         .options(joinedload(Contract.client))
     )
     if contract is None:
-        raise InvoiceDomainError("The selected project does not exist")
+        raise InvoiceDomainError("The selected project does not exist.")
     if contract.archived_at is not None:
-        raise InvoiceDomainError("An archived project cannot be invoiced")
+        raise InvoiceDomainError("An archived project cannot be invoiced.")
     if contract.payment_terms_days not in {0, 7, 30}:
-        raise InvoiceDomainError("The project has invalid payment terms")
+        raise InvoiceDomainError("The project has invalid payment terms.")
     start, end = _resolve_range(
         database,
         contract_id=contract.id,
@@ -362,7 +362,7 @@ def _build_preview(
         if entry.stopped_at is not None
     )
     if not entries:
-        raise InvoiceDomainError("There are no eligible entries to invoice")
+        raise InvoiceDomainError("There are no eligible entries to invoice.")
     total_seconds = sum(entry.total_seconds for entry in entries)
     fingerprint_data: dict[str, object] = {
         "billing_policy": "worker-daily-quarter-hour-half-up-v2",
@@ -445,7 +445,7 @@ def create_invoice(
 ) -> Invoice:
     """Claim previewed entries and persist their invoice and PDF atomically."""
     if not expected_fingerprint:
-        raise InvoiceDomainError("Invoice generation requires a current preview")
+        raise InvoiceDomainError("Invoice generation requires a current preview.")
     with _immediate_transaction(database):
         issued_at = utc_now()
         preview = _build_preview(
@@ -458,7 +458,7 @@ def create_invoice(
         )
         if not secrets.compare_digest(preview.fingerprint, expected_fingerprint):
             raise InvoiceDomainError(
-                "Invoice details changed; review a fresh preview before generating"
+                "Invoice details changed; review a fresh preview before generating."
             )
         sequence = (
             database.scalar(
@@ -469,11 +469,11 @@ def create_invoice(
             or 0
         ) + 1
         if sequence > 999:
-            raise InvoiceDomainError("This project has reached invoice sequence 999")
+            raise InvoiceDomainError("This project has reached invoice sequence 999.")
         client = database.get(Client, preview.client_id)
         contract = database.get(Contract, preview.contract_id)
         if client is None or contract is None:
-            raise InvoiceDomainError("The selected project does not exist")
+            raise InvoiceDomainError("The selected project does not exist.")
         invoice_number = (
             f"{client.public_number:03d}-{contract.public_number:03d}-{sequence:03d}"
         )
@@ -543,7 +543,7 @@ def create_invoice(
         }
         if len(entries_by_id) != len(preview.entries):
             raise InvoiceDomainError(
-                "Invoice entries changed; review a fresh preview before generating"
+                "Invoice entries changed; review a fresh preview before generating."
             )
         for preview_entry in preview.entries:
             entry = entries_by_id[preview_entry.time_entry_id]
@@ -561,7 +561,7 @@ def create_invoice(
 def _invoice(database: Session, invoice_id: int) -> Invoice:
     invoice = database.get(Invoice, invoice_id)
     if invoice is None:
-        raise InvoiceDomainError("Invoice does not exist")
+        raise InvoiceDomainError("Invoice does not exist.")
     return invoice
 
 
@@ -582,9 +582,9 @@ def _claimed_entries(database: Session, invoice: Invoice) -> list[TimeEntry]:
         )
     )
     if not expected_ids or {entry.id for entry in entries} != expected_ids:
-        raise InvoiceDomainError("Invoice entry claims are inconsistent")
+        raise InvoiceDomainError("Invoice entry claims are inconsistent.")
     if any(entry.invoice_number != invoice.invoice_number for entry in entries):
-        raise InvoiceDomainError("Invoice entry metadata is inconsistent")
+        raise InvoiceDomainError("Invoice entry metadata is inconsistent.")
     return entries
 
 
@@ -595,10 +595,10 @@ def mark_invoice_paid(
     with _immediate_transaction(database):
         invoice = _invoice(database, invoice_id)
         if invoice.status != "UNPAID":
-            raise InvoiceDomainError("Only an unpaid invoice can be marked paid")
+            raise InvoiceDomainError("Only an unpaid invoice can be marked paid.")
         entries = _claimed_entries(database, invoice)
         if any(entry.billing_status != "invoiced" for entry in entries):
-            raise InvoiceDomainError("Invoice entries are not awaiting client payment")
+            raise InvoiceDomainError("Invoice entries are not awaiting client payment.")
         local_paid_date = (
             paid_date
             or utc_now()
@@ -613,7 +613,7 @@ def mark_invoice_paid(
             .date()
         )
         if local_paid_date > today:
-            raise InvoiceDomainError("Payment date cannot be in the future")
+            raise InvoiceDomainError("Payment date cannot be in the future.")
         invoice.status = "PAID"
         invoice.paid_date = local_paid_date
         for entry in entries:
@@ -627,12 +627,12 @@ def refund_invoice(database: Session, invoice_id: int) -> Invoice:
     with _immediate_transaction(database):
         invoice = _invoice(database, invoice_id)
         if invoice.status != "PAID" or invoice.refunded:
-            raise InvoiceDomainError("Only a paid invoice can be refunded")
+            raise InvoiceDomainError("Only a paid invoice can be refunded.")
         if any(
             entry.billing_status != "client_paid"
             for entry in _claimed_entries(database, invoice)
         ):
-            raise InvoiceDomainError("Invoice entries have an invalid payment state")
+            raise InvoiceDomainError("Invoice entries have an invalid payment state.")
         invoice.refunded = True
         return invoice
 
@@ -642,10 +642,10 @@ def void_invoice(database: Session, invoice_id: int) -> Invoice:
     with _immediate_transaction(database):
         invoice = _invoice(database, invoice_id)
         if invoice.status != "UNPAID":
-            raise InvoiceDomainError("Only an unpaid invoice can be voided")
+            raise InvoiceDomainError("Only an unpaid invoice can be voided.")
         entries = _claimed_entries(database, invoice)
         if any(entry.billing_status != "invoiced" for entry in entries):
-            raise InvoiceDomainError("Invoice entries have an invalid payment state")
+            raise InvoiceDomainError("Invoice entries have an invalid payment state.")
         invoice.status = "VOID"
         invoice.paid_date = None
         for entry in entries:

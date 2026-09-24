@@ -1772,6 +1772,8 @@ class ClientContractTaskRouteTests(AppTestCase):
             self.assertIsNotNone(client.archived_at)
             self.assertIsNotNone(contract.archived_at)
             self.assertTrue(entry.visible)
+            archived_report_password_version = client.report_password_version
+            archived_report_password_hash = client.report_password_hash
             self.assertIsNotNone(
                 database.scalar(
                     select(AuditEvent).where(AuditEvent.event == "client_archived")
@@ -1784,6 +1786,28 @@ class ClientContractTaskRouteTests(AppTestCase):
         self.assertEqual(
             self.client.get(f"/contracts/{seed.contract_id}").status_code, 404
         )
+        self.assertEqual(self.client.get("/clients/archived").status_code, 200)
+        unarchive_path = f"/clients/{seed.client_id}/unarchive"
+        self.authorize_sensitive_action(unarchive_path, totp_secret="")
+        self.assertEqual(self.client.get(unarchive_path).status_code, 200)
+        self.assertEqual(self.client.post(unarchive_path).status_code, 302)
+        with session_scope(self.app) as database:
+            client = database.get(Client, seed.client_id)
+            contract = database.get(Contract, seed.contract_id)
+            assert client is not None and contract is not None
+            self.assertIsNone(client.archived_at)
+            self.assertIsNotNone(contract.archived_at)
+            self.assertEqual(
+                client.report_password_version, archived_report_password_version + 1
+            )
+            self.assertNotEqual(
+                client.report_password_hash, archived_report_password_hash
+            )
+            self.assertIsNotNone(
+                database.scalar(
+                    select(AuditEvent).where(AuditEvent.event == "client_unarchived")
+                )
+            )
 
 
 class TimerAndPermissionRouteTests(AppTestCase):
@@ -1931,7 +1955,7 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         super().setUp()
         self.login()
 
-    def test_users_pin_current_account_without_disrupting_pagination(self) -> None:
+    def test_users_pin_signed_in_account_without_disrupting_pagination(self) -> None:
         last_names = ("Zulu", "alpha", "Echo", "bravo", "Delta", "charlie")
         with session_scope(self.app) as database:
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
@@ -2023,9 +2047,6 @@ class ProfileAndUserAdministrationTests(AppTestCase):
         self.assertIn(b'href="/users?page=3"', responses[1].data)
         self.assertIn(b'href="/users?page=2"', responses[2].data)
         self.assertNotIn(b">Next <i", responses[2].data)
-        self.assertEqual(responses[0].data.count(b"Current Account"), 1)
-        self.assertNotIn(b"Current Account", responses[1].data)
-        self.assertNotIn(b"Current Account", responses[2].data)
         self.assertEqual(responses[0].data.count(b">Configured</span>"), 1)
         self.assertEqual(responses[1].data.count(b">Configured</span>"), 1)
         self.assertEqual(responses[2].data.count(b">Configured</span>"), 0)
@@ -2608,6 +2629,44 @@ class ProfileAndUserAdministrationTests(AppTestCase):
                 },
             )
         self.assertEqual(raced.status_code, 409)
+
+    def test_administrator_can_change_own_user_type(self) -> None:
+        with session_scope(self.app) as database:
+            admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            assert admin is not None
+            admin_id = admin.id
+            first_name = admin.first_name
+            last_name = admin.last_name
+            email = admin.email
+        users_page = self.client.get("/users")
+        self.assertEqual(users_page.status_code, 200)
+        self.assertIn(f'href="/users/{admin_id}/edit"'.encode(), users_page.data)
+        path = f"/users/{admin_id}/edit"
+        values = {
+            "first_name": first_name,
+            "last_name": last_name,
+            "email": email,
+            "user_type": "subcontractor",
+        }
+        self.assertEqual(
+            self.client.post(path, data=values | {"user_type": "invalid"}).status_code,
+            400,
+        )
+        self.assertEqual(self.client.post(path, data=values).status_code, 302)
+        with session_scope(self.app) as database:
+            admin = database.get(User, admin_id)
+            assert admin is not None
+            self.assertEqual(admin.user_type, "subcontractor")
+        self.assertEqual(
+            self.client.post(
+                path, data=values | {"user_type": "llc_member"}
+            ).status_code,
+            302,
+        )
+        with session_scope(self.app) as database:
+            admin = database.get(User, admin_id)
+            assert admin is not None
+            self.assertEqual(admin.user_type, "llc_member")
 
     def test_admin_can_disable_another_users_totp_with_reauthentication(self) -> None:
         target = self.create_user(

@@ -69,7 +69,7 @@ def daily_billable_hours(
 def rounded_quarter_hours(seconds: int) -> Decimal:
     """Round elapsed seconds to the nearest quarter hour, with ties upward."""
     if seconds < 0:
-        raise ValueError("Billable time cannot be negative")
+        raise ValueError("Billable time cannot be negative.")
     quarters = (Decimal(seconds) / Decimal(900)).quantize(
         Decimal("1"), rounding=ROUND_HALF_UP
     )

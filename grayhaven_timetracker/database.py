@@ -295,7 +295,7 @@ def migrate_schema_3_to_4(connection: Any) -> None:
 
 
 # Validated against a legacy SQL export during upgrade testing.
-def migrate_schema_4_to_5(connection: Any) -> None:  # pragma: no cover
+def migrate_schema_4_to_5(connection: Any) -> None:
     """Add worker classification, client archival, and account transactions."""
     user_columns = set(
         connection.execute(text("SELECT name FROM pragma_table_info('user_account')"))
@@ -333,7 +333,6 @@ def migrate_schema_4_to_5(connection: Any) -> None:  # pragma: no cover
         DEFAULT 'subcontractor'
         CHECK (user_type IN ('llc_member', 'subcontractor'))
         """,
-        "UPDATE user_account SET user_type = 'llc_member' WHERE role = 'admin'",
         "ALTER TABLE client ADD COLUMN archived_at DATETIME",
         """
         ALTER TABLE client ADD COLUMN archived_by_user_id INTEGER

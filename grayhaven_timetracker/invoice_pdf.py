@@ -48,9 +48,9 @@ def _fonts(regular_path: Path | None, bold_path: Path | None) -> tuple[str, str]
     if regular_path is None and bold_path is None:
         return "Helvetica", "Helvetica-Bold"
     if regular_path is None or bold_path is None:
-        raise ValueError("Both regular and bold invoice fonts are required")
+        raise ValueError("Both regular and bold invoice fonts are required.")
     if not regular_path.is_file() or not bold_path.is_file():
-        raise ValueError("Invoice font files are unavailable")
+        raise ValueError("Invoice font files are unavailable.")
     digest = hashlib.sha256(
         f"{regular_path.resolve()}\0{bold_path.resolve()}".encode()
     ).hexdigest()[:12]
@@ -104,7 +104,7 @@ def render_invoice_pdf(
     """Use the layout version stored on the invoice for explicit revisions."""
     version = invoice.pdf_version or 2
     if version != 2:
-        raise ValueError("Unsupported invoice PDF version")
+        raise ValueError("Unsupported invoice PDF version.")
     return _render_invoice_pdf_v2(
         invoice,
         lines,
@@ -179,7 +179,7 @@ def _render_invoice_pdf_v2(
     logo: Any
     if logo_path is not None:
         if not logo_path.is_file():
-            raise ValueError("Invoice logo file is unavailable")
+            raise ValueError("Invoice logo file is unavailable.")
         logo = Image(str(logo_path))
         scale = min(
             (2.35 * inch) / logo.imageWidth,

@@ -47,7 +47,7 @@ def worker_snapshot_records(invoice: Invoice) -> list[dict[str, Any]]:
     if not isinstance(records, list) or (
         invoice.id is not None and invoice.pdf_version >= 2 and not records
     ):
-        raise ValueError("Invoice worker snapshot is invalid")
+        raise ValueError("Invoice worker snapshot is invalid.")
     return records
 
 

@@ -218,6 +218,42 @@ class DisbursementRouteTests(AppTestCase):
         self.assertEqual(response.status_code, 409)
         self.assertIn(b"only for LLC Members", response.data)
 
+    def test_member_type_change_requires_retained_earnings_archive(self) -> None:
+        with session_scope(self.app) as database:
+            worker = database.get(User, self.worker_id)
+            assert worker is not None
+            item = create_disbursement(
+                database,
+                user_id=worker.id,
+                actor_id=worker.id,
+                kind="RETAINED_EARNINGS",
+                date_value=date.today(),
+                transaction_id=None,
+                amount_cents=100,
+                notes=None,
+            )
+            database.commit()
+            item_id = item.id
+            values = {
+                "first_name": worker.first_name,
+                "last_name": worker.last_name,
+                "email": worker.email,
+                "user_type": "subcontractor",
+            }
+        path = f"/users/{self.worker_id}/edit"
+        self.assertEqual(self.client.post(path, data=values).status_code, 400)
+        with session_scope(self.app) as database:
+            worker = database.get(User, self.worker_id)
+            assert worker is not None
+            self.assertEqual(worker.user_type, "llc_member")
+            archive_disbursement(database, item_id, actor_id=self.worker_id)
+            database.commit()
+        self.assertEqual(self.client.post(path, data=values).status_code, 302)
+        with session_scope(self.app) as database:
+            worker = database.get(User, self.worker_id)
+            assert worker is not None
+            self.assertEqual(worker.user_type, "subcontractor")
+
     def test_disbursement_field_guards(self) -> None:
         with session_scope(self.app) as database:
             worker = database.get(User, self.worker_id)

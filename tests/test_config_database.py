@@ -42,6 +42,7 @@ from grayhaven_timetracker.database import (
     dispose_app_database,
     initialize_database,
     migrate_schema_3_to_4,
+    migrate_schema_4_to_5,
     migrate_schema_5_to_6,
     rollback_request_session,
     session_scope,
@@ -389,6 +390,43 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class DatabaseAndModelTests(AppTestCase):
+    def test_existing_users_migrate_to_subcontractors(self) -> None:
+        engine = create_engine("sqlite://")
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE TABLE user_account ("
+                    "id INTEGER PRIMARY KEY, role VARCHAR(16) NOT NULL)"
+                )
+            )
+            connection.execute(text("CREATE TABLE client (id INTEGER PRIMARY KEY)"))
+            connection.execute(text("CREATE TABLE invoice (id INTEGER PRIMARY KEY)"))
+            connection.execute(
+                text(
+                    "INSERT INTO user_account (id, role) "
+                    "VALUES (1, 'admin'), (2, 'user')"
+                )
+            )
+            migrate_schema_4_to_5(connection)
+            migrate_schema_4_to_5(connection)
+            types = connection.execute(
+                text("SELECT id, user_type FROM user_account ORDER BY id")
+            ).all()
+        self.assertEqual(types, [(1, "subcontractor"), (2, "subcontractor")])
+
+    def test_partial_billing_migration_is_rejected(self) -> None:
+        engine = create_engine("sqlite://")
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE TABLE user_account (id INTEGER PRIMARY KEY, user_type TEXT)"
+                )
+            )
+            connection.execute(text("CREATE TABLE client (id INTEGER PRIMARY KEY)"))
+            connection.execute(text("CREATE TABLE invoice (id INTEGER PRIMARY KEY)"))
+            with self.assertRaises(DatabaseError):
+                migrate_schema_4_to_5(connection)
+
     def test_public_number_migration_preserves_every_existing_identifier(self) -> None:
         engine = create_engine("sqlite://")
         with engine.begin() as connection:
