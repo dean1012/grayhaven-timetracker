@@ -205,9 +205,9 @@ weekends when work was recorded.
 
 Paid invoices add each worker's rounded amount to an independent balance.
 Administrators record dated Disbursement, In-Kind Transaction, or Retained
-Earnings entries against that balance. Retained Earnings are available only to
-LLC Members. Entries can be corrected or archived with a reason; workers can
-view their own active transaction history.
+Earnings entries against that balance. In-Kind Transactions and Retained
+Earnings are available only to LLC Members. Entries are final once recorded;
+workers can view their own transaction history.
 
 [Back to top](#application-architecture)
 

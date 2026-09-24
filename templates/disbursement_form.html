@@ -1,21 +1,17 @@
 {% extends "base.html" %}
-{% set mode = action|default('new') %}
-{% set heading = {'new': 'Add Disbursement', 'edit': 'Edit Disbursement', 'archive': 'Archive Disbursement', 'unarchive': 'Unarchive Disbursement'}[mode] %}
+{% set heading = 'Add Disbursement' %}
 {% block title %}{{ heading }} · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block breadcrumbs %}<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}">Dashboard</a></li><li><a class="breadcrumb-label" href="{{ url_for('disbursements.index') }}">Disbursements</a></li><li><a class="breadcrumb-label" href="{{ url_for('disbursements.detail', user_id=user.id) }}">{{ user.full_name }}</a></li><li aria-current="page"><span class="breadcrumb-label">{{ heading }}</span></li></ol></nav>{% endblock %}
 {% block content %}
 <section class="narrow-content"><div class="panel form-panel"><div class="panel-heading"><div><p class="eyebrow">DISBURSEMENT</p><h1>{{ heading }}</h1><p class="muted">{{ user.full_name }}</p></div></div>
-  <form method="post" action="{{ url_for('disbursements.new', user_id=user.id) if mode == 'new' else url_for('disbursements.action', item_id=item.id, action=mode) }}" class="form-stack" data-disbursement-form>
+  <form method="post" action="{{ url_for('disbursements.new', user_id=user.id) }}" class="form-stack" data-disbursement-form>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    {% if mode in ('new', 'edit') %}
-    <label>Date<input type="date" name="date" value="{{ item.date.isoformat() if item else today.isoformat() }}" required></label>
-    <label>Type<select name="type" data-disbursement-type required><option value="DISBURSEMENT" {% if item and item.type == 'DISBURSEMENT' %}selected{% endif %}>Disbursement</option><option value="IN_KIND" {% if item and item.type == 'IN_KIND' %}selected{% endif %}>In-Kind Transaction</option>{% if user.user_type == 'llc_member' %}<option value="RETAINED_EARNINGS" {% if item and item.type == 'RETAINED_EARNINGS' %}selected{% endif %}>Retained Earnings</option>{% endif %}</select></label>
-    <label data-disbursement-reference>Transaction ID<input name="transaction_id" maxlength="100" value="{{ item.transaction_id or '' if item else '' }}" required autocomplete="off" data-protonpass-ignore="true"></label>
-    <label>Amount<input name="amount" inputmode="decimal" value="{{ '%.2f'|format(item.amount_cents / 100) if item else '' }}" required></label>
-    <label>Notes<textarea name="notes" rows="4" maxlength="2000">{{ item.notes or '' if item else '' }}</textarea></label>
-    {% endif %}
-    {% if mode != 'new' %}<label>Correction reason<textarea name="correction_reason" rows="4" maxlength="1000" required autocomplete="off" data-protonpass-ignore="true"></textarea></label>{% endif %}
-    <div class="form-actions"><a class="button button-secondary" href="{{ url_for('disbursements.detail', user_id=user.id) }}">Cancel</a><button class="button {{ 'button-stop' if mode == 'archive' else 'button-primary' }}" type="submit">Confirm</button></div>
+    <label>Date<input type="date" name="date" value="{{ today.isoformat() }}" required></label>
+    <label>Type<select name="type" data-disbursement-type required><option value="DISBURSEMENT">Disbursement</option>{% if user.user_type == 'llc_member' %}<option value="IN_KIND">In-Kind Transaction</option><option value="RETAINED_EARNINGS">Retained Earnings</option>{% endif %}</select></label>
+    <label data-disbursement-reference>Transaction ID<input name="transaction_id" maxlength="100" required autocomplete="off" data-protonpass-ignore="true"></label>
+    <label>Amount<span class="money-input"><span class="money-prefix" aria-hidden="true">$</span><input type="number" name="amount" min="0.01" step="0.01" required><span class="money-suffix">of {{ disbursement_money(pending) }}</span></span></label>
+    <label>Notes<textarea name="notes" rows="4" maxlength="2000"></textarea></label>
+    <div class="form-actions"><a class="button button-secondary" href="{{ url_for('disbursements.detail', user_id=user.id) }}">Cancel</a><button class="button button-primary" type="submit">Confirm</button></div>
   </form>
 </div></section>
 {% endblock %}

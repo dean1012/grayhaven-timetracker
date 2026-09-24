@@ -306,16 +306,22 @@ def generate() -> Any:
 
 @invoices.get("/<invoicenum:invoice_id>")
 @permission_required(INVOICE_MANAGE)
-def detail(invoice_id: int) -> str:
+def detail(invoice_id: int) -> Response:
     invoice = get_invoice(invoice_id)
-    return render_template(
-        "invoice_detail.html",
-        invoice=invoice,
-        worker_daily_totals=worker_daily_summary_rows(
-            invoice, invoice.lines, ZoneInfo(invoice.timezone_name)
+    response = Response(
+        render_template(
+            "invoice_detail.html",
+            invoice=invoice,
+            worker_daily_totals=worker_daily_summary_rows(
+                invoice, invoice.lines, ZoneInfo(invoice.timezone_name)
+            ),
+            timezone_info=ZoneInfo(invoice.timezone_name),
         ),
-        timezone_info=ZoneInfo(invoice.timezone_name),
+        mimetype="text/html",
     )
+    response.cache_control.private = True
+    response.cache_control.no_store = True
+    return response
 
 
 @invoices.get("/<invoicenum:invoice_id>/download")
@@ -323,7 +329,7 @@ def detail(invoice_id: int) -> str:
 def download(invoice_id: int) -> Response:
     invoice = get_invoice(invoice_id)
     branding = Path(current_app.config["BRANDING_PATH"])
-    return Response(
+    response = Response(
         invoice_pdf_with_status(
             invoice.pdf_bytes,
             invoice.display_status,
@@ -338,6 +344,9 @@ def download(invoice_id: int) -> Response:
             )
         },
     )
+    response.cache_control.private = True
+    response.cache_control.no_store = True
+    return response
 
 
 @invoices.route("/<invoicenum:invoice_id>/<action>", methods=["GET", "POST"])

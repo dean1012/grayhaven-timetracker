@@ -1,4 +1,4 @@
-"""Disbursement permissions, balances, and correction workflows."""
+"""Disbursement permissions, balances, and final transactions."""
 
 from datetime import date, timedelta
 
@@ -7,10 +7,8 @@ from sqlalchemy import select
 from grayhaven_timetracker.database import session_scope
 from grayhaven_timetracker.disbursements import (
     _validated_values,
-    archive_disbursement,
     create_disbursement,
-    unarchive_disbursement,
-    update_disbursement,
+    outstanding_cents,
 )
 from grayhaven_timetracker.invoices import (
     InvoiceDomainError,
@@ -89,47 +87,19 @@ class DisbursementRouteTests(AppTestCase):
             assert item is not None
             item_id = item.id
             self.assertEqual(item.amount_cents, 1000)
+            self.assertEqual(outstanding_cents(database, self.worker_id), 4500)
             self.assertIsNotNone(
                 database.scalar(
                     select(AuditEvent).where(AuditEvent.event == "disbursement_created")
                 )
             )
 
-        edit_path = f"/disbursements/{item_id}/edit"
-        self.authorize_sensitive_action(edit_path)
-        edited = self.client.post(
-            edit_path,
-            data={
-                "date": date.today().isoformat(),
-                "type": "IN_KIND",
-                "transaction_id": "PURCHASE-1",
-                "amount": "12.00",
-                "notes": "Equipment",
-                "correction_reason": "Correct transaction",
-            },
-        )
-        self.assertEqual(edited.status_code, 302)
-        archive_path = f"/disbursements/{item_id}/archive"
-        self.authorize_sensitive_action(archive_path)
-        archived = self.client.post(
-            archive_path, data={"correction_reason": "Correct transaction"}
-        )
-        self.assertEqual(archived.status_code, 302)
-        self.assertIn(
-            b"PURCHASE-1",
-            self.client.get(f"/disbursements/{self.worker_id}?view=archived").data,
-        )
-        self.assertNotIn(b"PURCHASE-1", self.client.get("/my/disbursements").data)
-        unarchive_path = f"/disbursements/{item_id}/unarchive"
-        self.authorize_sensitive_action(unarchive_path)
-        self.assertEqual(
-            self.client.post(
-                unarchive_path,
-                data={"correction_reason": "Restore transaction"},
-            ).status_code,
-            302,
-        )
-        self.assertIn(b"PURCHASE-1", self.client.get("/my/disbursements").data)
+        self.assertIn(b"ACH-1", self.client.get("/my/disbursements").data)
+        for action in ("edit", "archive", "unarchive", "delete"):
+            self.assertEqual(
+                self.client.post(f"/disbursements/{item_id}/{action}").status_code,
+                404,
+            )
 
     def test_worker_can_view_own_disbursements_only(self) -> None:
         self.create_user()
@@ -177,63 +147,46 @@ class DisbursementRouteTests(AppTestCase):
                 )
         with session_scope(self.app) as database:
             self.assertIsNone(database.scalar(select(Disbursement)))
-            item = create_disbursement(
-                database,
-                user_id=self.worker_id,
-                actor_id=self.worker_id,
-                kind="DISBURSEMENT",
-                date_value=date.today(),
-                transaction_id="ACH-1",
-                amount_cents=1000,
-                notes=None,
-            )
-            database.commit()
-            item_id = item.id
-        self.assertEqual(
-            self.client.get(f"/disbursements/{item_id}/unarchive").status_code,
-            409,
-        )
-        with session_scope(self.app) as database:
-            archive_disbursement(database, item_id, actor_id=self.worker_id)
-            database.commit()
-        self.assertEqual(
-            self.client.get(f"/disbursements/{item_id}/edit").status_code, 409
-        )
 
-    def test_retained_earnings_requires_member_type(self) -> None:
+    def test_member_only_transaction_types_require_member_account(self) -> None:
         with session_scope(self.app) as database:
             worker = database.get(User, self.worker_id)
             assert worker is not None
             worker.user_type = "subcontractor"
         path = f"/disbursements/{self.worker_id}/new"
         self.authorize_sensitive_action(path)
-        response = self.client.post(
-            path,
-            data={
-                "date": date.today().isoformat(),
-                "type": "RETAINED_EARNINGS",
-                "amount": "10.00",
-            },
-        )
-        self.assertEqual(response.status_code, 409)
-        self.assertIn(b"only for LLC Members", response.data)
+        form = self.client.get(path)
+        self.assertNotIn(b'value="IN_KIND"', form.data)
+        self.assertNotIn(b'value="RETAINED_EARNINGS"', form.data)
+        for kind, reference in (("IN_KIND", "PURCHASE-1"), ("RETAINED_EARNINGS", "")):
+            with self.subTest(kind=kind):
+                response = self.client.post(
+                    path,
+                    data={
+                        "date": date.today().isoformat(),
+                        "type": kind,
+                        "transaction_id": reference,
+                        "amount": "10.00",
+                    },
+                )
+                self.assertEqual(response.status_code, 409)
+                self.assertIn(b"only for LLC Members", response.data)
 
-    def test_member_type_change_requires_retained_earnings_archive(self) -> None:
+    def test_member_only_records_block_reclassification(self) -> None:
         with session_scope(self.app) as database:
             worker = database.get(User, self.worker_id)
             assert worker is not None
-            item = create_disbursement(
+            create_disbursement(
                 database,
                 user_id=worker.id,
                 actor_id=worker.id,
-                kind="RETAINED_EARNINGS",
+                kind="IN_KIND",
                 date_value=date.today(),
-                transaction_id=None,
+                transaction_id="PURCHASE-1",
                 amount_cents=100,
                 notes=None,
             )
             database.commit()
-            item_id = item.id
             values = {
                 "first_name": worker.first_name,
                 "last_name": worker.last_name,
@@ -246,13 +199,18 @@ class DisbursementRouteTests(AppTestCase):
             worker = database.get(User, self.worker_id)
             assert worker is not None
             self.assertEqual(worker.user_type, "llc_member")
-            archive_disbursement(database, item_id, actor_id=self.worker_id)
+            create_disbursement(
+                database,
+                user_id=worker.id,
+                actor_id=worker.id,
+                kind="RETAINED_EARNINGS",
+                date_value=date.today(),
+                transaction_id=None,
+                amount_cents=100,
+                notes=None,
+            )
             database.commit()
-        self.assertEqual(self.client.post(path, data=values).status_code, 302)
-        with session_scope(self.app) as database:
-            worker = database.get(User, self.worker_id)
-            assert worker is not None
-            self.assertEqual(worker.user_type, "subcontractor")
+        self.assertEqual(self.client.post(path, data=values).status_code, 400)
 
     def test_disbursement_field_guards(self) -> None:
         with session_scope(self.app) as database:
@@ -293,7 +251,7 @@ class DisbursementRouteTests(AppTestCase):
                     notes=None,
                 )
             database.rollback()
-            item = create_disbursement(
+            create_disbursement(
                 database,
                 user_id=self.worker_id,
                 actor_id=self.worker_id,
@@ -304,92 +262,14 @@ class DisbursementRouteTests(AppTestCase):
                 notes=None,
             )
             database.commit()
-            item_id = item.id
-
-        with session_scope(self.app) as database:
-            with self.assertRaises(InvoiceDomainError):
-                update_disbursement(
+            with self.assertRaisesRegex(InvoiceDomainError, "exceeds"):
+                create_disbursement(
                     database,
-                    item_id,
+                    user_id=self.worker_id,
+                    actor_id=self.worker_id,
                     kind="DISBURSEMENT",
                     date_value=date.today(),
-                    transaction_id="ACH-1",
-                    amount_cents=5600,
+                    transaction_id="ACH-2",
+                    amount_cents=5000,
                     notes=None,
                 )
-            database.rollback()
-            with self.assertRaises(InvoiceDomainError):
-                update_disbursement(
-                    database,
-                    999999,
-                    kind="DISBURSEMENT",
-                    date_value=date.today(),
-                    transaction_id="ACH-1",
-                    amount_cents=100,
-                    notes=None,
-                )
-            database.rollback()
-            with self.assertRaises(InvoiceDomainError):
-                unarchive_disbursement(database, item_id)
-            database.rollback()
-            archive_disbursement(database, item_id, actor_id=self.worker_id)
-            database.commit()
-
-        with session_scope(self.app) as database:
-            with self.assertRaises(InvoiceDomainError):
-                archive_disbursement(database, item_id, actor_id=self.worker_id)
-            database.rollback()
-            with self.assertRaises(InvoiceDomainError):
-                update_disbursement(
-                    database,
-                    item_id,
-                    kind="DISBURSEMENT",
-                    date_value=date.today(),
-                    transaction_id="ACH-1",
-                    amount_cents=100,
-                    notes=None,
-                )
-
-    def test_unarchive_rechecks_member_type_and_available_balance(self) -> None:
-        with session_scope(self.app) as database:
-            item = create_disbursement(
-                database,
-                user_id=self.worker_id,
-                actor_id=self.worker_id,
-                kind="RETAINED_EARNINGS",
-                date_value=date.today(),
-                transaction_id=None,
-                amount_cents=1000,
-                notes=None,
-            )
-            database.commit()
-            item_id = item.id
-        with session_scope(self.app) as database:
-            archive_disbursement(database, item_id, actor_id=self.worker_id)
-            worker = database.get(User, self.worker_id)
-            assert worker is not None
-            worker.user_type = "subcontractor"
-            database.commit()
-        with session_scope(self.app) as database:
-            with self.assertRaises(InvoiceDomainError):
-                unarchive_disbursement(database, item_id)
-            database.rollback()
-            worker = database.get(User, self.worker_id)
-            assert worker is not None
-            worker.user_type = "llc_member"
-            database.commit()
-        with session_scope(self.app) as database:
-            create_disbursement(
-                database,
-                user_id=self.worker_id,
-                actor_id=self.worker_id,
-                kind="DISBURSEMENT",
-                date_value=date.today(),
-                transaction_id="ACH-2",
-                amount_cents=5000,
-                notes=None,
-            )
-            database.commit()
-        with session_scope(self.app) as database:
-            with self.assertRaises(InvoiceDomainError):
-                unarchive_disbursement(database, item_id)

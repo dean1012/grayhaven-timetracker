@@ -4346,13 +4346,14 @@ def edit_user(user_id: int) -> Any:
             select(Disbursement.id)
             .where(
                 Disbursement.user_id == user.id,
-                Disbursement.type == "RETAINED_EARNINGS",
+                Disbursement.type.in_(("IN_KIND", "RETAINED_EARNINGS")),
                 Disbursement.archived_at.is_(None),
             )
             .limit(1)
         ):
             raise ValueError(
-                "Archive this member's Retained Earnings before changing user type."
+                "Member-only transactions prevent changing this user "
+                "to a subcontractor."
             )
     except ValueError as exc:
         flash(str(exc), "error")

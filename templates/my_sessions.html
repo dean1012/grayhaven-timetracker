@@ -10,7 +10,7 @@
   <div class="summary-card"><span>Client Paid · Total Time</span><strong>{{ format_duration(summary.client_paid.seconds) }}</strong></div>
   <div class="summary-card"><span>Invoiced · Total Time</span><strong>{{ format_duration(summary.invoiced.seconds) }}</strong></div>
   <div class="summary-card"><span>Invoiced · Billed Cost</span><strong>{{ format_money(summary.invoiced.cost) }}</strong></div>
-  <div class="summary-card"><span>Client Paid · Pending Disbursement</span><strong>{{ format_money(summary.client_paid.cost) }}</strong><a href="{{ url_for('disbursements.my_history') }}">View Disbursements</a></div>
+  <div class="summary-card paid-disbursement-summary"><div class="paid-disbursement-heading"><span>Client Paid · Pending Disbursement</span><a class="icon-button" href="{{ url_for('disbursements.my_history') }}" aria-label="View disbursements" title="View disbursements"><i class="fa-solid fa-hand-holding-dollar" aria-hidden="true"></i></a></div><strong>{{ format_money(summary.client_paid.cost) }}</strong></div>
 </section>
 <section class="panel session-directory" data-live-region="my-pending-daily" data-pending-live-daily data-pending-timezone="{{ timezone_info.key }}"{% if pending_running %} data-snapshot-day="{{ pending_running.snapshot_day }}"{% endif %}>
   <div class="panel-heading"><div><p class="eyebrow">DAILY TOTALS</p><h2>Pending Invoice Sessions by Day</h2></div></div>

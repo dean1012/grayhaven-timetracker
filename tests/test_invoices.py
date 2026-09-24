@@ -21,11 +21,8 @@ from grayhaven_timetracker import invoice_routes
 from grayhaven_timetracker import invoices as invoice_domain
 from grayhaven_timetracker.database import session_scope
 from grayhaven_timetracker.disbursements import (
-    archive_disbursement,
     create_disbursement,
     outstanding_cents,
-    unarchive_disbursement,
-    update_disbursement,
 )
 from grayhaven_timetracker.invoice_pdf import (
     invoice_pdf_with_status,
@@ -54,6 +51,7 @@ from grayhaven_timetracker.models import (
     AuditEvent,
     Client,
     Contract,
+    Disbursement,
     Invoice,
     InvoiceLine,
     TimeEntry,
@@ -255,6 +253,9 @@ class InvoiceDomainTests(AppTestCase):
             day = invoice.lines[0].started_at_utc.date().isoformat()
         unpaid = self.client.get(f"/invoices/{invoice_id}")
         self.assertEqual(unpaid.status_code, 200)
+        self.assertTrue(unpaid.cache_control.no_store)
+        unpaid_pdf = self.client.get(f"/invoices/{invoice_id}/download")
+        self.assertTrue(unpaid_pdf.cache_control.no_store)
         for value in (
             "Billable Work -",
             "Billable hours are rounded daily",
@@ -274,8 +275,21 @@ class InvoiceDomainTests(AppTestCase):
             entry.user.first_name = "Changed"
             entry.task.contract.contact_email = "changed@example.invalid"
             entry.task.contract.hourly_rate_cents = 9900
+        self.app.config["BRANDING_PATH"] = str(
+            Path(__file__).resolve().parents[1] / "branding"
+        )
         voided = self.client.get(f"/invoices/{invoice_id}")
         self.assertEqual(voided.status_code, 200)
+        voided_pdf = self.client.get(f"/invoices/{invoice_id}/download")
+        self.assertEqual(voided_pdf.status_code, 200)
+        self.assertTrue(voided_pdf.cache_control.no_store)
+        self.assertNotEqual(voided_pdf.data, unpaid_pdf.data)
+        self.assertIn(
+            "VOID",
+            (
+                PdfReader(BytesIO(voided_pdf.data)).pages[0].extract_text() or ""
+            ).splitlines(),
+        )
         for value in (
             contact,
             worker_name,
@@ -386,7 +400,7 @@ class InvoiceDomainTests(AppTestCase):
             with self.assertRaisesRegex(InvoiceDomainError, "Only a paid invoice"):
                 refund_invoice(database, invoice_id)
 
-    def test_disbursement_balance_and_corrections(self) -> None:
+    def test_disbursement_balance_tracks_final_transactions(self) -> None:
         invoice_id = self.create_test_invoice()
         with session_scope(self.app) as database:
             entry = database.get(TimeEntry, self.seed.entry_id)
@@ -399,13 +413,12 @@ class InvoiceDomainTests(AppTestCase):
             database.commit()
         with session_scope(self.app) as database:
             self.assertEqual(outstanding_cents(database, worker_id), 5500)
-            item_ids = []
             for kind, reference, amount in (
                 ("DISBURSEMENT", "ACH-1", 1000),
                 ("IN_KIND", "PURCHASE-1", 1500),
                 ("RETAINED_EARNINGS", None, 3000),
             ):
-                item = create_disbursement(
+                create_disbursement(
                     database,
                     user_id=worker_id,
                     actor_id=worker_id,
@@ -415,7 +428,6 @@ class InvoiceDomainTests(AppTestCase):
                     amount_cents=amount,
                     notes=None,
                 )
-                item_ids.append(item.id)
                 database.commit()
             self.assertEqual(outstanding_cents(database, worker_id), 0)
             with self.assertRaisesRegex(InvoiceDomainError, "exceeds"):
@@ -429,27 +441,7 @@ class InvoiceDomainTests(AppTestCase):
                     amount_cents=1,
                     notes=None,
                 )
-            retained_id = item_ids[-1]
-        with session_scope(self.app) as database:
-            archive_disbursement(database, retained_id, actor_id=worker_id)
-            database.commit()
-            self.assertEqual(outstanding_cents(database, worker_id), 3000)
-        with session_scope(self.app) as database:
-            unarchive_disbursement(database, retained_id)
-            database.commit()
-            self.assertEqual(outstanding_cents(database, worker_id), 0)
-            item = update_disbursement(
-                database,
-                retained_id,
-                kind="RETAINED_EARNINGS",
-                date_value=date.today(),
-                transaction_id=None,
-                amount_cents=2500,
-                notes="Corrected amount",
-            )
-            database.commit()
-            self.assertEqual(item.notes, "Corrected amount")
-            self.assertEqual(outstanding_cents(database, worker_id), 500)
+            self.assertEqual(len(database.scalars(select(Disbursement)).all()), 3)
 
     def test_since_last_range_starts_at_the_previous_nonvoid_invoice(self) -> None:
         invoice_id = self.create_test_invoice()

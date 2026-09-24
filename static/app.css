@@ -16,6 +16,10 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 
 .invoice-actions, .table-row-actions { justify-content: flex-start; flex-wrap: wrap; }
 .worker-disbursement-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 1rem; }
+.disbursement-balance { grid-template-columns: minmax(0, 1fr); }
+.paid-disbursement-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: .5rem; }
+.paid-disbursement-heading span { margin-bottom: .4rem; }
+.paid-disbursement-heading .icon-button { flex: 0 0 auto; color: var(--primary-accent); }
 .invoice-title { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; }
 #invoice-status { font-size: .65em; line-height: 1; padding: .25em .5em; }
 .display-datetime { display: inline-block; white-space: nowrap; vertical-align: middle; }

@@ -54,9 +54,9 @@ def _validated_values(
 ) -> tuple[str | None, str | None]:
     if kind not in TYPES:
         raise InvoiceDomainError("Select a valid disbursement type.")
-    if kind == "RETAINED_EARNINGS" and user.user_type != "llc_member":
+    if kind in {"IN_KIND", "RETAINED_EARNINGS"} and user.user_type != "llc_member":
         raise InvoiceDomainError(
-            "Retained Earnings are available only for LLC Members."
+            "In-Kind Transactions and Retained Earnings are only for LLC Members."
         )
     if amount_cents <= 0:
         raise InvoiceDomainError("Amount must be greater than zero.")
@@ -116,78 +116,5 @@ def create_disbursement(
             created_by_user_id=actor_id,
         )
         database.add(item)
-        database.flush()
-        return item
-
-
-def update_disbursement(
-    database: Session,
-    item_id: int,
-    *,
-    kind: str,
-    date_value: date,
-    transaction_id: str | None,
-    amount_cents: int,
-    notes: str | None,
-) -> Disbursement:
-    with _immediate_transaction(database):
-        item = database.get(Disbursement, item_id)
-        if item is None or item.archived_at is not None:
-            raise InvoiceDomainError("Disbursement is unavailable for editing.")
-        user = database.get(User, item.user_id)
-        if user is None:
-            raise InvoiceDomainError("Worker does not exist.")
-        reference, normalized_notes = _validated_values(
-            user,
-            kind=kind,
-            date_value=date_value,
-            transaction_id=transaction_id,
-            amount_cents=amount_cents,
-            notes=notes,
-        )
-        if amount_cents > outstanding_cents(database, item.user_id) + item.amount_cents:
-            raise InvoiceDomainError(
-                "Amount exceeds the worker's pending disbursement."
-            )
-        item.type = kind
-        item.date = date_value
-        item.transaction_id = reference
-        item.amount_cents = amount_cents
-        item.notes = normalized_notes
-        database.flush()
-        return item
-
-
-def archive_disbursement(
-    database: Session, item_id: int, *, actor_id: int
-) -> Disbursement:
-    with _immediate_transaction(database):
-        item = database.get(Disbursement, item_id)
-        if item is None or item.archived_at is not None:
-            raise InvoiceDomainError("Disbursement is already archived.")
-        item.archived_at = utc_now()
-        item.archived_by_user_id = actor_id
-        database.flush()
-        return item
-
-
-def unarchive_disbursement(database: Session, item_id: int) -> Disbursement:
-    with _immediate_transaction(database):
-        item = database.get(Disbursement, item_id)
-        if item is None or item.archived_at is None:
-            raise InvoiceDomainError("Disbursement is not archived.")
-        user = database.get(User, item.user_id)
-        if item.type == "RETAINED_EARNINGS" and (
-            user is None or user.user_type != "llc_member"
-        ):
-            raise InvoiceDomainError(
-                "Retained Earnings are available only for LLC Members."
-            )
-        if item.amount_cents > outstanding_cents(database, item.user_id):
-            raise InvoiceDomainError(
-                "Restoring this disbursement exceeds the worker balance."
-            )
-        item.archived_at = None
-        item.archived_by_user_id = None
         database.flush()
         return item
