@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Audit log · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li aria-current="page"><span class="breadcrumb-label" title="Audit Log">Audit Log</span></li></ol></nav>{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">ADMINISTRATION</p>
+    <h1>Audit Log</h1>
+  </div>
+</section>
+<section class="panel audit-directory">
+  <form method="get" class="audit-filters" autocomplete="off" data-protonpass-ignore="true">
+    <label>Source<span class="select-control">
+      <select name="source" autocomplete="off" data-protonpass-ignore="true">
+        <option value="">All sources</option>
+        {% for source in ('admin', 'user', 'public', 'system') %}<option value="{{ source }}" {% if source_filter == source %}selected{% endif %}>{{ source|title }}</option>{% endfor %}
+      </select><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span>
+    </label>
+    <label>Action<span class="select-control">
+      <select name="event" autocomplete="off" data-protonpass-ignore="true">
+        <option value="">All actions</option>
+        {% for event in events %}<option value="{{ event }}" {% if event_filter == event %}selected{% endif %}>{{ event.replace('_', ' ')|title }}</option>{% endfor %}
+      </select><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span>
+    </label>
+    <label>Actor<span class="select-control">
+      <select name="actor" autocomplete="off" data-protonpass-ignore="true">
+        <option value="">All actors</option>
+        {% for actor in actors %}<option value="{{ actor.id }}" {% if actor_filter == actor.id|string %}selected{% endif %}>{{ actor.full_name }} · {{ actor.email }}</option>{% endfor %}
+      </select><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span>
+    </label>
+    <div class="audit-filter-actions"><a class="button button-secondary" href="{{ url_for('main.audit_log') }}">Clear</a><button class="button button-primary" type="submit"><i class="fa-solid fa-filter" aria-hidden="true"></i> Apply Filters</button></div>
+  </form>
+  <div data-live-region="audit-results">
+  <div class="table-summary"><span>{{ total }} event{{ '' if total == 1 else 's' }}</span><span>Page {{ page }} of {{ page_count }}</span></div>
+  <div class="table-container">
+    <table class="data-table responsive-table audit-table">
+      <caption class="visually-hidden">Audit events</caption>
+      <thead><tr><th scope="col">Time</th><th scope="col">Source</th><th scope="col">Actor</th><th scope="col">Action</th><th scope="col">Details</th></tr></thead>
+      <tbody>
+      {% for item in items %}
+        <tr>
+          <td data-label="Time">{{ format_datetime(item.occurred_at, timezone_info) }}</td>
+          <td data-label="Source"><div><span class="badge audit-source-{{ item.source }}">{{ item.source|title }}</span><small class="table-note">{{ item.details.get('request_source', 'Application') }}</small></div></td>
+          <td data-label="Actor">{% if item.actor_name %}<div>{{ item.actor_name }}<small class="table-note">{{ item.actor_email }}</small></div>{% else %}<span class="muted">{{ 'Application' if item.source == 'system' else 'Unauthenticated' }}</span>{% endif %}</td>
+          <td class="cell-primary" data-label="Action"><strong>{{ item.event.replace('_', ' ')|title }}</strong></td>
+          <td class="cell-details" data-label="Details">{% if item.details or item.ip_address %}<dl class="audit-details">{% if item.ip_address %}<div><dt>Source IP</dt><dd>{{ item.ip_address }}</dd></div>{% endif %}{% for key, value in item.details.items() %}{% if key != 'request_source' %}<div><dt>{{ key.replace('_', ' ') }}</dt><dd>{% if value is mapping %}{% for field, change in value.items() %}<span class="audit-change">{{ field }}: {% if change is mapping and 'from' in change and 'to' in change %}{{ change['from'] if change['from'] is not none else '—' }} → {{ change['to'] if change['to'] is not none else '—' }}{% else %}{{ change if change is not none else '—' }}{% endif %}</span>{% endfor %}{% else %}{{ value if value is not none else '—' }}{% endif %}</dd></div>{% endif %}{% endfor %}</dl>{% else %}<span class="muted">—</span>{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr class="empty-table-row"><td colspan="5">No audit events match the selected filters.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if previous_url or next_url %}<nav class="pagination" aria-label="Audit log pages">{% if previous_url %}<a class="button button-secondary" href="{{ previous_url }}"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ page }} of {{ page_count }}</span>{% if next_url %}<a class="button button-secondary" href="{{ next_url }}">Next <i class="fa-solid fa-arrow-right" aria-hidden="true"></i></a>{% else %}<span></span>{% endif %}</nav>{% endif %}
+  </div>
+</section>
+{% endblock %}

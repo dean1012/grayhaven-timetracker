@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Authenticator · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+{% block content %}
+<section class="auth-layout">
+  <div class="auth-panel panel">
+    <img class="auth-logo" src="{{ url_for('main.branding_asset', filename='grayhaven-logo-wordmark-dark.svg') }}" alt="Grayhaven Systems LLC">
+    <form method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {% include "_totp_bubbles.html" %}
+      <div class="form-actions"><button class="button button-primary" type="submit"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Verify</button></div>
+      <a class="back-link app-back-link" href="{{ url_for('main.login') }}">Back to Sign In</a>
+    </form>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,4 @@
+{% extends "base.html" %}
+{% block title %}Invoice Range · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('invoices.index') }}">Invoices</a></li><li aria-current="page"><span class="breadcrumb-label">Invoice Range</span></li></ol></nav>{% endblock %}
+{% block content %}<section class="narrow-content"><div class="panel form-panel"><div class="panel-heading"><div><h1>Invoice Range</h1></div></div>{% include "_invoice_range_form.html" %}</div></section>{% endblock %}

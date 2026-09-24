@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1C1F24">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{% block title %}Grayhaven Systems LLC Time Tracker{% endblock %}</title>
+  <link rel="icon" type="image/x-icon" href="{{ url_for('main.branding_asset', filename='favicon.ico') }}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('main.branding_asset', filename='favicon-32.png') }}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('main.branding_asset', filename='favicon-16.png') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('main.branding_asset', filename='apple-touch-icon.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='fontawesome.min.css') }}?v={{ app_version }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='shared-components.css') }}?v={{ app_version }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ app_version }}">
+  <script src="{{ url_for('static', filename='shared-components.js') }}?v={{ app_version }}" defer></script>
+  <script type="module" src="{{ url_for('static', filename='app.js') }}?v={{ app_version }}"></script>
+</head>
+<body class="app-body {% block body_class %}{% endblock %}">
+  {% if logged_user %}
+  {% set profile_active = request.endpoint in ('main.profile', 'main.passkey_management', 'main.passkey_registration_options', 'main.passkey_registration_verify', 'main.remove_passkey', 'main.required_password_change', 'main.authenticate_password_change', 'main.password_change_form', 'main.change_password', 'main.setup_totp', 'main.confirm_totp', 'main.disable_totp', 'main.update_profile_name') %}
+  {% set sessions_active = request.endpoint == 'main.my_sessions' %}
+  {% set users_active = request.endpoint in ('main.users', 'main.new_user', 'main.edit_user', 'main.reset_user_password', 'main.reset_user_password_confirmation', 'main.disable_user_totp', 'main.wipe_user_passkeys', 'main.toggle_user_enabled', 'main.toggle_user_admin') %}
+  {% set audit_active = request.endpoint == 'main.audit_log' %}
+  {% set invoices_active = request.endpoint and request.endpoint.startswith('invoices.') %}
+  {% set dashboard_active = not profile_active and not sessions_active and not users_active and not audit_active and not invoices_active %}
+  <header class="app-header">
+    <div class="app-header-inner">
+      <a class="brand" href="{{ url_for('main.dashboard') }}" aria-label="Grayhaven Systems LLC Time Tracker home">
+        <img src="{{ url_for('main.branding_asset', filename='grayhaven-logo-wordmark-dark.svg') }}" alt="Grayhaven Systems LLC">
+        <span class="brand-product">Time Tracker</span>
+      </a>
+      <nav class="app-nav desktop-nav" aria-label="Application navigation">
+        <a href="{{ url_for('main.dashboard') }}" {% if dashboard_active %}aria-current="{{ 'page' if request.endpoint == 'main.dashboard' else 'location' }}"{% endif %}><i class="fa-solid fa-gauge-high" aria-hidden="true"></i> Dashboard</a>
+        <a href="{{ url_for('main.my_sessions') }}" {% if sessions_active %}aria-current="page"{% endif %}><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> My Sessions</a>
+        {% if can('invoice:manage') %}<a href="{{ url_for('invoices.index') }}" {% if invoices_active %}aria-current="{{ 'page' if request.endpoint == 'invoices.index' else 'location' }}"{% endif %}><i class="fa-solid fa-file-invoice-dollar" aria-hidden="true"></i> Invoices</a>{% endif %}
+        <a href="{{ url_for('main.profile') }}" {% if profile_active %}aria-current="{{ 'page' if request.endpoint == 'main.profile' else 'location' }}"{% endif %}><i class="fa-solid fa-user" aria-hidden="true"></i> Profile</a>
+        {% if can('user:view') %}<a href="{{ url_for('main.users') }}" {% if users_active %}aria-current="{{ 'page' if request.endpoint == 'main.users' else 'location' }}"{% endif %}><i class="fa-solid fa-users" aria-hidden="true"></i> Users</a>{% endif %}
+        {% if can('audit:view') %}<a href="{{ url_for('main.audit_log') }}" {% if audit_active %}aria-current="page"{% endif %}><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Audit</a>{% endif %}
+        <form method="post" action="{{ url_for('main.logout') }}" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="nav-button" type="submit"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Sign Out</button>
+        </form>
+      </nav>
+      <details class="mobile-nav">
+        <summary class="mobile-nav-toggle" aria-label="Application menu"><i class="fa-solid fa-bars" aria-hidden="true"></i></summary>
+        <nav class="mobile-nav-links" aria-label="Application navigation">
+          <a href="{{ url_for('main.dashboard') }}" {% if dashboard_active %}aria-current="{{ 'page' if request.endpoint == 'main.dashboard' else 'location' }}"{% endif %}><i class="fa-solid fa-gauge-high" aria-hidden="true"></i> Dashboard</a>
+          <a href="{{ url_for('main.my_sessions') }}" {% if sessions_active %}aria-current="page"{% endif %}><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> My Sessions</a>
+          {% if can('invoice:manage') %}<a href="{{ url_for('invoices.index') }}" {% if invoices_active %}aria-current="{{ 'page' if request.endpoint == 'invoices.index' else 'location' }}"{% endif %}><i class="fa-solid fa-file-invoice-dollar" aria-hidden="true"></i> Invoices</a>{% endif %}
+          <a href="{{ url_for('main.profile') }}" {% if profile_active %}aria-current="{{ 'page' if request.endpoint == 'main.profile' else 'location' }}"{% endif %}><i class="fa-solid fa-user" aria-hidden="true"></i> Profile</a>
+          {% if can('user:view') %}<a href="{{ url_for('main.users') }}" {% if users_active %}aria-current="{{ 'page' if request.endpoint == 'main.users' else 'location' }}"{% endif %}><i class="fa-solid fa-users" aria-hidden="true"></i> Users</a>{% endif %}
+          {% if can('audit:view') %}<a href="{{ url_for('main.audit_log') }}" {% if audit_active %}aria-current="page"{% endif %}><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Audit</a>{% endif %}
+          <form method="post" action="{{ url_for('main.logout') }}" autocomplete="off">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="nav-button" type="submit"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i> Sign Out</button>
+          </form>
+        </nav>
+      </details>
+    </div>
+    {% block breadcrumbs %}{% endblock %}
+  </header>
+  {% endif %}
+  <main class="app-viewport">
+    {% set live_page = request.endpoint in (
+      'main.dashboard', 'main.my_sessions', 'main.client', 'main.contract', 'main.contract_sessions',
+      'main.users', 'main.audit_log', 'main.edit_client', 'main.delete_client',
+      'main.reset_client_report_password',
+      'main.new_contract', 'main.edit_contract', 'main.delete_contract',
+      'main.delete_task', 'main.delete_subtask', 'main.new_time_entry',
+      'main.edit_time_entry', 'main.delete_time_entry'
+    ) %}
+    <div class="page-shell"{% if live_page %} data-live-page data-live-etag="{{ live_page_etag }}" data-live-interval-ms="3000"{% endif %}>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+      <div class="notification-region app-notification-region" aria-live="polite">
+      {% for category, message in messages %}<div class="alert alert-{{ category }} alert-with-icon" role="{{ 'alert' if category == 'error' else 'status' }}" data-auto-dismiss><i class="fa-solid {{ {'info': 'fa-circle-info', 'success': 'fa-circle-check', 'warning': 'fa-triangle-exclamation', 'error': 'fa-circle-xmark'}.get(category, 'fa-circle-info') }}" aria-hidden="true"></i><span class="alert-message">{{ message }}</span><button class="alert-dismiss" type="button" data-alert-dismiss aria-label="Dismiss notification"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></div>{% endfor %}
+      </div>
+      {% endif %}
+    {% endwith %}
+      {% set stale_messages = {
+        'client_deleted': 'The client was deleted.',
+        'contract_deleted': 'The contract was deleted.',
+        'task_deleted': 'The task was deleted.',
+        'subtask_deleted': 'The subtask was deleted.',
+        'time_entry_deleted': 'This time entry was deleted.',
+        'time_entry_moved': 'This time entry has been moved.'
+      } %}
+      {% if request.args.get('stale') in stale_messages %}<div class="alert-stack"><div class="alert alert-warning alert-with-icon" role="status"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i><span class="alert-message">{{ stale_messages[request.args.get('stale')] }}</span><button class="alert-dismiss" type="button" data-alert-dismiss aria-label="Dismiss notification"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></div></div>{% endif %}
+      <div data-live-region="active-timer">{% if active_entry %}{% include "active_timer.html" %}{% endif %}</div>
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+  <footer class="app-footer"><div class="app-footer-inner"><strong class="app-footer-label">CONFIDENTIAL</strong><span>Build {{ app_version }}</span></div></footer>
+</body>
+</html>
