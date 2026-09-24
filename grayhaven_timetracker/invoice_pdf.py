@@ -106,14 +106,16 @@ def invoice_pdf_with_status(
     overlay = canvas.Canvas(overlay_buffer, pagesize=LETTER)
     overlay.setFillColor(_STATUS_COLORS[status])
     overlay.setFont(bold_font, 22)
-    overlay.drawCentredString(475.2, 720.3, _STATUS_LABELS[status])
+    status_right = LETTER[0] - 54
+    overlay.drawRightString(status_right, 720.3, _STATUS_LABELS[status])
     if transaction_id and status in {"PAID", "REFUNDED"}:
         reference = f"#{transaction_id}"
         reference_size = min(
-            11, 190 / pdfmetrics.stringWidth(reference, regular_font, 1)
+            7.5, 190 / pdfmetrics.stringWidth(reference, regular_font, 1)
         )
+        overlay.setFillColor(_STATUS_COLORS[status])
         overlay.setFont(regular_font, reference_size)
-        overlay.drawCentredString(475.2, 701.5, reference)
+        overlay.drawRightString(status_right, 708.5, reference)
     overlay.save()
     overlay_buffer.seek(0)
     writer = PdfWriter()
@@ -274,11 +276,11 @@ def _render_invoice_pdf_v2(
     header.setStyle(
         TableStyle(
             [
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 0),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 0),
                 ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 24),
                 ("LINEBELOW", (0, 0), (-1, -1), 0.8, colors.HexColor("#596572")),
             ]
         )
