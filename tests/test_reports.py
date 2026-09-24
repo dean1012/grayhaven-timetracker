@@ -64,6 +64,7 @@ class ReportTotalsTests(AppTestCase):
             )
             database.add(sibling)
             other_contract.client_id = client.id
+            other_contract.public_number = 2
             other_contract.name = "Support"
             other_contract.hourly_rate_cents = 10500
             other_entry.started_at = now - timedelta(minutes=1)

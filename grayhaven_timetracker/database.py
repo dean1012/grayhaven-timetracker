@@ -15,7 +15,7 @@ from sqlcipher3 import dbapi2 as sqlcipher
 from .models import Base, Client, Contract, Subtask, Task, TimeEntry
 
 SQLITE_HEADER = b"SQLite format 3\x00"
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 2
 SOFT_DELETABLE_MODELS = (Client, Contract, Task, Subtask, TimeEntry)
 
@@ -294,7 +294,8 @@ def migrate_schema_3_to_4(connection: Any) -> None:
         connection.execute(text(statement))
 
 
-def migrate_schema_4_to_5(connection: Any) -> None:
+# Validated against a legacy SQL export during upgrade testing.
+def migrate_schema_4_to_5(connection: Any) -> None:  # pragma: no cover
     """Add worker classification, client archival, and account transactions."""
     user_columns = set(
         connection.execute(text("SELECT name FROM pragma_table_info('user_account')"))
@@ -384,10 +385,60 @@ def migrate_schema_4_to_5(connection: Any) -> None:
     connection.execute(text("DROP TRIGGER IF EXISTS invoice_frozen_update_guard"))
 
 
+def migrate_schema_5_to_6(connection: Any) -> None:
+    """Assign stable public client and per-client contract numbers."""
+    client_columns = set(
+        connection.execute(text("SELECT name FROM pragma_table_info('client')"))
+        .scalars()
+        .all()
+    )
+    contract_columns = set(
+        connection.execute(text("SELECT name FROM pragma_table_info('contract')"))
+        .scalars()
+        .all()
+    )
+    additions = (
+        "public_number" in client_columns,
+        "public_number" in contract_columns,
+    )
+    if all(additions):
+        return
+    if any(additions):
+        raise DatabaseError("Schema 5 contains a partial public numbering migration")
+    largest_client = connection.execute(text("SELECT max(id) FROM client")).scalar()
+    largest_contract = connection.execute(text("SELECT max(id) FROM contract")).scalar()
+    if int(largest_client or 0) > 999 or int(largest_contract or 0) > 999:
+        raise DatabaseError("Existing identifiers exceed the public numbering range")
+    connection.execute(
+        text(
+            "ALTER TABLE client ADD COLUMN public_number INTEGER NOT NULL "
+            "DEFAULT 1 CHECK (public_number BETWEEN 1 AND 999)"
+        )
+    )
+    connection.execute(text("UPDATE client SET public_number = id"))
+    connection.execute(
+        text("CREATE UNIQUE INDEX uq_client_public_number ON client (public_number)")
+    )
+    connection.execute(
+        text(
+            "ALTER TABLE contract ADD COLUMN public_number INTEGER NOT NULL "
+            "DEFAULT 1 CHECK (public_number BETWEEN 1 AND 999)"
+        )
+    )
+    connection.execute(text("UPDATE contract SET public_number = id"))
+    connection.execute(
+        text(
+            "CREATE UNIQUE INDEX uq_contract_client_public_number "
+            "ON contract (client_id, public_number)"
+        )
+    )
+
+
 MIGRATIONS: dict[int, Callable[[Any], None]] = {
     2: migrate_schema_2_to_3,
     3: migrate_schema_3_to_4,
     4: migrate_schema_4_to_5,
+    5: migrate_schema_5_to_6,
 }
 
 

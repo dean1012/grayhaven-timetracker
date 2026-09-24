@@ -139,6 +139,12 @@ controls. Normal queries exclude deleted records; stable identifiers and audit
 history remain available for controlled administrative recovery. User accounts
 use enablement rather than deletion.
 
+Clients have unique three-digit public numbers. Existing records retain their
+previous numeric identifiers, while new clients receive available numbers from
+100 through 999. Contract numbers are three-digit sequences within each client.
+Application routes, audit display, and invoice numbers use these public
+references; database row keys remain internal.
+
 [Back to top](#application-architecture)
 
 ## Time Tracking

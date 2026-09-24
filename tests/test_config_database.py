@@ -42,6 +42,7 @@ from grayhaven_timetracker.database import (
     dispose_app_database,
     initialize_database,
     migrate_schema_3_to_4,
+    migrate_schema_5_to_6,
     rollback_request_session,
     session_scope,
     sql_literal,
@@ -388,6 +389,33 @@ class ConfigurationTests(unittest.TestCase):
 
 
 class DatabaseAndModelTests(AppTestCase):
+    def test_public_number_migration_preserves_every_existing_identifier(self) -> None:
+        engine = create_engine("sqlite://")
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE client (id INTEGER PRIMARY KEY)"))
+            connection.execute(
+                text(
+                    "CREATE TABLE contract ("
+                    "id INTEGER PRIMARY KEY, client_id INTEGER NOT NULL)"
+                )
+            )
+            connection.execute(text("INSERT INTO client (id) VALUES (1), (2)"))
+            connection.execute(
+                text(
+                    "INSERT INTO contract (id, client_id) VALUES (1, 1), (2, 1), (3, 2)"
+                )
+            )
+            migrate_schema_5_to_6(connection)
+            migrate_schema_5_to_6(connection)
+            clients = connection.execute(
+                text("SELECT id, public_number FROM client ORDER BY id")
+            ).all()
+            contracts = connection.execute(
+                text("SELECT id, public_number FROM contract ORDER BY id")
+            ).all()
+        self.assertEqual(clients, [(1, 1), (2, 2)])
+        self.assertEqual(contracts, [(1, 1), (2, 2), (3, 3)])
+
     def test_schema_three_invoice_migration_is_complete_and_idempotent(self) -> None:
         engine = create_engine("sqlite://")
         with engine.begin() as connection:

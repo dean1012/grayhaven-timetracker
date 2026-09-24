@@ -49,6 +49,8 @@ from tests.helpers import (
     ADMIN_PASSWORD,
     ADMIN_TOTP_SECRET,
     AppTestCase,
+    PublicClientId,
+    PublicContractId,
 )
 
 
@@ -1209,9 +1211,7 @@ class ClientContractTaskRouteTests(AppTestCase):
                     "contract": f"Sample Contract - Phase 1 (ID: {seed.contract_id})",
                 },
             )
-        self.assertIn(
-            f"/clients/{seed.client_id}", self.client.get("/reports/9901").location
-        )
+        self.assertEqual(self.client.get("/reports/9901").status_code, 404)
         self.assertIn("stale=task_deleted", self.client.get("/tasks/9902").location)
         self.assertIn(
             "stale=subtask_deleted", self.client.get("/subtasks/9904").location
@@ -1222,8 +1222,7 @@ class ClientContractTaskRouteTests(AppTestCase):
         )
 
         stale = self.client.get("/contracts/9999")
-        self.assertEqual(stale.status_code, 302)
-        self.assertIn("stale=contract_deleted", stale.location)
+        self.assertEqual(stale.status_code, 404)
         self.assertEqual(
             self.client.get(f"/reports/{seed.contract_id}/missing").status_code,
             404,
@@ -1286,7 +1285,7 @@ class ClientContractTaskRouteTests(AppTestCase):
             )
             database.add(other)
             database.flush()
-            other_id = other.id
+            other_id = PublicClientId(other.id, other.public_number)
             second_contract = Contract(
                 client_id=seed.client_id,
                 name="Second Contract",
@@ -1435,14 +1434,11 @@ class ClientContractTaskRouteTests(AppTestCase):
         with session_scope(self.app) as database:
             client = database.scalar(select(Client).where(Client.name == "Client One"))
             assert client is not None
-            client_id = client.id
+            client_id = PublicClientId(client.id, client.public_number)
             self.assertEqual(client.contact_email, "client@example.invalid")
             self.assertIsNone(client.report_password_hash)
         self.assertEqual(self.client.get(f"/clients/{client_id}").status_code, 200)
-        self.assertEqual(self.client.get("/clients/9999").status_code, 302)
-        self.assertEqual(
-            self.client.get("/clients/9999").location, "/?stale=client_deleted"
-        )
+        self.assertEqual(self.client.get("/clients/9999").status_code, 404)
         new_contract_form = self.client.get(f"/contracts/new/{client_id}")
         self.assertEqual(new_contract_form.status_code, 200)
         self.assertIn(b'value="Client Contact"', new_contract_form.data)
@@ -1485,7 +1481,9 @@ class ClientContractTaskRouteTests(AppTestCase):
                 select(Contract).where(Contract.name == "Contract One")
             )
             assert contract is not None
-            contract_id = contract.id
+            contract_id = PublicContractId(
+                contract.id, client_id.number, contract.public_number
+            )
             self.assertEqual(contract.hourly_rate_cents, 5501)
             client = database.get(Client, client_id)
             assert client is not None and client.report_password_hash is None
@@ -1537,16 +1535,8 @@ class ClientContractTaskRouteTests(AppTestCase):
             ).status_code,
             400,
         )
-        self.assertEqual(self.client.get("/clients/9999/edit").status_code, 302)
-        self.assertEqual(
-            self.client.get("/clients/9999/edit").location,
-            "/?stale=client_deleted",
-        )
-        self.assertEqual(self.client.get("/contracts/9999/edit").status_code, 302)
-        self.assertEqual(
-            self.client.get("/contracts/9999/edit").location,
-            "/?stale=contract_deleted",
-        )
+        self.assertEqual(self.client.get("/clients/9999/edit").status_code, 404)
+        self.assertEqual(self.client.get("/contracts/9999/edit").status_code, 404)
 
         replacement_password = "Replacement-Report-Password-For-Test-0001!"
         reset_path = f"/clients/{client_id}/report-password/reset"
@@ -1622,11 +1612,7 @@ class ClientContractTaskRouteTests(AppTestCase):
         self.assertEqual(
             self.client.get(f"/contracts/{seed.contract_id}").status_code, 200
         )
-        self.assertEqual(self.client.get("/contracts/9999").status_code, 302)
-        self.assertEqual(
-            self.client.get("/contracts/9999").location,
-            "/?stale=contract_deleted",
-        )
+        self.assertEqual(self.client.get("/contracts/9999").status_code, 404)
         self.assertEqual(
             self.client.post(
                 f"/tasks/{seed.contract_id}/new", data={"name": ""}
@@ -1796,7 +1782,7 @@ class ClientContractTaskRouteTests(AppTestCase):
             self.client.get(f"/clients/{seed.client_id}/edit").status_code, 404
         )
         self.assertEqual(
-            self.client.get(f"/contracts/{seed.contract_id}").status_code, 302
+            self.client.get(f"/contracts/{seed.contract_id}").status_code, 404
         )
 
 
@@ -1823,7 +1809,7 @@ class TimerAndPermissionRouteTests(AppTestCase):
         self.assertNotIn(b'title="Update Contract"', contract_page.data)
         self.assertEqual(self.client.get("/users").status_code, 403)
         self.assertEqual(
-            self.client.get(f"/reports/{self.seed.contract_id}").status_code, 403
+            self.client.get(f"/reports/{self.seed.client_id}").status_code, 403
         )
         self.assertEqual(self.client.post("/clients/new").status_code, 403)
         self.assertEqual(
@@ -2828,7 +2814,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         password_version: object | None = None,
     ) -> str:
         payload: dict[str, object] = {
-            "client_id": client.id if client_id is None else client_id,
+            "client_number": client.display_number if client_id is None else client_id,
             "password_version": (
                 client.report_password_version
                 if password_version is None
@@ -2846,7 +2832,7 @@ class ReportAndSessionRouteTests(AppTestCase):
 
     def test_admin_live_report(self) -> None:
         self.login()
-        html = self.client.get(f"/reports/{self.seed.contract_id}")
+        html = self.client.get(f"/reports/{self.seed.client_id}")
         self.assertEqual(html.status_code, 200)
         self.assertIn(b"Client Time Report", html.data)
         self.assertIn(b"data-live-report", html.data)
@@ -2854,14 +2840,14 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertIn(b"responsive-table report-session-table", html.data)
         self.assertIn(b'data-label="Cost" data-report-session-cost', html.data)
         self.assertIn(
-            f'data-live-url="/reports/{self.seed.contract_id}/live"'.encode(),
+            f'data-live-url="/reports/{self.seed.client_id}/live"'.encode(),
             html.data,
         )
         etag_match = re.search(rb'data-live-etag="([0-9a-f]{64})"', html.data)
         assert etag_match is not None
         etag = etag_match.group(1).decode()
         unchanged = self.client.get(
-            f"/reports/{self.seed.contract_id}/live",
+            f"/reports/{self.seed.client_id}/live",
             headers={"If-None-Match": f'"{etag}"'},
         )
         self.assertEqual(unchanged.status_code, 304)
@@ -2871,7 +2857,7 @@ class ReportAndSessionRouteTests(AppTestCase):
             assert admin and task
             database.add(TimeEntry(user=admin, task=task, started_at=datetime.now()))
         changed = self.client.get(
-            f"/reports/{self.seed.contract_id}/live",
+            f"/reports/{self.seed.client_id}/live",
             headers={"If-None-Match": f'"{etag}"'},
         )
         self.assertEqual(changed.status_code, 200)
@@ -2882,19 +2868,11 @@ class ReportAndSessionRouteTests(AppTestCase):
             )
             assert active_entry is not None
             self.assertIsNone(active_entry.stopped_at)
-        self.assertEqual(self.client.get("/reports/9999").status_code, 302)
-        self.assertEqual(
-            self.client.get("/reports/9999").location,
-            "/?stale=contract_deleted",
-        )
-        self.assertEqual(self.client.get("/reports/9999/live").status_code, 302)
-        self.assertEqual(
-            self.client.get("/reports/9999/live").location,
-            "/?stale=contract_deleted",
-        )
+        self.assertEqual(self.client.get("/reports/9999").status_code, 404)
+        self.assertEqual(self.client.get("/reports/9999/live").status_code, 404)
         self.assertEqual(
             self.app.test_client()
-            .get(f"/reports/{self.seed.contract_id}/live")
+            .get(f"/reports/{self.seed.client_id}/live")
             .status_code,
             302,
         )
@@ -3042,7 +3020,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         with self.app.test_request_context("/"):
             legacy_value = routes.shared_report_serializer().dumps(
                 {
-                    "client_id": client.id,
+                    "client_number": client.display_number,
                     "password_version": client.report_password_version,
                 }
             )
@@ -3089,7 +3067,7 @@ class ReportAndSessionRouteTests(AppTestCase):
             )
             database.add(second)
             database.flush()
-            second_id = second.id
+            second_id = PublicContractId(second.id, 1, second.public_number)
         moved_existing = self.client.get(f"{edit_url}?original_contract_id={second_id}")
         self.assertIn(f"/contracts/{second_id}/sessions", moved_existing.location)
         self.assertEqual(
@@ -3097,8 +3075,7 @@ class ReportAndSessionRouteTests(AppTestCase):
             404,
         )
         moved = self.client.get(f"{edit_url}?original_contract_id=9999")
-        self.assertEqual(moved.status_code, 302)
-        self.assertIn("stale=time_entry_moved", moved.location)
+        self.assertEqual(moved.status_code, 404)
         with session_scope(self.app) as database:
             task = database.get(Task, self.seed.other_task_id)
             assert task is not None
@@ -3330,7 +3307,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.login()
         contracts = self.client.get(f"/api/clients/{self.seed.client_id}/contracts")
         self.assertEqual(contracts.status_code, 200)
-        self.assertEqual(contracts.json[0]["id"], self.seed.contract_id)
+        self.assertEqual(contracts.json[0]["id"], str(self.seed.contract_id))
         assignments = self.client.get(
             f"/api/contracts/{self.seed.contract_id}/assignments"
         )
@@ -3369,7 +3346,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         with self.app.test_request_context("/"):
             legacy_value = routes.shared_report_serializer().dumps(
                 {
-                    "client_id": client.id,
+                    "client_number": client.display_number,
                     "password_version": client.report_password_version,
                 }
             )
@@ -3477,7 +3454,7 @@ class ReportAndSessionRouteTests(AppTestCase):
             client = database.get(Client, self.seed.client_id)
             assert client is not None and client.report_token is not None
             client.report_password_version += 1
-            client_id = client.id
+            client_id = PublicClientId(client.id, client.public_number)
             token = client.report_token
             current_password_version = client.report_password_version
         current_version = self.app.config["APP_VERSION"]
@@ -3730,7 +3707,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         with session_scope(self.app) as database:
             client = database.get(Client, self.seed.client_id)
             assert client is not None and client.report_token is not None
-            client_id = client.id
+            client_id = PublicClientId(client.id, client.public_number)
             token = client.report_token
             previous_report_version = client.report_password_version
         report_browser = self.app.test_client()
@@ -4139,11 +4116,11 @@ class ReportAndSessionRouteTests(AppTestCase):
         )
         self.assertEqual(
             user_client.get("/contracts/9999/sessions/new").status_code,
-            302,
+            404,
         )
         self.assertEqual(
             user_client.get("/contracts/9999/sessions").status_code,
-            302,
+            404,
         )
         invalid_cases = [
             {

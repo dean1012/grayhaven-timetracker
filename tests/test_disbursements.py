@@ -5,7 +5,15 @@ from datetime import date, timedelta
 from sqlalchemy import select
 
 from grayhaven_timetracker.database import session_scope
+from grayhaven_timetracker.disbursements import (
+    _validated_values,
+    archive_disbursement,
+    create_disbursement,
+    unarchive_disbursement,
+    update_disbursement,
+)
 from grayhaven_timetracker.invoices import (
+    InvoiceDomainError,
     create_invoice,
     mark_invoice_paid,
     preview_invoice,
@@ -134,6 +142,64 @@ class DisbursementRouteTests(AppTestCase):
         self.assertEqual(self.client.get("/my/disbursements").status_code, 200)
         self.assertEqual(self.client.get("/disbursements").status_code, 403)
 
+    def test_invalid_inputs_and_unavailable_actions(self) -> None:
+        self.assertEqual(
+            self.client.get("/disbursements?page=invalid").status_code, 400
+        )
+        self.assertEqual(
+            self.client.get(f"/disbursements/{self.worker_id}?page=0").status_code,
+            400,
+        )
+        self.assertEqual(
+            self.client.get(f"/disbursements/{self.worker_id}?page=999").status_code,
+            302,
+        )
+        self.assertEqual(self.client.get("/disbursements/999999").status_code, 404)
+        self.assertEqual(self.client.get("/disbursements/999999/new").status_code, 404)
+        self.assertEqual(self.client.get("/disbursements/999999/edit").status_code, 404)
+        self.assertEqual(
+            self.client.get("/disbursements/999999/unknown").status_code, 404
+        )
+
+        path = f"/disbursements/{self.worker_id}/new"
+        self.authorize_sensitive_action(path)
+        self.assertEqual(self.client.get(path).status_code, 200)
+        valid = {
+            "date": date.today().isoformat(),
+            "type": "DISBURSEMENT",
+            "transaction_id": "ACH-1",
+            "amount": "10.00",
+        }
+        for changes in ({"date": "invalid"}, {"amount": "invalid"}, {"amount": "0"}):
+            with self.subTest(changes=changes):
+                self.assertEqual(
+                    self.client.post(path, data=valid | changes).status_code, 409
+                )
+        with session_scope(self.app) as database:
+            self.assertIsNone(database.scalar(select(Disbursement)))
+            item = create_disbursement(
+                database,
+                user_id=self.worker_id,
+                actor_id=self.worker_id,
+                kind="DISBURSEMENT",
+                date_value=date.today(),
+                transaction_id="ACH-1",
+                amount_cents=1000,
+                notes=None,
+            )
+            database.commit()
+            item_id = item.id
+        self.assertEqual(
+            self.client.get(f"/disbursements/{item_id}/unarchive").status_code,
+            409,
+        )
+        with session_scope(self.app) as database:
+            archive_disbursement(database, item_id, actor_id=self.worker_id)
+            database.commit()
+        self.assertEqual(
+            self.client.get(f"/disbursements/{item_id}/edit").status_code, 409
+        )
+
     def test_retained_earnings_requires_member_type(self) -> None:
         with session_scope(self.app) as database:
             worker = database.get(User, self.worker_id)
@@ -151,3 +217,143 @@ class DisbursementRouteTests(AppTestCase):
         )
         self.assertEqual(response.status_code, 409)
         self.assertIn(b"only for LLC Members", response.data)
+
+    def test_disbursement_field_guards(self) -> None:
+        with session_scope(self.app) as database:
+            worker = database.get(User, self.worker_id)
+            assert worker is not None
+            valid = {
+                "kind": "DISBURSEMENT",
+                "date_value": date.today(),
+                "transaction_id": "ACH-1",
+                "amount_cents": 100,
+                "notes": None,
+            }
+            invalid = (
+                {"kind": "UNKNOWN"},
+                {"amount_cents": 0},
+                {"date_value": date.today() + timedelta(days=1)},
+                {"transaction_id": None},
+                {"transaction_id": "A" * 101},
+                {"notes": "N" * 2001},
+                {"kind": "RETAINED_EARNINGS", "transaction_id": "ACH-1"},
+            )
+            for changes in invalid:
+                with self.subTest(changes=changes):
+                    with self.assertRaises(InvoiceDomainError):
+                        _validated_values(worker, **(valid | changes))
+
+    def test_disbursement_state_and_balance_guards(self) -> None:
+        with session_scope(self.app) as database:
+            with self.assertRaises(InvoiceDomainError):
+                create_disbursement(
+                    database,
+                    user_id=999999,
+                    actor_id=self.worker_id,
+                    kind="DISBURSEMENT",
+                    date_value=date.today(),
+                    transaction_id="ACH-1",
+                    amount_cents=100,
+                    notes=None,
+                )
+            database.rollback()
+            item = create_disbursement(
+                database,
+                user_id=self.worker_id,
+                actor_id=self.worker_id,
+                kind="DISBURSEMENT",
+                date_value=date.today(),
+                transaction_id="ACH-1",
+                amount_cents=1000,
+                notes=None,
+            )
+            database.commit()
+            item_id = item.id
+
+        with session_scope(self.app) as database:
+            with self.assertRaises(InvoiceDomainError):
+                update_disbursement(
+                    database,
+                    item_id,
+                    kind="DISBURSEMENT",
+                    date_value=date.today(),
+                    transaction_id="ACH-1",
+                    amount_cents=5600,
+                    notes=None,
+                )
+            database.rollback()
+            with self.assertRaises(InvoiceDomainError):
+                update_disbursement(
+                    database,
+                    999999,
+                    kind="DISBURSEMENT",
+                    date_value=date.today(),
+                    transaction_id="ACH-1",
+                    amount_cents=100,
+                    notes=None,
+                )
+            database.rollback()
+            with self.assertRaises(InvoiceDomainError):
+                unarchive_disbursement(database, item_id)
+            database.rollback()
+            archive_disbursement(database, item_id, actor_id=self.worker_id)
+            database.commit()
+
+        with session_scope(self.app) as database:
+            with self.assertRaises(InvoiceDomainError):
+                archive_disbursement(database, item_id, actor_id=self.worker_id)
+            database.rollback()
+            with self.assertRaises(InvoiceDomainError):
+                update_disbursement(
+                    database,
+                    item_id,
+                    kind="DISBURSEMENT",
+                    date_value=date.today(),
+                    transaction_id="ACH-1",
+                    amount_cents=100,
+                    notes=None,
+                )
+
+    def test_unarchive_rechecks_member_type_and_available_balance(self) -> None:
+        with session_scope(self.app) as database:
+            item = create_disbursement(
+                database,
+                user_id=self.worker_id,
+                actor_id=self.worker_id,
+                kind="RETAINED_EARNINGS",
+                date_value=date.today(),
+                transaction_id=None,
+                amount_cents=1000,
+                notes=None,
+            )
+            database.commit()
+            item_id = item.id
+        with session_scope(self.app) as database:
+            archive_disbursement(database, item_id, actor_id=self.worker_id)
+            worker = database.get(User, self.worker_id)
+            assert worker is not None
+            worker.user_type = "subcontractor"
+            database.commit()
+        with session_scope(self.app) as database:
+            with self.assertRaises(InvoiceDomainError):
+                unarchive_disbursement(database, item_id)
+            database.rollback()
+            worker = database.get(User, self.worker_id)
+            assert worker is not None
+            worker.user_type = "llc_member"
+            database.commit()
+        with session_scope(self.app) as database:
+            create_disbursement(
+                database,
+                user_id=self.worker_id,
+                actor_id=self.worker_id,
+                kind="DISBURSEMENT",
+                date_value=date.today(),
+                transaction_id="ACH-2",
+                amount_cents=5000,
+                notes=None,
+            )
+            database.commit()
+        with session_scope(self.app) as database:
+            with self.assertRaises(InvoiceDomainError):
+                unarchive_disbursement(database, item_id)

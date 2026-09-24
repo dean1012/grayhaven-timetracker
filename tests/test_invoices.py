@@ -55,7 +55,7 @@ from grayhaven_timetracker.models import (
     User,
 )
 from grayhaven_timetracker.reports import invoice_entry_costs
-from tests.helpers import AppTestCase
+from tests.helpers import AppTestCase, PublicInvoiceId
 
 
 class InvoiceTimeTests(TestCase):
@@ -172,6 +172,21 @@ class InvoiceDomainTests(AppTestCase):
         super().setUp()
         self.seed = self.seed_contract()
 
+    def test_archived_clients_are_not_offered_for_invoice_generation(self) -> None:
+        with session_scope(self.app) as database:
+            client = database.get(Client, self.seed.client_id)
+            assert client is not None
+            client.archived_at = datetime(2026, 7, 16)
+        with (
+            session_scope(self.app) as database,
+            self.app.test_request_context("/invoices"),
+            patch.object(invoice_routes, "get_session", return_value=database),
+        ):
+            context = invoice_routes.range_context()
+        self.assertNotIn(
+            self.seed.client_id, [client.id for client in context["clients"]]
+        )
+
     def test_invoice_detail_summaries_survive_void_and_source_edits(self) -> None:
         self.login()
         invoice_id = self.create_test_invoice()
@@ -244,7 +259,7 @@ class InvoiceDomainTests(AppTestCase):
             database.commit()
             self.assertEqual(invoice.invoice_number, "001-001-001")
             self.assertTrue(invoice.pdf_bytes.startswith(b"%PDF-"))
-            return invoice.id
+            return PublicInvoiceId(invoice.id, invoice.invoice_number)
 
     def test_preview_rejects_stale_details_and_claims_entries_once(self) -> None:
         with session_scope(self.app) as database:
@@ -592,28 +607,6 @@ class InvoiceDomainTests(AppTestCase):
                 {self.seed.entry_id: Decimal(0)},
             )
 
-    def test_invoice_number_limits_are_reported_before_generation(self) -> None:
-        with session_scope(self.app) as database:
-            client = Client(
-                id=1000,
-                name="Large Identifier Client",
-                contact_name="Billing Contact",
-                contact_email="billing@example.invalid",
-            )
-            contract = Contract(
-                id=1000,
-                client=client,
-                name="Large Identifier Project",
-                contact_name="Billing Contact",
-                contact_email="billing@example.invalid",
-                hourly_rate_cents=5500,
-                payment_terms_days=30,
-            )
-            database.add(contract)
-            database.flush()
-            with self.assertRaisesRegex(InvoiceDomainError, "IDs through 999"):
-                preview_invoice(database, contract_id=contract.id, timezone_name="UTC")
-
     def test_invoice_sequence_stops_after_999(self) -> None:
         with session_scope(self.app) as database:
             entry = database.get(TimeEntry, self.seed.entry_id)
@@ -883,7 +876,7 @@ class InvoiceRouteTests(AppTestCase):
         with session_scope(self.app) as database:
             invoice = database.scalar(select(Invoice))
             assert invoice is not None
-            invoice_id = invoice.id
+            invoice_id = PublicInvoiceId(invoice.id, invoice.invoice_number)
             self.assertEqual(invoice.status, "UNPAID")
             self.assertEqual(len(invoice.lines), 1)
             billing_snapshot = (

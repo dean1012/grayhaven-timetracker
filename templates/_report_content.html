@@ -31,7 +31,7 @@
     <div class="summary-card"><span>Contracts</span><strong>{{ report.contracts|length }}</strong></div>
   </section>
   {% for contract_report in report.contracts %}
-  <section class="report-contract-section" data-report-contract-section data-contract-id="{{ contract_report.contract.id }}" data-hourly-rate-cents="{{ contract_report.contract.hourly_rate_cents }}">
+  <section class="report-contract-section" data-report-contract-section data-contract-id="{{ contract_report.contract.public_ref }}" data-hourly-rate-cents="{{ contract_report.contract.hourly_rate_cents }}">
     <header class="report-contract-heading">
       <h2 class="report-contract-name">{{ contract_report.contract.name }}</h2>
       <p class="muted">{{ format_money(contract_report.contract.hourly_rate) }} per hour</p>

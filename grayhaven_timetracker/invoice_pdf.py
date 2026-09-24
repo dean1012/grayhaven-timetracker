@@ -37,6 +37,7 @@ from .invoice_summary import worker_daily_summary_rows
 from .models import Invoice, InvoiceLine
 
 _FONT_LOCK = Lock()
+_COMPANY_URL = "https://grayhavensystems.com"
 
 
 def _text(value: object) -> str:
@@ -218,12 +219,16 @@ def _render_invoice_pdf_v2(
                 ),
             ],
             [
-                Paragraph(
-                    f"{_text(invoice.client_name)}<br/>"
-                    f"{_text(invoice.contact_name)}<br/>"
-                    f"{_text(invoice.contact_email)}",
-                    body,
-                ),
+                [
+                    Paragraph(
+                        f"{_text(invoice.client_name)}<br/>"
+                        f"{_text(invoice.contact_name)}<br/>"
+                        f"{_text(invoice.contact_email)}",
+                        body,
+                    ),
+                    Spacer(1, 0.12 * inch),
+                    Paragraph("Thank you for your business!", bold),
+                ],
                 Paragraph(
                     f"<b>Issued</b><br/>{issue_date.isoformat()}<br/>"
                     f"<b>Due</b><br/>{invoice.due_date.isoformat()}",
@@ -397,13 +402,20 @@ def _render_invoice_pdf_v2(
         canvas.saveState()
         canvas.setFillColor(colors.HexColor("#5D6873"))
         canvas.setFont(regular_font, 7)
-        canvas.drawString(0.55 * inch, 0.3 * inch, f"Payment Terms: {terms}")
-        canvas.setFillColor(colors.black)
-        canvas.setFont(bold_font, 7)
-        canvas.drawCentredString(
-            LETTER[0] / 2, 0.3 * inch, "Thank you for your business"
+        footer_baseline = 0.3 * inch
+        canvas.drawString(0.55 * inch, footer_baseline, f"Payment Terms: {terms}")
+        canvas.setFillColor(colors.HexColor("#1F5F87"))
+        canvas.drawCentredString(LETTER[0] / 2, footer_baseline, _COMPANY_URL)
+        url_width = pdfmetrics.stringWidth(_COMPANY_URL, regular_font, 7)
+        canvas.linkURL(
+            _COMPANY_URL,
+            (
+                (LETTER[0] - url_width) / 2,
+                footer_baseline - 1,
+                (LETTER[0] + url_width) / 2,
+                footer_baseline + 8,
+            ),
         )
-        canvas.setFont(regular_font, 7)
         canvas.setFillColor(colors.HexColor("#5D6873"))
         canvas.drawRightString(
             LETTER[0] - 0.55 * inch,

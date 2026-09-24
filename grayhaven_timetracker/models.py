@@ -18,8 +18,12 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    event,
+    func,
+    select,
     text,
 )
+from sqlalchemy.engine import Connection
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -94,11 +98,15 @@ class Client(Base):
             name="ck_client_report_password_version",
         ),
         Index("uq_client_name", "name", unique=True),
+        Index("uq_client_public_number", "public_number", unique=True),
         Index("uq_client_report_token", "report_token", unique=True),
         {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    public_number: Mapped[int] = mapped_column(
+        Integer, CheckConstraint("public_number BETWEEN 1 AND 999"), nullable=False
+    )
     name: Mapped[str] = mapped_column(String(200, collation="NOCASE"))
     contact_name: Mapped[str] = mapped_column(String(200))
     contact_email: Mapped[str] = mapped_column(String(255))
@@ -117,6 +125,10 @@ class Client(Base):
         back_populates="client", order_by=lambda: Contract.id.desc()
     )
     invoices: Mapped[list[Invoice]] = relationship(back_populates="client")
+
+    @property
+    def display_number(self) -> str:
+        return f"{self.public_number:03d}"
 
 
 class Contract(Base):
@@ -138,10 +150,19 @@ class Contract(Base):
             name="ck_contract_payment_terms",
         ),
         Index("uq_contract_client_name", "client_id", "name", unique=True),
+        Index(
+            "uq_contract_client_public_number",
+            "client_id",
+            "public_number",
+            unique=True,
+        ),
         {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    public_number: Mapped[int] = mapped_column(
+        Integer, CheckConstraint("public_number BETWEEN 1 AND 999"), nullable=False
+    )
     visible: Mapped[bool] = mapped_column(Boolean, default=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("client.id", ondelete="RESTRICT"))
     name: Mapped[str] = mapped_column(String(200, collation="NOCASE"))
@@ -167,6 +188,40 @@ class Contract(Base):
     @property
     def hourly_rate(self) -> Decimal:
         return Decimal(self.hourly_rate_cents) / Decimal(100)
+
+    @property
+    def public_ref(self) -> str:
+        return f"{self.client.public_number:03d}-{self.public_number:03d}"
+
+
+@event.listens_for(Client, "before_insert")
+def assign_client_public_number(
+    _mapper: Any, connection: Connection, client: Client
+) -> None:
+    if client.public_number is not None:
+        return
+    used = set(connection.execute(select(Client.public_number)).scalars())
+    available = tuple(number for number in range(100, 1000) if number not in used)
+    if not available:
+        raise ValueError("No client numbers remain")
+    client.public_number = secrets.choice(available)
+
+
+@event.listens_for(Contract, "before_insert")
+def assign_contract_public_number(
+    _mapper: Any, connection: Connection, contract: Contract
+) -> None:
+    if contract.public_number is not None:
+        return
+    current = connection.execute(
+        select(func.max(Contract.public_number)).where(
+            Contract.client_id == contract.client_id
+        )
+    ).scalar()
+    next_number = int(current or 0) + 1
+    if next_number > 999:
+        raise ValueError("No contract numbers remain for this client")
+    contract.public_number = next_number
 
 
 class Task(Base):

@@ -23,7 +23,9 @@ from grayhaven_timetracker.models import (
 def main() -> int:
     app = create_app()
     with session_scope(app) as database:
-        if database.scalar(select(Client).where(Client.name == "Sample Client")):
+        if database.scalar(
+            select(Client).where(Client.contact_email == "alex@example.invalid")
+        ):
             print("Demo data already exists.")
             return 0
         admin = database.scalar(select(User).where(User.role == "admin"))

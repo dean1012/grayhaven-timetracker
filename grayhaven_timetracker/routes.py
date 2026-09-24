@@ -125,6 +125,7 @@ from .permissions import (
     can,
     permission_required,
 )
+from .public_ids import find_client, find_contract, public_audit_details
 from .reports import (
     ClientReport,
     ContractReport,
@@ -317,13 +318,23 @@ def audit(event: str, **fields: Any) -> None:
         elif attribute is None:
             fields[label] = f"Time entry (ID: {identifier})"
         else:
-            fields[label] = audit_object_label(getattr(item, attribute), identifier)
+            public_identifier = (
+                item.display_number
+                if isinstance(item, Client)
+                else item.public_ref
+                if isinstance(item, Contract)
+                else identifier
+            )
+            fields[label] = audit_object_label(
+                getattr(item, attribute), public_identifier
+            )
     fields.setdefault(
         "request_source",
         "Public Shared Report"
         if event.startswith("shared_report_")
         else "Web Application",
     )
+    fields["_public_number_labels"] = True
     try:
         record_audit_event(
             database,
@@ -345,7 +356,7 @@ def audit(event: str, **fields: Any) -> None:
 
 def shared_report_cookie_name(client: Client) -> str:
     """Return the independent cookie name for one client's report session."""
-    return f"{SHARED_REPORT_COOKIE_PREFIX}{client.id}"
+    return f"{SHARED_REPORT_COOKIE_PREFIX}{client.display_number}"
 
 
 @dataclass(frozen=True)
@@ -383,7 +394,7 @@ def set_shared_report_cookie(response: Response, client: Client) -> Response:
     value = shared_report_serializer().dumps(
         {
             "app_version": current_app.config["APP_VERSION"],
-            "client_id": client.id,
+            "client_number": client.display_number,
             "password_version": client.report_password_version,
         }
     )
@@ -423,11 +434,10 @@ def validate_shared_report_cookie(client: Client) -> SharedReportCookieValidatio
             return SharedReportCookieValidation(False)
         if not isinstance(payload, dict):
             return SharedReportCookieValidation(False)
-        payload_client_id = payload.get("client_id")
+        payload_client_number = payload.get("client_number")
         password_version = payload.get("password_version")
         if (
-            not is_positive_integer(payload_client_id)
-            or payload_client_id != client.id
+            payload_client_number != client.display_number
             or not is_positive_integer(password_version)
             or (
                 "app_version" in payload
@@ -443,12 +453,10 @@ def validate_shared_report_cookie(client: Client) -> SharedReportCookieValidatio
         return SharedReportCookieValidation(False)
     if not isinstance(payload, dict):
         return SharedReportCookieValidation(False)
-    payload_client_id = payload.get("client_id")
+    payload_client_number = payload.get("client_number")
     password_version = payload.get("password_version")
-    if (
-        not is_positive_integer(payload_client_id)
-        or payload_client_id != client.id
-        or not is_positive_integer(password_version)
+    if payload_client_number != client.display_number or not is_positive_integer(
+        password_version
     ):
         return SharedReportCookieValidation(False)
     if "app_version" not in payload:
@@ -557,7 +565,7 @@ def sensitive_action_rate_key(user: User) -> str:
     return f"{user.id}|{request.remote_addr or 'unknown'}"
 
 
-def audit_object_label(name: str, identifier: int) -> str:
+def audit_object_label(name: str, identifier: int | str) -> str:
     """Render one deleted or affected object without requiring a follow-up lookup."""
     return f"{name} (ID: {identifier})"
 
@@ -587,8 +595,10 @@ def audit_time_entry_details(entry: TimeEntry) -> dict[str, str]:
     """Describe a session with its complete current assignment."""
     contract = entry.task.contract
     return {
-        "client": audit_object_label(contract.client.name, contract.client_id),
-        "contract": audit_object_label(contract.name, contract.id),
+        "client": audit_object_label(
+            contract.client.name, contract.client.display_number
+        ),
+        "contract": audit_object_label(contract.name, contract.public_ref),
         "task": audit_object_label(entry.task.name, entry.task_id),
         "subtask": (
             audit_object_label(entry.subtask.name, entry.subtask_id)
@@ -824,6 +834,34 @@ def get_visible_client_or_404(client_id: int) -> Client:
     return item
 
 
+def audit_reference_id(key: str, label: str) -> int | None:
+    """Resolve historical and public audit references to database keys."""
+    match = re.search(r"\(ID:\s*([0-9]+(?:-[0-9]{3})?)\)", label)
+    if match is None:
+        return None
+    reference = match.group(1)
+    if key == "client" and len(reference) == 3:
+        return get_session().scalar(
+            select(Client.id)
+            .where(Client.public_number == int(reference))
+            .execution_options(include_hidden=True)
+        )
+    if key in {"contract", "previous_contract"} and re.fullmatch(
+        r"[0-9]{3}-[0-9]{3}", reference
+    ):
+        client_number, contract_number = (int(part) for part in reference.split("-"))
+        return get_session().scalar(
+            select(Contract.id)
+            .join(Client, Client.id == Contract.client_id)
+            .where(
+                Client.public_number == client_number,
+                Contract.public_number == contract_number,
+            )
+            .execution_options(include_hidden=True)
+        )
+    return int(reference) if reference.isdecimal() else None
+
+
 def deleted_resource_parent_id(
     events: tuple[str, ...], child_key: str, child_id: int, parent_key: str
 ) -> int | None:
@@ -839,11 +877,11 @@ def deleted_resource_parent_id(
         parent_label = details.get(parent_key)
         if not isinstance(child_label, str) or not isinstance(parent_label, str):
             continue
-        if f"(ID: {child_id})" not in child_label:
+        if audit_reference_id(child_key, child_label) != child_id:
             continue
-        match = re.search(r"\(ID:\s*(\d+)\)", parent_label)
-        if match:
-            return int(match.group(1))
+        parent_id = audit_reference_id(parent_key, parent_label)
+        if parent_id is not None:
+            return parent_id
     return None
 
 
@@ -862,11 +900,11 @@ def created_resource_parent_id(
         parent_label = details.get(parent_key)
         if not isinstance(child_label, str) or not isinstance(parent_label, str):
             continue
-        if f"(ID: {child_id})" not in child_label:
+        if audit_reference_id(child_key, child_label) != child_id:
             continue
-        match = re.search(r"\(ID:\s*(\d+)\)", parent_label)
-        if match:
-            return int(match.group(1))
+        parent_id = audit_reference_id(parent_key, parent_label)
+        if parent_id is not None:
+            return parent_id
     return None
 
 
@@ -1013,7 +1051,15 @@ def datetime_local_value(value: datetime, timezone_name: str) -> str:
 def register_routes(app: Flask) -> None:
     from .disbursement_routes import disbursement_pages
     from .invoice_routes import invoices
+    from .public_ids import (
+        ClientNumberConverter,
+        ContractNumberConverter,
+        InvoiceNumberConverter,
+    )
 
+    app.url_map.converters["clientnum"] = ClientNumberConverter
+    app.url_map.converters["contractnum"] = ContractNumberConverter
+    app.url_map.converters["invoicenum"] = InvoiceNumberConverter
     app.before_request(load_current_user)
     app.register_blueprint(main)
     app.register_blueprint(invoices)
@@ -1026,42 +1072,46 @@ def register_routes(app: Flask) -> None:
         if path.startswith("/api/") or request.method not in {"GET", "HEAD", "POST"}:
             return error
 
-        client_match = re.fullmatch(r"/clients/(\d+)(?:/.*)?", path)
+        client_match = re.fullmatch(r"/clients/([0-9]{3})(?:/.*)?", path)
         if client_match:
-            client_item = get_session().get(Client, int(client_match.group(1)))
-            if client_item is not None and client_item.visible:
+            client_item = get_session().scalar(
+                select(Client)
+                .where(Client.public_number == int(client_match.group(1)))
+                .execution_options(include_hidden=True)
+            )
+            if client_item is None or client_item.visible:
                 return error
             return stale_resource_redirect("main.dashboard", "client_deleted")
 
-        report_match = re.fullmatch(r"/reports/(\d+)(?:/.*)?", path)
+        report_match = re.fullmatch(r"/reports/([0-9]{3})(?:/.*)?", path)
         if report_match:
-            contract_id = int(report_match.group(1))
-            if get_session().get(Contract, contract_id) is not None:
+            client_item = get_session().scalar(
+                select(Client)
+                .where(Client.public_number == int(report_match.group(1)))
+                .execution_options(include_hidden=True)
+            )
+            if client_item is None or client_item.visible:
                 return error
-            client_id = deleted_resource_parent_id(
-                ("contract_deleted",), "contract", contract_id, "client"
-            )
-            if (
-                client_id is not None
-                and get_session().get(Client, client_id) is not None
-            ):
-                return stale_resource_redirect(
-                    "main.client", "contract_deleted", client_id=client_id
-                )
-            return stale_resource_redirect("main.dashboard", "contract_deleted")
+            return stale_resource_redirect("main.dashboard", "client_deleted")
 
-        contract_match = re.fullmatch(r"/contracts/(\d+)(?:/.*)?", path)
+        contract_match = re.fullmatch(r"/contracts/([0-9]{3})-([0-9]{3})(?:/.*)?", path)
         if contract_match:
-            contract_id = int(contract_match.group(1))
-            client_id = deleted_resource_parent_id(
-                ("contract_deleted",), "contract", contract_id, "client"
+            contract_item = get_session().scalar(
+                select(Contract)
+                .join(Client, Client.id == Contract.client_id)
+                .where(
+                    Client.public_number == int(contract_match.group(1)),
+                    Contract.public_number == int(contract_match.group(2)),
+                )
+                .execution_options(include_hidden=True)
             )
-            if (
-                client_id is not None
-                and get_session().get(Client, client_id) is not None
-            ):
+            if contract_item is None or contract_item.visible:
+                return error
+            if contract_item.client.visible:
                 return stale_resource_redirect(
-                    "main.client", "contract_deleted", client_id=client_id
+                    "main.client",
+                    "contract_deleted",
+                    client_id=contract_item.client_id,
                 )
             return stale_resource_redirect("main.dashboard", "contract_deleted")
 
@@ -1797,7 +1847,7 @@ def dashboard() -> Any:
     return render_template("dashboard.html", clients=clients)
 
 
-@main.get("/clients/<int:client_id>")
+@main.get("/clients/<clientnum:client_id>")
 @permission_required(CLIENT_VIEW)
 def client(client_id: int) -> Any:
     item = get_session().scalar(
@@ -1921,7 +1971,7 @@ def new_client() -> Any:
     return redirect(url_for("main.client", client_id=item.id))
 
 
-@main.route("/clients/<int:client_id>/edit", methods=["GET", "POST"])
+@main.route("/clients/<clientnum:client_id>/edit", methods=["GET", "POST"])
 @permission_required(CLIENT_EDIT)
 def edit_client(client_id: int) -> Any:
     item = get_visible_client_or_404(client_id)
@@ -1967,7 +2017,7 @@ def edit_client(client_id: int) -> Any:
     return redirect(url_for("main.client", client_id=item.id))
 
 
-@main.route("/clients/<int:client_id>/archive", methods=["GET", "POST"])
+@main.route("/clients/<clientnum:client_id>/archive", methods=["GET", "POST"])
 @permission_required(CLIENT_ARCHIVE)
 def archive_client(client_id: int) -> Any:
     """Archive a client, its contracts, and active timers."""
@@ -2067,7 +2117,7 @@ def archived_clients() -> Any:
     )
 
 
-@main.route("/clients/<int:client_id>/unarchive", methods=["GET", "POST"])
+@main.route("/clients/<clientnum:client_id>/unarchive", methods=["GET", "POST"])
 @permission_required(CLIENT_ARCHIVE)
 def unarchive_client(client_id: int) -> Any:
     database = get_session()
@@ -2121,7 +2171,9 @@ def unarchive_client(client_id: int) -> Any:
     )
 
 
-@main.route("/clients/<int:client_id>/report-password/reset", methods=["GET", "POST"])
+@main.route(
+    "/clients/<clientnum:client_id>/report-password/reset", methods=["GET", "POST"]
+)
 @permission_required(REPORT_SHARE)
 def reset_client_report_password(client_id: int) -> Any:
     item = get_visible_client_or_404(client_id)
@@ -2178,7 +2230,7 @@ def reset_client_report_password(client_id: int) -> Any:
     )
 
 
-@main.get("/clients/<int:client_id>/report-password/confirmation")
+@main.get("/clients/<clientnum:client_id>/report-password/confirmation")
 @permission_required(REPORT_SHARE)
 def client_report_password_confirmation(client_id: int) -> Any:
     item = get_visible_client_or_404(client_id)
@@ -2218,7 +2270,7 @@ def parse_payment_terms(default: int = 30) -> int:
     return int(value)
 
 
-@main.route("/contracts/new/<int:client_id>", methods=["GET", "POST"])
+@main.route("/contracts/new/<clientnum:client_id>", methods=["GET", "POST"])
 @permission_required(CONTRACT_ADD)
 def new_contract(client_id: int) -> Any:
     client_item = get_visible_client_or_404(client_id)
@@ -2276,7 +2328,7 @@ def new_contract(client_id: int) -> Any:
     return redirect(url_for("main.contract", contract_id=contract_item.id))
 
 
-@main.route("/contracts/<int:contract_id>/edit", methods=["GET", "POST"])
+@main.route("/contracts/<contractnum:contract_id>/edit", methods=["GET", "POST"])
 @permission_required(CONTRACT_EDIT)
 def edit_contract(contract_id: int) -> Any:
     item = cast(Contract, get_or_404(Contract, contract_id))
@@ -2334,7 +2386,7 @@ def edit_contract(contract_id: int) -> Any:
     return redirect(url_for("main.contract", contract_id=item.id))
 
 
-@main.route("/contracts/<int:contract_id>/archive", methods=["GET", "POST"])
+@main.route("/contracts/<contractnum:contract_id>/archive", methods=["GET", "POST"])
 @permission_required(CONTRACT_EDIT)
 def archive_contract(contract_id: int) -> Any:
     """Archive or activate a contract after administrator reauthentication."""
@@ -2421,7 +2473,7 @@ def archive_contract(contract_id: int) -> Any:
     return redirect(url_for("main.contract", contract_id=item.id))
 
 
-@main.get("/contracts/<int:contract_id>")
+@main.get("/contracts/<contractnum:contract_id>")
 @permission_required(CONTRACT_VIEW)
 def contract(contract_id: int) -> Any:
     item = get_session().scalar(
@@ -2463,7 +2515,7 @@ def contract(contract_id: int) -> Any:
     )
 
 
-@main.post("/tasks/<int:contract_id>/new")
+@main.post("/tasks/<contractnum:contract_id>/new")
 @permission_required(TASK_ADD)
 def new_task(contract_id: int) -> Any:
     contract_item = cast(Contract, get_or_404(Contract, contract_id))
@@ -2623,8 +2675,8 @@ def delete_task(task_id: int) -> Any:
     contract_name = task.contract.name
     contract_id = task.contract_id
     task_label = audit_object_label(task.name, task.id)
-    contract_label = audit_object_label(contract_name, contract_id)
-    client_label = audit_object_label(client_name, task.contract.client_id)
+    contract_label = audit_object_label(contract_name, task.contract.public_ref)
+    client_label = audit_object_label(client_name, task.contract.client.display_number)
     confirmation = {
         "eyebrow": "DELETE TASK",
         "title": task.name,
@@ -2682,8 +2734,10 @@ def delete_subtask(subtask_id: int) -> Any:
     client_name = subtask.task.contract.client.name
     contract_name = subtask.task.contract.name
     task_name = subtask.task.name
-    client_label = audit_object_label(client_name, subtask.task.contract.client_id)
-    contract_label = audit_object_label(contract_name, contract_id)
+    client_label = audit_object_label(
+        client_name, subtask.task.contract.client.display_number
+    )
+    contract_label = audit_object_label(contract_name, subtask.task.contract.public_ref)
     task_label = audit_object_label(task_name, subtask.task_id)
     subtask_label = audit_object_label(subtask.name, subtask.id)
     confirmation = {
@@ -2834,7 +2888,9 @@ def stop_timer(entry_id: int) -> Any:
     )
 
 
-@main.route("/contracts/<int:contract_id>/sessions/new", methods=["GET", "POST"])
+@main.route(
+    "/contracts/<contractnum:contract_id>/sessions/new", methods=["GET", "POST"]
+)
 @login_required
 def new_time_entry(contract_id: int) -> Any:
     if not (can(TIME_ENTRY_ADD_OWN) or can(TIME_ENTRY_ADD_ANY)):
@@ -2938,7 +2994,7 @@ def new_time_entry(contract_id: int) -> Any:
     return redirect(url_for("main.contract_sessions", contract_id=contract_id))
 
 
-@main.get("/contracts/<int:contract_id>/sessions")
+@main.get("/contracts/<contractnum:contract_id>/sessions")
 @login_required
 def contract_sessions(contract_id: int) -> Any:
     if not (can(TIME_ENTRY_VIEW_OWN) or can(TIME_ENTRY_VIEW_ANY)):
@@ -3296,7 +3352,7 @@ def my_sessions() -> Any:
     )
 
 
-@main.get("/api/clients/<int:client_id>/contracts")
+@main.get("/api/clients/<clientnum:client_id>/contracts")
 @login_required
 def session_client_contracts(client_id: int) -> Response:
     """Return contracts for the selected session client without inline script data."""
@@ -3318,11 +3374,11 @@ def session_client_contracts(client_id: int) -> Response:
         .all()
     )
     return jsonify(
-        [{"id": contract.id, "name": contract.name} for contract in contracts]
+        [{"id": contract.public_ref, "name": contract.name} for contract in contracts]
     )
 
 
-@main.get("/api/contracts/<int:contract_id>/assignments")
+@main.get("/api/contracts/<contractnum:contract_id>/assignments")
 @login_required
 def session_contract_assignments(contract_id: int) -> Response:
     """Return task and subtask options for the selected session contract."""
@@ -3392,14 +3448,15 @@ def edit_time_entry(entry_id: int) -> Any:
                 url_for(
                     "main.edit_time_entry",
                     entry_id=entry.id,
-                    original_contract_id=contract_item.id,
+                    original_contract_id=contract_item.public_ref,
                 )
             )
         original_contract_id = contract_item.id
-    elif original_contract_value.isdigit():
-        original_contract_id = int(original_contract_value)
     else:
-        abort(404)
+        original_contract = find_contract(database, original_contract_value)
+        if original_contract is None:
+            abort(404)
+        original_contract_id = original_contract.id
     if original_contract_id != contract_item.id:
         notice = "time_entry_moved"
         if database.get(Contract, original_contract_id) is not None:
@@ -3449,8 +3506,8 @@ def edit_time_entry(entry_id: int) -> Any:
         raw_user_id = request.form.get("user_id", "")
         raw_client_id = request.form.get("client_id", "")
         raw_contract_id = request.form.get("contract_id", "")
-        if not raw_client_id.isdigit() or not raw_contract_id.isdigit():
-            raise ValueError("Select a valid client and contract.")
+        selected_client = find_client(database, raw_client_id)
+        selected_contract = find_contract(database, raw_contract_id)
         if can_reassign:
             if not raw_user_id.isdigit():
                 raise ValueError("Select a valid user.")
@@ -3459,8 +3516,6 @@ def edit_time_entry(entry_id: int) -> Any:
             if raw_user_id not in ("", str(entry.user_id)):
                 raise ValueError("You can only correct your own time session.")
             entry_user = entry.user
-        selected_client = database.get(Client, int(raw_client_id))
-        selected_contract = database.get(Contract, int(raw_contract_id))
         if (
             entry_user is None
             or not entry_user.is_enabled
@@ -3534,11 +3589,15 @@ def edit_time_entry(entry_id: int) -> Any:
         changes=audit_changes(
             client=(
                 previous_details["client"],
-                audit_object_label(selected_client.name, selected_client.id),
+                audit_object_label(
+                    selected_client.name, selected_client.display_number
+                ),
             ),
             contract=(
                 previous_details["contract"],
-                audit_object_label(selected_contract.name, selected_contract.id),
+                audit_object_label(
+                    selected_contract.name, selected_contract.public_ref
+                ),
             ),
             task=(previous_details["task"], audit_object_label(task.name, task.id)),
             subtask=(
@@ -3590,9 +3649,12 @@ def delete_time_entry(entry_id: int) -> Any:
     require_active_contract(entry.task.contract)
     contract_id = entry.task.contract_id
     client_label = audit_object_label(
-        entry.task.contract.client.name, entry.task.contract.client_id
+        entry.task.contract.client.name,
+        entry.task.contract.client.display_number,
     )
-    contract_label = audit_object_label(entry.task.contract.name, contract_id)
+    contract_label = audit_object_label(
+        entry.task.contract.name, entry.task.contract.public_ref
+    )
     task_label = audit_object_label(entry.task.name, entry.task_id)
     subtask_label = (
         audit_object_label(entry.subtask.name, entry.subtask_id)
@@ -4139,9 +4201,38 @@ def audit_log() -> Any:
         .offset((page - 1) * AUDIT_PAGE_SIZE)
         .limit(AUDIT_PAGE_SIZE)
     ).all()
+    client_numbers = {
+        identifier: f"{number:03d}"
+        for identifier, number in database.execute(
+            select(Client.id, Client.public_number).execution_options(
+                include_hidden=True
+            )
+        )
+    }
+    contract_numbers = {
+        identifier: f"{client_number:03d}-{number:03d}"
+        for identifier, client_number, number in database.execute(
+            select(Contract.id, Client.public_number, Contract.public_number)
+            .join(Client, Client.id == Contract.client_id)
+            .execution_options(include_hidden=True)
+        )
+    }
+    invoice_numbers = {
+        identifier: number
+        for identifier, number in database.execute(
+            select(Invoice.id, Invoice.invoice_number)
+        )
+    }
+    details_by_id = {
+        item.id: public_audit_details(
+            item.details, client_numbers, contract_numbers, invoice_numbers
+        )
+        for item in items
+    }
     return render_template(
         "audit_log.html",
         items=items,
+        details_by_id=details_by_id,
         events=events,
         actors=actors,
         source_filter=source_filter,
@@ -4707,7 +4798,7 @@ def shared_report_live(token: str) -> Any:
     )
 
 
-@main.get("/reports/<int:client_id>")
+@main.get("/reports/<clientnum:client_id>")
 @permission_required(REPORT_VIEW)
 def report_view(client_id: int) -> str:
     client_item = get_visible_client_or_404(client_id)
@@ -4731,7 +4822,7 @@ def report_view(client_id: int) -> str:
     )
 
 
-@main.get("/reports/<int:client_id>/live")
+@main.get("/reports/<clientnum:client_id>/live")
 @permission_required(REPORT_VIEW)
 def report_live(client_id: int) -> Any:
     client_item = get_visible_client_or_404(client_id)

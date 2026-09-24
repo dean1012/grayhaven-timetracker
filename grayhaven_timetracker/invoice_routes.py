@@ -39,6 +39,7 @@ from .invoices import (
 )
 from .models import Client, Contract, Invoice, InvoiceLine, User
 from .permissions import INVOICE_MANAGE, permission_required
+from .public_ids import find_client, find_contract
 from .reports import format_money
 from .routes import (
     clear_sensitive_action_authorization,
@@ -76,7 +77,9 @@ def invoice_globals() -> dict[str, Any]:
 def range_context(draft: dict[str, Any] | None = None) -> dict[str, Any]:
     database = get_session()
     return {
-        "clients": database.scalars(select(Client).order_by(Client.name)).all(),
+        "clients": database.scalars(
+            select(Client).where(Client.archived_at.is_(None)).order_by(Client.name)
+        ).all(),
         "projects": database.scalars(
             select(Contract)
             .where(Contract.archived_at.is_(None))
@@ -109,7 +112,6 @@ def audit_invoice(event: str, invoice: Invoice, **details: Any) -> None:
         path=request.path,
         details={
             "invoice_number": invoice.invoice_number,
-            "invoice_id": invoice.id,
             **details,
         },
     )
@@ -171,12 +173,13 @@ def preview() -> Any:
         for key in ("client_id", "contract_id", "mode", "range_start", "range_end")
     }
     try:
-        client_id = int(draft["client_id"])
-        contract_id = int(draft["contract_id"])
-        contract = get_session().get(Contract, contract_id)
+        database = get_session()
+        client = find_client(database, str(draft["client_id"]))
+        contract = find_contract(database, str(draft["contract_id"]))
         if (
-            contract is None
-            or contract.client_id != client_id
+            client is None
+            or contract is None
+            or contract.client_id != client.id
             or contract.archived_at is not None
         ):
             raise ValueError(
@@ -193,15 +196,15 @@ def preview() -> Any:
         else:
             raise ValueError("Select a valid invoice range mode.")
         proposed = preview_invoice(
-            get_session(),
-            contract_id=contract_id,
+            database,
+            contract_id=contract.id,
             range_start_utc=start,
             range_end_utc=end,
             timezone_name=timezone_name,
         )
         draft.update(
-            client_id=client_id,
-            contract_id=contract_id,
+            client_id=client.display_number,
+            contract_id=contract.public_ref,
             range_start=datetime_local_value(proposed.range_start_utc, timezone_name),
             range_end=datetime_local_value(proposed.range_end_utc, timezone_name),
             fingerprint=proposed.fingerprint,
@@ -238,13 +241,16 @@ def generate() -> Any:
         return response
     database = get_session()
     try:
+        contract = find_contract(database, str(draft["contract_id"]))
+        if contract is None or contract.client.display_number != draft["client_id"]:
+            raise ValueError("Select a valid client and contract.")
         timezone_name = draft["timezone_name"]
         start = datetime.fromisoformat(draft["start_utc"])
         end = datetime.fromisoformat(draft["end_utc"])
         if request.method == "GET":
             proposed = preview_invoice(
                 database,
-                contract_id=draft["contract_id"],
+                contract_id=contract.id,
                 range_start_utc=start,
                 range_end_utc=end,
                 timezone_name=timezone_name,
@@ -262,7 +268,7 @@ def generate() -> Any:
         branding = Path(current_app.config["BRANDING_PATH"])
         invoice = create_invoice(
             database,
-            contract_id=draft["contract_id"],
+            contract_id=contract.id,
             range_start_utc=start,
             range_end_utc=end,
             timezone_name=timezone_name,
@@ -298,7 +304,7 @@ def generate() -> Any:
     return redirect(url_for("invoices.index"))
 
 
-@invoices.get("/<int:invoice_id>")
+@invoices.get("/<invoicenum:invoice_id>")
 @permission_required(INVOICE_MANAGE)
 def detail(invoice_id: int) -> str:
     invoice = get_invoice(invoice_id)
@@ -312,7 +318,7 @@ def detail(invoice_id: int) -> str:
     )
 
 
-@invoices.get("/<int:invoice_id>/download")
+@invoices.get("/<invoicenum:invoice_id>/download")
 @permission_required(INVOICE_MANAGE)
 def download(invoice_id: int) -> Response:
     invoice = get_invoice(invoice_id)
@@ -327,7 +333,7 @@ def download(invoice_id: int) -> Response:
     )
 
 
-@invoices.route("/<int:invoice_id>/<action>", methods=["GET", "POST"])
+@invoices.route("/<invoicenum:invoice_id>/<action>", methods=["GET", "POST"])
 @permission_required(INVOICE_MANAGE)
 def action(invoice_id: int, action: str) -> Any:
     labels = {

@@ -439,6 +439,25 @@ class DatabaseMaintenanceTests(unittest.TestCase):
 
 
 class DemoSeedTests(AppTestCase):
+    def test_seed_does_not_duplicate_existing_demo_contact(self) -> None:
+        with session_scope(self.app) as database:
+            database.add(
+                Client(
+                    name="Earlier Sample",
+                    contact_name="Alex Example",
+                    contact_email="alex@example.invalid",
+                )
+            )
+        with patch.object(seed_demo_data, "create_app", return_value=self.app):
+            self.assertEqual(seed_demo_data.main(), 0)
+        with session_scope(self.app) as database:
+            self.assertEqual(
+                database.scalar(select(func.count()).select_from(Client)), 1
+            )
+            self.assertEqual(
+                database.scalar(select(func.count()).select_from(TimeEntry)), 0
+            )
+
     def test_seed_creates_data_once_and_requires_an_administrator(self) -> None:
         with patch.object(seed_demo_data, "create_app", return_value=self.app):
             self.assertEqual(seed_demo_data.main(), 0)

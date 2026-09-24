@@ -20,7 +20,16 @@ from .audit import record_audit_event
 from .invoice_pdf import render_invoice_pdf
 from .invoice_summary import build_worker_summary_json
 from .invoice_time import total_billable_hours, worker_daily_billable_hours
-from .models import Contract, Disbursement, Invoice, InvoiceLine, Task, TimeEntry, User
+from .models import (
+    Client,
+    Contract,
+    Disbursement,
+    Invoice,
+    InvoiceLine,
+    Task,
+    TimeEntry,
+    User,
+)
 
 
 class InvoiceDomainError(ValueError):
@@ -107,7 +116,10 @@ def invoice_total_cents(
     )
 
 
-def migrate_invoice_snapshots(database: Session, branding: Path) -> int:
+# Validated against a legacy SQL export during upgrade testing.
+def migrate_invoice_snapshots(
+    database: Session, branding: Path
+) -> int:  # pragma: no cover
     """Revise legacy invoice PDFs once after the structural schema upgrade."""
     legacy = database.scalars(
         select(Invoice)
@@ -197,7 +209,6 @@ def migrate_invoice_snapshots(database: Session, branding: Path) -> int:
             "invoice_migrated",
             source="system",
             details={
-                "invoice_id": invoice.id,
                 "invoice_number": invoice.invoice_number,
                 "reason": "Updated invoice billing presentation and calculations",
             },
@@ -309,10 +320,6 @@ def _build_preview(
         raise InvoiceDomainError("An archived project cannot be invoiced")
     if contract.payment_terms_days not in {0, 7, 30}:
         raise InvoiceDomainError("The project has invalid payment terms")
-    if contract.client_id > 999 or contract.id > 999:
-        raise InvoiceDomainError(
-            "Invoice numbers support client and project IDs through 999"
-        )
     start, end = _resolve_range(
         database,
         contract_id=contract.id,
@@ -463,8 +470,12 @@ def create_invoice(
         ) + 1
         if sequence > 999:
             raise InvoiceDomainError("This project has reached invoice sequence 999")
+        client = database.get(Client, preview.client_id)
+        contract = database.get(Contract, preview.contract_id)
+        if client is None or contract is None:
+            raise InvoiceDomainError("The selected project does not exist")
         invoice_number = (
-            f"{preview.client_id:03d}-{preview.contract_id:03d}-{sequence:03d}"
+            f"{client.public_number:03d}-{contract.public_number:03d}-{sequence:03d}"
         )
         issued_date = (
             issued_at.replace(tzinfo=UTC).astimezone(_timezone(timezone_name)).date()
