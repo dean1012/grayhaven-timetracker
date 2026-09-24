@@ -886,6 +886,12 @@ class InvoiceRouteTests(AppTestCase):
             invoice_id = invoice.id
             self.assertEqual(invoice.status, "UNPAID")
             self.assertEqual(len(invoice.lines), 1)
+            billing_snapshot = (
+                invoice.total_cents,
+                invoice.worker_summary_json,
+                invoice.pdf_version,
+            )
+            original_pdf = invoice.pdf_bytes
             created = database.scalar(
                 select(AuditEvent).where(AuditEvent.event == "invoice_created")
             )
@@ -935,6 +941,12 @@ class InvoiceRouteTests(AppTestCase):
             entry = database.get(TimeEntry, self.seed.entry_id)
             assert invoice is not None and entry is not None
             self.assertEqual(invoice.status, "PAID")
+            self.assertEqual(
+                (invoice.total_cents, invoice.worker_summary_json, invoice.pdf_version),
+                billing_snapshot,
+            )
+            self.assertNotEqual(invoice.pdf_bytes, original_pdf)
+            paid_pdf = invoice.pdf_bytes
             self.assertEqual(entry.billing_status, "client_paid")
             event = database.scalar(
                 select(AuditEvent).where(AuditEvent.event == "invoice_paid")
@@ -973,6 +985,11 @@ class InvoiceRouteTests(AppTestCase):
             assert invoice is not None
             self.assertEqual(invoice.display_status, "REFUNDED")
             self.assertTrue(invoice.pdf_bytes.startswith(b"%PDF-"))
+            self.assertEqual(
+                (invoice.total_cents, invoice.worker_summary_json, invoice.pdf_version),
+                billing_snapshot,
+            )
+            self.assertNotEqual(invoice.pdf_bytes, paid_pdf)
         self.assertEqual(self.client.get(refund_path).status_code, 409)
         self.assertEqual(self.client.get(paid_path).status_code, 409)
         self.assertEqual(self.client.get("/invoices?page=invalid").status_code, 400)
