@@ -64,6 +64,7 @@ class DisbursementRouteTests(AppTestCase):
         initial = self.client.get(
             detail_path, headers={"X-Grayhaven-Live-Refresh": "1"}
         )
+        self.assertIn(b"data-live-page", initial.data)
         self.assertIn(b'aria-label="Add Disbursement"', initial.data)
         self.assertEqual(
             self.client.get(
@@ -75,7 +76,9 @@ class DisbursementRouteTests(AppTestCase):
             ).status_code,
             304,
         )
-        self.assertEqual(self.client.get("/my/disbursements").status_code, 200)
+        worker_history = self.client.get("/my/disbursements")
+        self.assertEqual(worker_history.status_code, 200)
+        self.assertIn(b"data-live-page", worker_history.data)
 
         new_path = f"/disbursements/{self.worker_id}/new"
         self.authorize_sensitive_action(new_path)
