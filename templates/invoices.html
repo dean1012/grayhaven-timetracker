@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Invoices · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}">Dashboard</a></li><li aria-current="page"><span class="breadcrumb-label">Invoices</span></li></ol></nav>{% endblock %}
+{% block content %}
+<section class="page-heading"><div><p class="eyebrow">BILLING</p><h1>Invoices</h1></div></section>
+<section class="panel form-panel invoice-generation"><div class="panel-heading"><div><h2>Generate Invoice</h2></div></div>{% include "_invoice_range_form.html" %}</section>
+<section class="panel session-directory">
+  <div class="panel-heading"><div><h2>Invoice History</h2></div></div>
+  <div class="table-summary"><span>{{ total }} invoice{{ '' if total == 1 else 's' }}</span><span>Page {{ page }} of {{ page_count }}</span></div>
+  <div class="table-container"><table class="data-table responsive-table">
+    <caption class="visually-hidden">Invoices, unpaid first, then paid, then void; newest first in each group</caption>
+    <thead><tr><th scope="col">Invoice</th><th scope="col">Client / Contract</th><th scope="col">Status</th><th scope="col">Generated</th><th scope="col">Due / Paid</th><th class="cell-numeric" scope="col">Total</th><th scope="col">Actions</th></tr></thead>
+    <tbody>{% for invoice in invoices %}<tr>
+      <td class="cell-primary" data-label="Invoice"><a href="{{ url_for('invoices.detail', invoice_id=invoice.id) }}">{{ invoice.invoice_number }}</a></td>
+      <td data-label="Client / Contract"><div>{{ invoice.client_name }}<br><span class="muted">{{ invoice.project_name }}</span></div></td>
+      <td class="cell-status" data-label="Status"><span class="status-pill {{ 'status-success' if invoice.status == 'PAID' else 'status-warning' if invoice.status == 'UNPAID' else 'status-neutral' }}">{{ invoice.status }}</span></td>
+      <td data-label="Generated">{{ format_datetime(invoice.issued_at, timezone_info) }}</td>
+      <td data-label="Due / Paid"><div>{% if invoice.status == 'PAID' %}Paid {{ invoice.paid_date }}{% elif invoice.status == 'UNPAID' %}Due {{ invoice.due_date }}{% else %}—{% endif %}<br><span class="muted">{% if invoice.payment_terms_days == 0 %}Due Immediately{% elif invoice.payment_terms_days == 7 %}7 days{% else %}NET 30{% endif %}</span></div></td>
+      <td class="cell-numeric" data-label="Total">{{ invoice_money(invoice.total_cents) }}</td>
+      <td class="cell-actions" data-label="Actions"><div class="row-actions invoice-actions"><a class="button button-secondary button-compact" href="{{ url_for('invoices.download', invoice_id=invoice.id) }}">Download</a>{% if invoice.status == 'UNPAID' %}<a class="button button-success button-compact" href="{{ url_for('invoices.action', invoice_id=invoice.id, action='paid') }}">Mark Paid</a>{% if invoice.id not in disbursed_invoice_ids %}<a class="button button-stop button-compact" href="{{ url_for('invoices.action', invoice_id=invoice.id, action='void') }}">Void</a>{% endif %}{% elif invoice.status == 'PAID' and invoice.id not in disbursed_invoice_ids %}<a class="button button-stop button-compact" href="{{ url_for('invoices.action', invoice_id=invoice.id, action='unpaid') }}">Mark Unpaid</a>{% endif %}</div></td>
+    </tr>{% else %}<tr class="empty-table-row"><td colspan="7">No invoices have been generated.</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% if page_count > 1 %}<nav class="pagination" aria-label="Invoice pages">{% if page > 1 %}<a class="button button-secondary" href="{{ url_for('invoices.index', page=page-1) }}">Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ page }} of {{ page_count }}</span>{% if page < page_count %}<a class="button button-secondary" href="{{ url_for('invoices.index', page=page+1) }}">Next</a>{% else %}<span></span>{% endif %}</nav>{% endif %}
+</section>
+{% endblock %}

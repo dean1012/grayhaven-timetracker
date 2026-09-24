@@ -1,0 +1,19 @@
+[
+  {
+    "email": "administrator@example.invalid",
+    "first_name": "Example",
+    "last_name": "Administrator",
+    "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$REPLACE$REPLACE",
+    "role": "admin",
+    "enabled": true
+  },
+  {
+    "email": "user@example.invalid",
+    "first_name": "Example",
+    "last_name": "User",
+    "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$REPLACE$REPLACE",
+    "role": "user",
+    "enabled": true,
+    "totp_secret": null
+  }
+]

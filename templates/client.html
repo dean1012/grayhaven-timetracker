@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}{{ client.name }} · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}
+<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb">
+  <ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li aria-current="page"><span class="breadcrumb-label" title="{{ client.name }}">{{ client.name }}</span></li></ol>
+</nav>
+{% endblock %}
+{% block content %}
+<section class="page-heading">
+  <div>
+    <p class="eyebrow">CLIENT</p>
+    <h1 class="truncate-text" title="{{ client.name }}">{{ client.name }}</h1>
+    <p class="muted contact-line"><i class="fa-solid fa-address-card" aria-hidden="true"></i> <span class="client-contact-name truncate-text" title="{{ client.contact_name }}">{{ client.contact_name }}</span> <span class="contact-separator">·</span> <a class="external-link client-contact-email" href="mailto:{{ client.contact_email }}" title="{{ client.contact_email }}"><span class="truncate-text">{{ client.contact_email }}</span></a></p>
+  </div>
+  <div class="heading-actions">
+    {% if can('client:edit') %}<a class="icon-button" href="{{ url_for('main.edit_client', client_id=client.id) }}" title="Update Client" aria-label="Update Client"><i class="fa-solid fa-pen" aria-hidden="true"></i></a>{% endif %}
+    {% if can('client:delete') %}<a class="icon-button danger" href="{{ url_for('main.delete_client', client_id=client.id) }}" title="Delete Client" aria-label="Delete Client"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>{% endif %}
+    {% if can('report:view') %}<a class="icon-button" href="{{ url_for('main.report_view', client_id=client.id) }}" title="View Live Report" aria-label="View Live Report"><i class="fa-solid fa-eye" aria-hidden="true"></i></a>{% endif %}
+  </div>
+</section>
+{% if can('report:share') %}<section class="panel report-share-panel">
+  <div class="panel-heading">
+    <div><p class="eyebrow">LIVE REPORT</p><h2>Report Link</h2></div>
+  </div>
+  <div class="report-link-row">
+    <span class="copy-value client-report-link" data-copy-value="{{ report_url }}">
+      <a class="content-link" href="{{ report_url }}" target="_blank" rel="noopener noreferrer" title="{{ report_url }}">{{ report_url }}</a>
+      <span class="report-link-actions">
+        <button class="icon-button" type="button" data-copy-target=".client-report-link" title="Copy report link" aria-label="Copy report link"><i class="fa-solid fa-copy" aria-hidden="true"></i><span class="visually-hidden">Copy report link</span></button>
+        <a class="icon-button" href="{{ report_mailto }}" title="Share report link by email" aria-label="Share report link by email"><i class="fa-solid fa-envelope" aria-hidden="true"></i><span class="visually-hidden">Share report link by email</span></a>
+        <a class="icon-button" href="{{ url_for('main.reset_client_report_password', client_id=client.id) }}" title="Reset report password" aria-label="Reset report password"><i class="fa-solid fa-key" aria-hidden="true"></i><span class="visually-hidden">Reset report password</span></a>
+      </span>
+    </span>
+  </div>
+</section>{% endif %}
+<section class="panel contract-directory" data-live-region="client-contracts">
+  <div class="panel-heading">
+    <div><p class="eyebrow">CONTRACTS</p><h2>Contract Directory</h2></div>
+    {% if can('contract:add') %}<a class="icon-button accent" href="{{ url_for('main.new_contract', client_id=client.id) }}" title="New Contract" aria-label="New Contract"><i class="fa-solid fa-plus" aria-hidden="true"></i></a>{% endif %}
+  </div>
+  {% for contract in client.contracts %}
+  <div class="contract-row contract-row-detailed">
+    <a class="contract-name-link" href="{{ url_for('main.contract', contract_id=contract.id) }}">
+      <span class="contract-identity">
+      <i class="fa-solid fa-file-signature" aria-hidden="true"></i>
+      <strong class="truncate-text" title="{{ contract.name }}">{{ contract.name }}</strong>
+      {% if contract.archived_at %}<span class="status-pill status-warning">Archived</span>{% endif %}
+      </span>
+    </a>
+    <span class="contract-contact-details">
+      <span class="contract-contact-identity"><i class="fa-solid fa-address-card" aria-hidden="true"></i><strong title="{{ contract.contact_name }}">{{ contract.contact_name }}</strong></span>
+      <a class="contract-contact-email external-link" href="mailto:{{ contract.contact_email }}?subject={{ ('RE: ' ~ client.name ~ '/' ~ contract.name ~ ' Contract')|urlencode }}&amp;body={{ (contract.contact_name ~ ',')|urlencode }}" title="{{ contract.contact_email }}"><span class="truncate-text">{{ contract.contact_email }}</span></a>
+    </span>
+    <span class="contract-payment-terms" aria-label="Payment Terms: {% if contract.payment_terms_days == 0 %}Due Immediately{% else %}NET {{ contract.payment_terms_days }}{% endif %}">{% if contract.payment_terms_days == 0 %}Due Immediately{% else %}NET {{ contract.payment_terms_days }}{% endif %}</span>
+    <span class="contract-rate-details">
+      <span class="rate">{{ format_money(contract.hourly_rate) }}/hr</span>
+      <a class="icon-button contract-row-action" href="{{ url_for('main.contract', contract_id=contract.id) }}" title="Open {{ contract.name }}" aria-label="Open {{ contract.name }}"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></a>
+    </span>
+  </div>
+  {% else %}
+  <div class="panel empty-panel"><div class="panel-heading"><h2>No Contracts Yet</h2></div><p class="muted">No contracts created for this client.</p></div>
+  {% endfor %}
+</section>
+{% endblock %}

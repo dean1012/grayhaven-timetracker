@@ -1,0 +1,50 @@
+services:
+  timetracker:
+    image: grayhaven-timetracker:local
+    build:
+      context: .
+      args:
+        APP_VERSION: "${APP_VERSION:-}"
+    container_name: grayhaven-timetracker
+    environment:
+      BRANDING_PATH: /app/branding
+      BOOTSTRAP_USERS_FILE: "${BOOTSTRAP_USERS_FILE:-/run/secrets/bootstrap_users}"
+      DATABASE_PATH: /app/data/timetracker.sqlite3
+      PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-}"
+      SECRET_KEY_FILE: /run/secrets/flask_secret_key
+      SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-false}"
+      SKIP_BOOTSTRAP: "${SKIP_BOOTSTRAP:-false}"
+      SQLCIPHER_PASSPHRASE_FILE: /run/secrets/sqlcipher_passphrase
+      TRUSTED_HOSTS: "${TRUSTED_HOSTS:-localhost,127.0.0.1}"
+      TRUSTED_PROXY_COUNT: "${TRUSTED_PROXY_COUNT:-0}"
+      WEBAUTHN_ORIGIN: "${WEBAUTHN_ORIGIN:-http://localhost:8000}"
+      WEBAUTHN_RP_ID: "${WEBAUTHN_RP_ID:-localhost}"
+      TZ: ${TZ:-America/Chicago}
+    user: "${UID:-1000}:${GID:-1000}"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    pids_limit: 128
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./branding:/app/branding:ro
+      - ./secrets:/run/secrets:ro
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

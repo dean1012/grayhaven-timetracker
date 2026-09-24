@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Confirm sensitive action · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}" title="Dashboard">Dashboard</a></li><li><a class="breadcrumb-label" href="{{ breadcrumb_parent_url }}" title="{{ breadcrumb_parent_label }}">{{ breadcrumb_parent_label }}</a></li><li aria-current="page"><span class="breadcrumb-label" title="{{ breadcrumb_label }}">{{ breadcrumb_label }}</span></li></ol></nav>{% endblock %}
+{% block content %}
+<section class="narrow-content">
+  <div class="panel form-panel">
+    <p class="eyebrow">{{ eyebrow }}</p>
+    <h1>{{ title }}</h1>
+    <p class="muted">{{ description }}</p>
+    <form method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {% if correction_reason_required %}<label>Correction Reason<textarea name="correction_reason" rows="3" maxlength="1000" required autocomplete="off" data-protonpass-ignore="true"></textarea></label>{% endif %}
+      <div class="form-actions"><a class="button button-secondary" href="{{ cancel_url }}">Cancel</a><button class="button {{ submit_class|default('button-primary') }}" type="submit"><i class="fa-solid {{ submit_icon|default('fa-trash' if 'DELETE' in eyebrow else 'fa-shield-halved') }}" aria-hidden="true"></i> Confirm</button></div>
+    </form>
+  </div>
+</section>
+{% endblock %}
