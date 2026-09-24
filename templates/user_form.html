@@ -19,6 +19,7 @@
       <label>Last Name<input name="last_name" value="{{ request.form.get('last_name', '') }}" maxlength="100" required autocomplete="off" data-protonpass-ignore="true"></label>
       <label>Email Address<input type="email" name="email" value="{{ request.form.get('email', '') }}" maxlength="255" required></label>
       <label>Role<span class="select-control"><select name="role" required autocomplete="off" data-protonpass-ignore="true"><option value="user" {% if request.form.get('role', 'user') == 'user' %}selected{% endif %}>User</option><option value="admin" {% if request.form.get('role') == 'admin' %}selected{% endif %}>Administrator</option></select><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span></label>
+      <label>User Type<span class="select-control"><select name="user_type" required><option value="subcontractor" {% if request.form.get('user_type', 'subcontractor') == 'subcontractor' %}selected{% endif %}>Subcontractor</option><option value="llc_member" {% if request.form.get('user_type') == 'llc_member' %}selected{% endif %}>LLC Member</option></select><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span></label>
       <div class="form-actions">
         <a class="button button-secondary" href="{{ url_for('main.users') }}">Cancel</a>
         <button class="button button-primary" type="submit" data-role-create-submit><i class="fa-solid fa-user-plus" aria-hidden="true" data-role-create-icon></i> <span data-role-create-label>Create User</span></button>

@@ -11,6 +11,23 @@ import { initializePasskeyFlows } from "./passkeys.mjs";
 
 initializePasskeyFlows();
 
+const disbursementForm = document.querySelector("[data-disbursement-form]");
+if (typeof HTMLFormElement !== "undefined" && disbursementForm instanceof HTMLFormElement) {
+  const type = disbursementForm.querySelector("[data-disbursement-type]");
+  const reference = disbursementForm.querySelector("[data-disbursement-reference]");
+  const input = reference?.querySelector('input[name="transaction_id"]');
+  if (type instanceof HTMLSelectElement && reference instanceof HTMLElement && input instanceof HTMLInputElement) {
+    const updateReference = () => {
+      const retained = type.value === "RETAINED_EARNINGS";
+      reference.hidden = retained;
+      input.required = !retained;
+      if (retained) input.value = "";
+    };
+    type.addEventListener("change", updateReference);
+    updateReference();
+  }
+}
+
 const oneTimeConfirmation = document.querySelector("[data-one-time-confirmation]");
 
 if (oneTimeConfirmation instanceof HTMLElement) {

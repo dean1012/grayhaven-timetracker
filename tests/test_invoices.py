@@ -18,6 +18,13 @@ from sqlalchemy.exc import IntegrityError
 from grayhaven_timetracker import invoice_routes
 from grayhaven_timetracker import invoices as invoice_domain
 from grayhaven_timetracker.database import session_scope
+from grayhaven_timetracker.disbursements import (
+    archive_disbursement,
+    create_disbursement,
+    outstanding_cents,
+    unarchive_disbursement,
+    update_disbursement,
+)
 from grayhaven_timetracker.invoice_pdf import render_invoice_pdf
 from grayhaven_timetracker.invoice_summary import (
     daily_summary_rows,
@@ -33,11 +40,9 @@ from grayhaven_timetracker.invoices import (
     InvoiceDomainError,
     calculate_due_date,
     create_invoice,
-    disburse_invoice,
     mark_invoice_paid,
-    mark_invoice_unpaid,
     preview_invoice,
-    undo_disbursement,
+    refund_invoice,
     void_invoice,
 )
 from grayhaven_timetracker.models import (
@@ -47,6 +52,7 @@ from grayhaven_timetracker.models import (
     Invoice,
     InvoiceLine,
     TimeEntry,
+    User,
 )
 from grayhaven_timetracker.reports import invoice_entry_costs
 from tests.helpers import AppTestCase
@@ -94,14 +100,14 @@ class InvoiceTimeTests(TestCase):
                 (date(2026, 9, 16), None),
                 (date(2026, 9, 17), None),
                 (date(2026, 9, 18), None),
-                (date(2026, 9, 19), Decimal("0.52")),
+                (date(2026, 9, 19), Decimal("0.50")),
             ],
         )
         self.assertEqual(
-            worker_summary_rows(lines),
+            worker_summary_rows(lines, timezone),
             [
                 ("Alex Example", Decimal("1.50")),
-                ("Alex Example", Decimal("0.02")),
+                ("Alex Example", Decimal("0.00")),
             ],
         )
 
@@ -121,11 +127,11 @@ class InvoiceTimeTests(TestCase):
         self.assertEqual(
             daily_billable_hours([span], timezone),
             [
-                (date(2026, 7, 15), Decimal("0.01")),
-                (date(2026, 7, 16), Decimal("0.01")),
+                (date(2026, 7, 15), Decimal("0.00")),
+                (date(2026, 7, 16), Decimal("0.00")),
             ],
         )
-        self.assertEqual(total_billable_hours([span], timezone), Decimal("0.02"))
+        self.assertEqual(total_billable_hours([span], timezone), Decimal("0.00"))
 
     def test_daily_allocation_preserves_elapsed_seconds_across_dst(self) -> None:
         from zoneinfo import ZoneInfo
@@ -178,8 +184,8 @@ class InvoiceDomainTests(AppTestCase):
         unpaid = self.client.get(f"/invoices/{invoice_id}")
         self.assertEqual(unpaid.status_code, 200)
         for value in (
-            "Daily Totals",
-            "Session Totals by Worker",
+            "Billable Work -",
+            "Billable hours are rounded daily",
             contact,
             worker_name,
             day,
@@ -280,13 +286,11 @@ class InvoiceDomainTests(AppTestCase):
                     timezone_name="UTC",
                 )
 
-    def test_payment_disbursement_and_void_transitions_are_consistent(self) -> None:
+    def test_payment_refund_and_void_transitions_are_consistent(self) -> None:
         invoice_id = self.create_test_invoice()
         with session_scope(self.app) as database:
             with self.assertRaisesRegex(InvoiceDomainError, "Only a paid invoice"):
-                mark_invoice_unpaid(database, invoice_id)
-            with self.assertRaisesRegex(InvoiceDomainError, "Only a paid invoice"):
-                undo_disbursement(database, invoice_id, user_id=1)
+                refund_invoice(database, invoice_id)
         with session_scope(self.app) as database:
             mark_invoice_paid(database, invoice_id, date(2026, 7, 17))
             database.commit()
@@ -296,61 +300,84 @@ class InvoiceDomainTests(AppTestCase):
             with self.assertRaisesRegex(InvoiceDomainError, "Only an unpaid invoice"):
                 void_invoice(database, invoice_id)
         with session_scope(self.app) as database:
-            with self.assertRaisesRegex(InvoiceDomainError, "future"):
-                disburse_invoice(
-                    database,
-                    invoice_id,
-                    disbursement_date=datetime.now(UTC).date() + timedelta(days=1),
-                    reference="ACH-100",
-                )
-            with self.assertRaisesRegex(InvoiceDomainError, "no matching paid"):
-                disburse_invoice(
-                    database,
-                    invoice_id,
-                    disbursement_date=date(2026, 7, 18),
-                    reference="ACH-100",
-                    user_id=9999,
-                )
-            with self.assertRaisesRegex(InvoiceDomainError, "no disbursed sessions"):
-                undo_disbursement(database, invoice_id, user_id=1)
-        with session_scope(self.app) as database:
-            with self.assertRaisesRegex(InvoiceDomainError, "before the invoice"):
-                disburse_invoice(
-                    database,
-                    invoice_id,
-                    disbursement_date=date(2026, 7, 16),
-                    reference="ACH-100",
-                )
-        with session_scope(self.app) as database:
-            disbursed = disburse_invoice(
-                database,
-                invoice_id,
-                disbursement_date=date(2026, 7, 18),
-                reference="  ACH-100  ",
-            )
-            self.assertEqual([entry.id for entry in disbursed], [self.seed.entry_id])
-            self.assertEqual(disbursed[0].transaction_number, "ACH-100")
+            refunded = refund_invoice(database, invoice_id)
+            self.assertEqual(refunded.display_status, "REFUNDED")
             database.commit()
-        with session_scope(self.app) as database:
-            with self.assertRaisesRegex(InvoiceDomainError, "disbursed invoice"):
-                mark_invoice_unpaid(database, invoice_id)
         with session_scope(self.app) as database:
             entry = database.get(TimeEntry, self.seed.entry_id)
             assert entry is not None
-            undo_disbursement(database, invoice_id, user_id=entry.user_id)
-            database.commit()
-        with session_scope(self.app) as database:
-            mark_invoice_unpaid(database, invoice_id)
-            database.commit()
-        with session_scope(self.app) as database:
-            void_invoice(database, invoice_id)
-            database.commit()
             invoice = database.get(Invoice, invoice_id)
+            assert invoice is not None
+            self.assertEqual(invoice.display_status, "REFUNDED")
+            self.assertEqual(entry.billing_status, "client_paid")
+            self.assertEqual(entry.invoice_id, invoice.id)
+            with self.assertRaisesRegex(InvoiceDomainError, "Only a paid invoice"):
+                refund_invoice(database, invoice_id)
+
+    def test_disbursement_balance_and_corrections(self) -> None:
+        invoice_id = self.create_test_invoice()
+        with session_scope(self.app) as database:
             entry = database.get(TimeEntry, self.seed.entry_id)
-            assert invoice is not None and entry is not None
-            self.assertEqual(invoice.status, "VOID")
-            self.assertEqual(entry.billing_status, "pending_invoice")
-            self.assertIsNone(entry.invoice_id)
+            assert entry is not None
+            worker_id = entry.user_id
+            worker = database.get(User, worker_id)
+            assert worker is not None
+            worker.user_type = "llc_member"
+            mark_invoice_paid(database, invoice_id)
+            database.commit()
+        with session_scope(self.app) as database:
+            self.assertEqual(outstanding_cents(database, worker_id), 5500)
+            item_ids = []
+            for kind, reference, amount in (
+                ("DISBURSEMENT", "ACH-1", 1000),
+                ("IN_KIND", "PURCHASE-1", 1500),
+                ("RETAINED_EARNINGS", None, 3000),
+            ):
+                item = create_disbursement(
+                    database,
+                    user_id=worker_id,
+                    actor_id=worker_id,
+                    kind=kind,
+                    date_value=date.today(),
+                    transaction_id=reference,
+                    amount_cents=amount,
+                    notes=None,
+                )
+                item_ids.append(item.id)
+                database.commit()
+            self.assertEqual(outstanding_cents(database, worker_id), 0)
+            with self.assertRaisesRegex(InvoiceDomainError, "exceeds"):
+                create_disbursement(
+                    database,
+                    user_id=worker_id,
+                    actor_id=worker_id,
+                    kind="DISBURSEMENT",
+                    date_value=date.today(),
+                    transaction_id="ACH-2",
+                    amount_cents=1,
+                    notes=None,
+                )
+            retained_id = item_ids[-1]
+        with session_scope(self.app) as database:
+            archive_disbursement(database, retained_id, actor_id=worker_id)
+            database.commit()
+            self.assertEqual(outstanding_cents(database, worker_id), 3000)
+        with session_scope(self.app) as database:
+            unarchive_disbursement(database, retained_id)
+            database.commit()
+            self.assertEqual(outstanding_cents(database, worker_id), 0)
+            item = update_disbursement(
+                database,
+                retained_id,
+                kind="RETAINED_EARNINGS",
+                date_value=date.today(),
+                transaction_id=None,
+                amount_cents=2500,
+                notes="Corrected amount",
+            )
+            database.commit()
+            self.assertEqual(item.notes, "Corrected amount")
+            self.assertEqual(outstanding_cents(database, worker_id), 500)
 
     def test_since_last_range_starts_at_the_previous_nonvoid_invoice(self) -> None:
         invoice_id = self.create_test_invoice()
@@ -476,32 +503,16 @@ class InvoiceDomainTests(AppTestCase):
                 )
         with session_scope(self.app) as database:
             with self.assertRaisesRegex(InvoiceDomainError, "Only a paid invoice"):
-                disburse_invoice(
-                    database,
-                    invoice_id,
-                    disbursement_date=date.today(),
-                    reference="ACH-200",
-                )
-            with self.assertRaisesRegex(InvoiceDomainError, "reference is required"):
-                disburse_invoice(
-                    database,
-                    invoice_id,
-                    disbursement_date=date.today(),
-                    reference=" ",
-                )
-            with self.assertRaisesRegex(InvoiceDomainError, "reference is too long"):
-                disburse_invoice(
-                    database,
-                    invoice_id,
-                    disbursement_date=date.today(),
-                    reference="X" * 101,
-                )
+                refund_invoice(database, invoice_id)
 
     def test_invoice_snapshot_and_lines_are_database_immutable(self) -> None:
         invoice_id = self.create_test_invoice()
         engine = self.app.extensions["database_engine"]
         statements = (
             text("UPDATE invoice SET client_name = 'Changed' WHERE id = :id"),
+            text("UPDATE invoice SET total_cents = 1 WHERE id = :id"),
+            text("UPDATE invoice SET worker_summary_json = '[]' WHERE id = :id"),
+            text("UPDATE invoice SET pdf_bytes = X'25504446' WHERE id = :id"),
             text(
                 "UPDATE invoice_line SET task_name = 'Changed' WHERE invoice_id = :id"
             ),
@@ -716,14 +727,9 @@ class InvoiceDomainTests(AppTestCase):
             ):
                 mark_invoice_paid(SimpleNamespace(), invoice.id)
 
-            invoice.status = "PAID"
-            entry.billing_status = "invoiced"
-            with self.assertRaisesRegex(InvoiceDomainError, "invalid payment state"):
-                mark_invoice_unpaid(SimpleNamespace(), invoice.id)
-
             invoice.status = "UNPAID"
             entry.billing_status = "disbursed"
-            with self.assertRaisesRegex(InvoiceDomainError, "cannot be voided"):
+            with self.assertRaisesRegex(InvoiceDomainError, "invalid payment state"):
                 void_invoice(SimpleNamespace(), invoice.id)
 
             entry.billing_status = "client_paid"
@@ -952,58 +958,22 @@ class InvoiceRouteTests(AppTestCase):
             404,
         )
 
+        refund_path = f"/invoices/{invoice_id}/refund"
+        self.authorize_sensitive_action(refund_path)
+        self.assertEqual(self.client.get(refund_path).status_code, 200)
+        self.assertEqual(self.client.post(refund_path).status_code, 409)
+        self.assertEqual(
+            self.client.post(
+                refund_path, data={"correction_reason": "Client refund recorded"}
+            ).status_code,
+            302,
+        )
         with session_scope(self.app) as database:
-            entry = database.get(TimeEntry, self.seed.entry_id)
-            assert entry is not None
-            worker_id = entry.user_id
-        disburse_path = f"/invoices/{invoice_id}/disburse/{worker_id}"
-        self.authorize_sensitive_action(disburse_path)
-        self.assertEqual(self.client.get(disburse_path).status_code, 200)
-        invalid_disbursement = self.client.post(
-            disburse_path,
-            data={"disbursement_date": "not-a-date", "reference": "ACH-300"},
-        )
-        self.assertEqual(invalid_disbursement.status_code, 409)
-        disbursed = self.client.post(
-            disburse_path,
-            data={"disbursement_date": str(date.today()), "reference": "ACH-300"},
-        )
-        self.assertEqual(disbursed.status_code, 302)
-        self.assertEqual(
-            self.client.get(f"/invoices/{invoice_id}/unpaid").status_code, 409
-        )
-
-        undo_path = f"/invoices/{invoice_id}/undo-disbursement/{worker_id}"
-        self.authorize_sensitive_action(undo_path)
-        self.assertEqual(self.client.get(undo_path).status_code, 200)
-        self.assertEqual(self.client.post(undo_path).status_code, 409)
-        self.assertEqual(
-            self.client.post(
-                undo_path, data={"correction_reason": "Correct payout record"}
-            ).status_code,
-            302,
-        )
-
-        unpaid_path = f"/invoices/{invoice_id}/unpaid"
-        self.authorize_sensitive_action(unpaid_path)
-        self.assertEqual(self.client.get(unpaid_path).status_code, 200)
-        self.assertEqual(self.client.post(unpaid_path).status_code, 409)
-        self.assertEqual(
-            self.client.post(
-                unpaid_path, data={"correction_reason": "Payment was reversed"}
-            ).status_code,
-            302,
-        )
-
-        void_path = f"/invoices/{invoice_id}/void"
-        self.authorize_sensitive_action(void_path)
-        self.assertEqual(self.client.get(void_path).status_code, 200)
-        self.assertEqual(
-            self.client.post(
-                void_path, data={"correction_reason": "Invoice issued in error"}
-            ).status_code,
-            302,
-        )
+            invoice = database.get(Invoice, invoice_id)
+            assert invoice is not None
+            self.assertEqual(invoice.display_status, "REFUNDED")
+            self.assertTrue(invoice.pdf_bytes.startswith(b"%PDF-"))
+        self.assertEqual(self.client.get(refund_path).status_code, 409)
         self.assertEqual(self.client.get(paid_path).status_code, 409)
         self.assertEqual(self.client.get("/invoices?page=invalid").status_code, 400)
         self.assertEqual(self.client.get("/invoices?page=0").status_code, 400)

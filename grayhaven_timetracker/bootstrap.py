@@ -179,6 +179,7 @@ def reconcile_bootstrap_users(app: Flask, database: Session) -> list[BootstrapOu
             totp_secret=spec.totp_secret,
             pending_totp_secret=None,
             role=spec.role,
+            user_type="llc_member" if spec.role == "admin" else "subcontractor",
             is_enabled=spec.enabled,
             password_change_required=True,
             session_version=1,

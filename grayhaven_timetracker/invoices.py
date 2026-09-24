@@ -14,11 +14,13 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
+from .audit import record_audit_event
 from .invoice_pdf import render_invoice_pdf
-from .invoice_time import total_billable_hours
-from .models import Contract, Invoice, InvoiceLine, Task, TimeEntry
+from .invoice_summary import build_worker_summary_json
+from .invoice_time import total_billable_hours, worker_daily_billable_hours
+from .models import Contract, Disbursement, Invoice, InvoiceLine, Task, TimeEntry, User
 
 
 class InvoiceDomainError(ValueError):
@@ -89,6 +91,119 @@ def _timezone(name: str) -> ZoneInfo:
 def _total_cents(billable_hours: Decimal, hourly_rate_cents: int) -> int:
     amount = billable_hours * Decimal(hourly_rate_cents)
     return int(amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+
+def invoice_total_cents(
+    lines: tuple[InvoicePreviewEntry, ...] | list[InvoiceLine],
+    timezone: ZoneInfo,
+    hourly_rate_cents: int,
+) -> int:
+    """Sum independently rounded worker amounts to preserve payout parity."""
+    return sum(
+        _total_cents(
+            sum((hours for _, hours in days), Decimal("0.00")), hourly_rate_cents
+        )
+        for days in worker_daily_billable_hours(lines, timezone).values()
+    )
+
+
+def migrate_invoice_snapshots(database: Session, branding: Path) -> int:
+    """Revise legacy invoice PDFs once after the structural schema upgrade."""
+    legacy = database.scalars(
+        select(Invoice)
+        .where(Invoice.pdf_version == 1)
+        .options(selectinload(Invoice.lines), selectinload(Invoice.current_entries))
+        .order_by(Invoice.id)
+    ).all()
+    if not legacy:
+        return 0
+    logo = branding / "grayhaven-logo-wordmark-light.png"
+    regular_font = branding / "fonts/inter-400.ttf"
+    bold_font = branding / "fonts/inter-700.ttf"
+    pdf_paths = (
+        (logo, regular_font, bold_font)
+        if all(path.is_file() for path in (logo, regular_font, bold_font))
+        else (None, None, None)
+    )
+    admin_id = database.scalar(
+        select(User.id).where(User.role == "admin").order_by(User.id).limit(1)
+    )
+    if admin_id is None:
+        raise InvoiceDomainError("Invoice migration requires an administrator")
+    for invoice in legacy:
+        timezone = _timezone(invoice.timezone_name)
+        invoice.worker_summary_json = build_worker_summary_json(
+            invoice, invoice.lines, timezone
+        )
+        invoice.total_cents = invoice_total_cents(
+            invoice.lines, timezone, invoice.hourly_rate_cents
+        )
+        by_worker: dict[int, list[InvoiceLine]] = {}
+        for line in invoice.lines:
+            by_worker.setdefault(line.user_id, []).append(line)
+        for user_id, lines in by_worker.items():
+            entries = [
+                entry for entry in invoice.current_entries if entry.user_id == user_id
+            ]
+            disbursed = [
+                entry for entry in entries if entry.billing_status == "disbursed"
+            ]
+            if not disbursed:
+                continue
+            if len(disbursed) != len(entries) or len(entries) != len(lines):
+                raise InvoiceDomainError(
+                    "Legacy disbursement cannot be migrated automatically"
+                )
+            dates = {entry.disbursement_date for entry in disbursed}
+            references = {entry.transaction_number for entry in disbursed}
+            if len(dates) != 1 or len(references) != 1:
+                raise InvoiceDomainError(
+                    "Legacy disbursement has inconsistent transaction details"
+                )
+            disbursement_date = dates.pop()
+            reference = references.pop()
+            if disbursement_date is None or not reference:
+                raise InvoiceDomainError("Legacy disbursement details are incomplete")
+            amount = invoice_total_cents(lines, timezone, invoice.hourly_rate_cents)
+            if amount:
+                database.add(
+                    Disbursement(
+                        user_id=user_id,
+                        date=disbursement_date,
+                        transaction_id=reference,
+                        type="DISBURSEMENT",
+                        amount_cents=amount,
+                        notes=None,
+                        archived_at=None,
+                        archived_by_user_id=None,
+                        created_at=utc_now(),
+                        created_by_user_id=admin_id,
+                    )
+                )
+            for entry in disbursed:
+                entry.billing_status = "client_paid"
+                entry.disbursement_date = None
+                entry.transaction_number = None
+        invoice.pdf_version = 2
+        invoice.pdf_bytes = render_invoice_pdf(
+            invoice,
+            invoice.lines,
+            logo_path=pdf_paths[0],
+            font_regular_path=pdf_paths[1],
+            font_bold_path=pdf_paths[2],
+        )
+        record_audit_event(
+            database,
+            "invoice_migrated",
+            source="system",
+            details={
+                "invoice_id": invoice.id,
+                "invoice_number": invoice.invoice_number,
+                "reason": "Updated invoice billing presentation and calculations",
+            },
+        )
+    database.flush()
+    return len(legacy)
 
 
 def _observed_holidays(year: int) -> set[date]:
@@ -243,7 +358,7 @@ def _build_preview(
         raise InvoiceDomainError("There are no eligible entries to invoice")
     total_seconds = sum(entry.total_seconds for entry in entries)
     fingerprint_data: dict[str, object] = {
-        "billing_policy": "daily-hundredth-half-up-v1",
+        "billing_policy": "worker-daily-quarter-hour-half-up-v2",
         "contract_id": contract.id,
         "client_id": contract.client_id,
         "client_name": contract.client.name,
@@ -271,9 +386,8 @@ def _build_preview(
         range_end_utc=end,
         entries=entries,
         total_seconds=total_seconds,
-        total_cents=_total_cents(
-            total_billable_hours(entries, _timezone(timezone_name)),
-            contract.hourly_rate_cents,
+        total_cents=invoice_total_cents(
+            entries, _timezone(timezone_name), contract.hourly_rate_cents
         ),
         fingerprint=_preview_fingerprint(fingerprint_data),
     )
@@ -375,6 +489,8 @@ def create_invoice(
             total_cents=preview.total_cents,
             due_date=calculate_due_date(issued_date, preview.payment_terms_days),
             paid_date=None,
+            refunded=False,
+            pdf_version=2,
             pdf_bytes=b"",
         )
         invoice.lines = [
@@ -391,6 +507,9 @@ def create_invoice(
             )
             for entry in preview.entries
         ]
+        invoice.worker_summary_json = build_worker_summary_json(
+            invoice, invoice.lines, _timezone(timezone_name)
+        )
         invoice.pdf_bytes = render_invoice_pdf(
             invoice,
             invoice.lines,
@@ -489,27 +608,21 @@ def mark_invoice_paid(
         for entry in entries:
             entry.billing_status = "client_paid"
             entry.client_paid_date = local_paid_date
-        database.flush()
         return invoice
 
 
-def mark_invoice_unpaid(database: Session, invoice_id: int) -> Invoice:
-    """Reverse client payment when no invoice entry has been disbursed."""
+def refund_invoice(database: Session, invoice_id: int) -> Invoice:
+    """Mark a paid invoice refunded without changing worker entitlements."""
     with _immediate_transaction(database):
         invoice = _invoice(database, invoice_id)
-        if invoice.status != "PAID":
-            raise InvoiceDomainError("Only a paid invoice can be marked unpaid")
-        entries = _claimed_entries(database, invoice)
-        if any(entry.billing_status == "disbursed" for entry in entries):
-            raise InvoiceDomainError("A disbursed invoice cannot be marked unpaid")
-        if any(entry.billing_status != "client_paid" for entry in entries):
+        if invoice.status != "PAID" or invoice.refunded:
+            raise InvoiceDomainError("Only a paid invoice can be refunded")
+        if any(
+            entry.billing_status != "client_paid"
+            for entry in _claimed_entries(database, invoice)
+        ):
             raise InvoiceDomainError("Invoice entries have an invalid payment state")
-        invoice.status = "UNPAID"
-        invoice.paid_date = None
-        for entry in entries:
-            entry.billing_status = "invoiced"
-            entry.client_paid_date = None
-        database.flush()
+        invoice.refunded = True
         return invoice
 
 
@@ -520,8 +633,6 @@ def void_invoice(database: Session, invoice_id: int) -> Invoice:
         if invoice.status != "UNPAID":
             raise InvoiceDomainError("Only an unpaid invoice can be voided")
         entries = _claimed_entries(database, invoice)
-        if any(entry.billing_status == "disbursed" for entry in entries):
-            raise InvoiceDomainError("A disbursed invoice cannot be voided")
         if any(entry.billing_status != "invoiced" for entry in entries):
             raise InvoiceDomainError("Invoice entries have an invalid payment state")
         invoice.status = "VOID"
@@ -534,75 +645,4 @@ def void_invoice(database: Session, invoice_id: int) -> Invoice:
             entry.client_paid_date = None
             entry.disbursement_date = None
             entry.transaction_number = None
-        database.flush()
         return invoice
-
-
-def disburse_invoice(
-    database: Session,
-    invoice_id: int,
-    *,
-    disbursement_date: date,
-    reference: str,
-    user_id: int | None = None,
-) -> list[TimeEntry]:
-    """Disburse all remaining invoice entries or those for one worker."""
-    normalized_reference = reference.strip()
-    if not normalized_reference:
-        raise InvoiceDomainError("Disbursement reference is required")
-    if len(normalized_reference) > 100:
-        raise InvoiceDomainError("Disbursement reference is too long")
-    with _immediate_transaction(database):
-        invoice = _invoice(database, invoice_id)
-        if invoice.status != "PAID":
-            raise InvoiceDomainError("Only a paid invoice can be disbursed")
-        today = (
-            utc_now()
-            .replace(tzinfo=UTC)
-            .astimezone(_timezone(invoice.timezone_name))
-            .date()
-        )
-        if invoice.paid_date is None or disbursement_date < invoice.paid_date:
-            raise InvoiceDomainError(
-                "Disbursement date cannot be before the invoice payment date"
-            )
-        if disbursement_date > today:
-            raise InvoiceDomainError("Disbursement date cannot be in the future")
-        claimed = _claimed_entries(database, invoice)
-        selected = [
-            entry
-            for entry in claimed
-            if entry.billing_status == "client_paid"
-            and (user_id is None or entry.user_id == user_id)
-        ]
-        if not selected:
-            raise InvoiceDomainError("There are no matching paid entries to disburse")
-        for entry in selected:
-            entry.billing_status = "disbursed"
-            entry.disbursement_date = disbursement_date
-            entry.transaction_number = normalized_reference
-        database.flush()
-        return selected
-
-
-def undo_disbursement(
-    database: Session, invoice_id: int, *, user_id: int
-) -> list[TimeEntry]:
-    """Undo a worker's disbursements while retaining the invoice payment."""
-    with _immediate_transaction(database):
-        invoice = _invoice(database, invoice_id)
-        if invoice.status != "PAID":
-            raise InvoiceDomainError("Only a paid invoice has disbursements")
-        entries = [
-            entry
-            for entry in _claimed_entries(database, invoice)
-            if entry.user_id == user_id and entry.billing_status == "disbursed"
-        ]
-        if not entries:
-            raise InvoiceDomainError("The selected worker has no disbursed sessions")
-        for entry in entries:
-            entry.billing_status = "client_paid"
-            entry.disbursement_date = None
-            entry.transaction_number = None
-        database.flush()
-        return entries

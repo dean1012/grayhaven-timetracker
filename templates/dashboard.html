@@ -3,7 +3,7 @@
 {% block content %}
 <section class="page-heading">
   <div><p class="eyebrow">OPERATIONS OVERVIEW</p><h1>Clients &amp; Contracts</h1></div>
-  {% if can('client:add') %}<div class="heading-actions"><a class="icon-button accent" href="{{ url_for('main.new_client') }}" title="New Client" aria-label="New Client"><i class="fa-solid fa-plus" aria-hidden="true"></i></a></div>{% endif %}
+  {% if can('client:add') or can('client:archive') %}<div class="heading-actions">{% if can('client:archive') %}<a class="icon-button" href="{{ url_for('main.archived_clients') }}" title="Archived Clients" aria-label="Archived Clients"><i class="fa-solid fa-box-archive" aria-hidden="true"></i></a>{% endif %}{% if can('client:add') %}<a class="icon-button accent" href="{{ url_for('main.new_client') }}" title="New Client" aria-label="New Client"><i class="fa-solid fa-plus" aria-hidden="true"></i></a>{% endif %}</div>{% endif %}
 </section>
 <div data-live-region="dashboard-clients">
 {% if not clients %}<div class="panel empty-panel"><div class="panel-heading"><i class="content-card-icon fa-solid fa-folder-open" aria-hidden="true"></i><h2>No Clients Yet</h2></div><p class="muted">Create the first client to begin tracking contract time.</p></div>{% endif %}

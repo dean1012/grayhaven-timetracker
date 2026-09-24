@@ -12,16 +12,17 @@ from .auth import current_user
 
 AUDIT_VIEW = "audit:view"
 INVOICE_MANAGE = "invoice:manage"
+DISBURSEMENT_MANAGE = "disbursement:manage"
+DISBURSEMENT_VIEW_OWN = "disbursement:view_own"
 REPORT_VIEW = "report:view"
 REPORT_SHARE = "report:share"
 CLIENT_ADD = "client:add"
 CLIENT_VIEW = "client:view"
 CLIENT_EDIT = "client:edit"
-CLIENT_DELETE = "client:delete"
+CLIENT_ARCHIVE = "client:archive"
 CONTRACT_ADD = "contract:add"
 CONTRACT_VIEW = "contract:view"
 CONTRACT_EDIT = "contract:edit"
-CONTRACT_DELETE = "contract:delete"
 TASK_ADD = "task:add"
 TASK_VIEW = "task:view"
 TASK_EDIT = "task:edit"
@@ -46,16 +47,17 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         {
             AUDIT_VIEW,
             INVOICE_MANAGE,
+            DISBURSEMENT_MANAGE,
+            DISBURSEMENT_VIEW_OWN,
             REPORT_VIEW,
             REPORT_SHARE,
             CLIENT_ADD,
             CLIENT_VIEW,
             CLIENT_EDIT,
-            CLIENT_DELETE,
+            CLIENT_ARCHIVE,
             CONTRACT_ADD,
             CONTRACT_VIEW,
             CONTRACT_EDIT,
-            CONTRACT_DELETE,
             TASK_ADD,
             TASK_VIEW,
             TASK_EDIT,
@@ -89,6 +91,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             TIME_ENTRY_ADD_OWN,
             TIME_ENTRY_EDIT_OWN,
             TIME_ENTRY_DELETE_OWN,
+            DISBURSEMENT_VIEW_OWN,
         }
     ),
 }

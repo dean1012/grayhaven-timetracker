@@ -15,9 +15,13 @@ class TimeSpan:
     started_at_utc: datetime
     stopped_at_utc: datetime
     total_seconds: int
+    user_id: int = 0
 
 
 class InvoiceTime(Protocol):
+    @property
+    def user_id(self) -> int: ...
+
     @property
     def started_at_utc(self) -> datetime: ...
 
@@ -57,17 +61,40 @@ def daily_billable_hours(
     lines: Sequence[InvoiceTime], timezone: ZoneInfo
 ) -> list[tuple[date, Decimal]]:
     return [
-        (
-            day,
-            (Decimal(seconds) / Decimal(3600)).quantize(
-                Decimal("0.01"), rounding=ROUND_HALF_UP
-            ),
-        )
+        (day, rounded_quarter_hours(seconds))
         for day, seconds in daily_seconds(lines, timezone)
     ]
 
 
+def rounded_quarter_hours(seconds: int) -> Decimal:
+    """Round elapsed seconds to the nearest quarter hour, with ties upward."""
+    if seconds < 0:
+        raise ValueError("Billable time cannot be negative")
+    quarters = (Decimal(seconds) / Decimal(900)).quantize(
+        Decimal("1"), rounding=ROUND_HALF_UP
+    )
+    return quarters / Decimal(4)
+
+
+def worker_daily_billable_hours(
+    lines: Sequence[InvoiceTime], timezone: ZoneInfo
+) -> dict[int, list[tuple[date, Decimal]]]:
+    """Round each worker's accumulated time for each local calendar day."""
+    grouped: dict[int, list[InvoiceTime]] = {}
+    for line in lines:
+        grouped.setdefault(line.user_id, []).append(line)
+    return {
+        user_id: daily_billable_hours(worker_lines, timezone)
+        for user_id, worker_lines in grouped.items()
+    }
+
+
 def total_billable_hours(lines: Sequence[InvoiceTime], timezone: ZoneInfo) -> Decimal:
     return sum(
-        (hours for _, hours in daily_billable_hours(lines, timezone)), Decimal("0.00")
+        (
+            hours
+            for days in worker_daily_billable_hours(lines, timezone).values()
+            for _, hours in days
+        ),
+        Decimal("0.00"),
     )

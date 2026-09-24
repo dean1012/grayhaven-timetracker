@@ -1363,9 +1363,9 @@ class ClientContractTaskRouteTests(AppTestCase):
                 response = self.client.post(path, data=payload)
             self.assertIn(response.status_code, (302, 409))
 
-    def test_sensitive_delete_forms_require_reason_and_reauthentication(self) -> None:
+    def test_sensitive_archive_and_delete_forms_require_reauthentication(self) -> None:
         seed = self.seed_contract()
-        client_path = f"/clients/{seed.client_id}/delete"
+        client_path = f"/clients/{seed.client_id}/archive"
         self.assertEqual(self.client.get(client_path).status_code, 302)
         authentication_url = self.client.get(client_path).location
         self.assertEqual(self.client.get(authentication_url).status_code, 200)
@@ -1387,15 +1387,7 @@ class ClientContractTaskRouteTests(AppTestCase):
             )
         self.authorize_sensitive_action(client_path)
         self.assertEqual(self.client.get(client_path).status_code, 200)
-        self.assertEqual(
-            self.client.post(
-                client_path,
-                data={},
-            ).status_code,
-            400,
-        )
         for path in (
-            f"/contracts/{seed.contract_id}/delete",
             f"/tasks/{seed.task_id}/delete",
             f"/subtasks/{seed.subtask_id}/delete",
         ):
@@ -1610,9 +1602,7 @@ class ClientContractTaskRouteTests(AppTestCase):
 
                 client_page = self.client.get(f"/clients/{seed.client_id}")
                 self.assertEqual(client_page.status_code, 200)
-                self.assertIn(b"contract-payment-terms", client_page.data)
-                self.assertNotIn(b"contract-payment-terms-label", client_page.data)
-                self.assertIn(f'">{label}</span>'.encode(), client_page.data)
+                self.assertIn(b'data-label="Terms"', client_page.data)
                 self.assertIn(label.encode(), client_page.data)
                 self.assertIn(
                     f'href="/contracts/{seed.contract_id}"'.encode(), client_page.data
@@ -1776,107 +1766,37 @@ class ClientContractTaskRouteTests(AppTestCase):
                 deleted.details["client"], f"Sample Client (ID: {seed.client_id})"
             )
 
-    def test_client_and_contract_deletion_hide_time_without_deleting_audit(
-        self,
-    ) -> None:
+    def test_client_archive_preserves_work_and_records_audit(self) -> None:
         seed = self.seed_contract()
         with session_scope(self.app) as database:
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
             assert admin is not None
             admin.totp_secret = None
-
-        contract_delete_path = f"/contracts/{seed.contract_id}/delete"
-        self.authorize_sensitive_action(contract_delete_path, totp_secret="")
+        client_path = f"/clients/{seed.client_id}/archive"
+        self.authorize_sensitive_action(client_path, totp_secret="")
         self.assertEqual(
-            self.client.post(
-                contract_delete_path,
-                data={"correction_reason": "Remove test contract"},
-            ).status_code,
+            self.client.post(client_path).status_code,
             302,
         )
-        stale_contract = self.client.get(f"/contracts/{seed.contract_id}/delete")
-        self.assertEqual(stale_contract.status_code, 302)
-        self.assertIn(f"/clients/{seed.client_id}", stale_contract.location)
         with session_scope(self.app) as database:
-            self.assertIsNone(database.get(Contract, seed.contract_id))
-            self.assertIsNone(database.get(TimeEntry, seed.entry_id))
-            hidden_contract = database.get(
-                Contract,
-                seed.contract_id,
-                execution_options={"include_hidden": True},
-            )
-            hidden_task = database.get(
-                Task,
-                seed.task_id,
-                execution_options={"include_hidden": True},
-            )
-            hidden_subtask = database.get(
-                Subtask,
-                seed.subtask_id,
-                execution_options={"include_hidden": True},
-            )
-            hidden_entry = database.get(
-                TimeEntry,
-                seed.entry_id,
-                execution_options={"include_hidden": True},
-            )
-            assert hidden_contract and hidden_task and hidden_subtask and hidden_entry
-            self.assertFalse(hidden_contract.visible)
-            self.assertFalse(hidden_task.visible)
-            self.assertFalse(hidden_subtask.visible)
-            self.assertFalse(hidden_entry.visible)
-            deleted = next(
-                item
-                for item in database.scalars(
-                    select(AuditEvent).where(AuditEvent.event == "contract_deleted")
+            client = database.get(Client, seed.client_id)
+            contract = database.get(Contract, seed.contract_id)
+            entry = database.get(TimeEntry, seed.entry_id)
+            assert client is not None and contract is not None and entry is not None
+            self.assertIsNotNone(client.archived_at)
+            self.assertIsNotNone(contract.archived_at)
+            self.assertTrue(entry.visible)
+            self.assertIsNotNone(
+                database.scalar(
+                    select(AuditEvent).where(AuditEvent.event == "client_archived")
                 )
-                if item.details.get("contract")
-                == f"Sample Contract - Phase 1 (ID: {seed.contract_id})"
-            )
-            self.assertEqual(
-                deleted.details["client"], f"Sample Client (ID: {seed.client_id})"
-            )
-            self.assertEqual(
-                deleted.details["contract"],
-                f"Sample Contract - Phase 1 (ID: {seed.contract_id})",
-            )
-
-        client_delete_path = f"/clients/{seed.client_id}/delete"
-        self.authorize_sensitive_action(client_delete_path, totp_secret="")
-        self.assertEqual(
-            self.client.post(
-                client_delete_path,
-                data={"correction_reason": "Remove test client"},
-            ).status_code,
-            302,
-        )
-        with session_scope(self.app) as database:
-            hidden_client = database.get(
-                Client,
-                seed.client_id,
-                execution_options={"include_hidden": True},
-            )
-            assert hidden_client is not None
-            self.assertFalse(hidden_client.visible)
-            replacement = Client(
-                name="Replacement Client",
-                contact_name="New Contact",
-                contact_email="new-contact@example.test",
-            )
-            database.add(replacement)
-            database.flush()
-            self.assertNotEqual(replacement.id, seed.client_id)
-            deleted = database.scalar(
-                select(AuditEvent).where(AuditEvent.event == "client_deleted")
-            )
-            assert deleted is not None
-            self.assertEqual(
-                deleted.details["client"], f"Sample Client (ID: {seed.client_id})"
             )
         self.assertNotIn(b"Sample Client", self.client.get("/").data)
         self.assertEqual(
-            self.client.get(f"/clients/{seed.client_id}").location,
-            "/?stale=client_deleted",
+            self.client.get(f"/clients/{seed.client_id}/edit").status_code, 404
+        )
+        self.assertEqual(
+            self.client.get(f"/contracts/{seed.contract_id}").status_code, 302
         )
 
 
@@ -1914,11 +1834,11 @@ class TimerAndPermissionRouteTests(AppTestCase):
             403,
         )
         self.assertEqual(
-            self.client.get(f"/clients/{self.seed.client_id}/delete").status_code,
+            self.client.get(f"/clients/{self.seed.client_id}/archive").status_code,
             403,
         )
         self.assertEqual(
-            self.client.get(f"/contracts/{self.seed.contract_id}/delete").status_code,
+            self.client.get(f"/contracts/{self.seed.contract_id}/archive").status_code,
             403,
         )
         self.assertEqual(

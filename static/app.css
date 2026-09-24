@@ -384,3 +384,10 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
   .page-shell { padding-top: 4rem; }
   .client-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+[data-disbursement-reference][hidden] {
+  display: none;
+}
+
+.client-contract-section + .client-contract-section {
+  margin-top: var(--space-lg);
+}

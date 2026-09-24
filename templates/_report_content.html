@@ -24,6 +24,7 @@
       <p><span class="live-status" data-live-status data-state="live" aria-live="polite"><span class="running-dot" aria-hidden="true"></span><span class="live-label" data-live-status-label>Live</span></span></p>
     </div>{% endif %}
   </section>
+  <div class="alert-stack"><div class="alert alert-info alert-with-icon" role="status"><i class="fa-solid fa-circle-info" aria-hidden="true"></i><span class="alert-message">Billable hours are rounded daily to the nearest quarter hour once invoiced.</span></div></div>
   <section class="summary-grid panel" aria-label="Report totals">
     <div class="summary-card"><span>Total duration</span><strong data-report-total-duration>{{ format_duration(report.total_seconds) }}</strong></div>
     <div class="summary-card"><span>Cost</span><strong data-report-total-cost>{{ format_money(report.total_cost) }}</strong></div>

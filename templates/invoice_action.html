@@ -2,12 +2,11 @@
 {% block title %}{{ action_label }} · {{ invoice.invoice_number }} · Grayhaven Systems LLC Time Tracker{% endblock %}
 {% block breadcrumbs %}<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}">Dashboard</a></li><li><a class="breadcrumb-label" href="{{ url_for('invoices.index') }}">Invoices</a></li><li><a class="breadcrumb-label" href="{{ url_for('invoices.detail', invoice_id=invoice.id) }}">{{ invoice.invoice_number }}</a></li><li aria-current="page"><span class="breadcrumb-label">{{ action_label }}</span></li></ol></nav>{% endblock %}
 {% block content %}
-<section class="narrow-content"><div class="panel form-panel"><div class="panel-heading"><div><p class="eyebrow">INVOICE ACTION</p><h1>{{ action_label }}</h1><p class="muted">{{ invoice.invoice_number }} · {{ invoice.client_name }} · {{ invoice.project_name }}</p></div></div>
-  <form method="post" action="{{ url_for('invoices.action', invoice_id=invoice.id, action=action, target_id=target_id) if target_id else url_for('invoices.action', invoice_id=invoice.id, action=action) }}" class="form-stack">
+<section class="narrow-content"><div class="panel form-panel"><div class="panel-heading"><div><p class="eyebrow">INVOICE ACTION</p><h1>{{ action_label }}</h1><p class="muted">{{ invoice.invoice_number }} · {{ invoice.client_name }} · {{ invoice.project_name }}</p><p class="muted">The stored PDF will be updated to show this invoice status.</p></div></div>
+  <form method="post" action="{{ url_for('invoices.action', invoice_id=invoice.id, action=action) }}" class="form-stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    {% if action == 'disburse' %}<label>Disbursement date<input type="date" name="disbursement_date" value="{{ today.isoformat() }}" required></label><label>Transaction reference<input name="reference" maxlength="100" required autocomplete="off" data-protonpass-ignore="true"></label>{% endif %}
     {% if reason_required %}<label>Correction reason<textarea name="correction_reason" rows="4" maxlength="1000" required autocomplete="off" data-protonpass-ignore="true"></textarea></label>{% endif %}
-    <div class="form-actions"><a class="button button-secondary" href="{{ url_for('invoices.detail', invoice_id=invoice.id) }}">Cancel</a><button class="button {{ 'button-danger' if action == 'void' else 'button-stop' if action == 'unpaid' else 'button-primary' }}" type="submit"><i class="fa-solid {{ 'fa-ban' if action == 'void' else 'fa-check' }}" aria-hidden="true"></i> Confirm</button></div>
+    <div class="form-actions"><a class="button button-secondary" href="{{ url_for('invoices.detail', invoice_id=invoice.id) }}">Cancel</a><button class="button {{ 'button-danger' if action == 'void' else 'button-stop' if action == 'refund' else 'button-primary' }}" type="submit"><i class="fa-solid {{ 'fa-ban' if action == 'void' else 'fa-check' }}" aria-hidden="true"></i> Confirm</button></div>
   </form>
 </div></section>
 {% endblock %}

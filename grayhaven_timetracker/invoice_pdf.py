@@ -33,7 +33,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from .invoice_summary import daily_summary_rows, worker_summary_rows
+from .invoice_summary import worker_daily_summary_rows
 from .models import Invoice, InvoiceLine
 
 _FONT_LOCK = Lock()
@@ -100,7 +100,28 @@ def render_invoice_pdf(
     font_regular_path: Path | None = None,
     font_bold_path: Path | None = None,
 ) -> bytes:
-    """Render invoice data to a self-contained, multi-page PDF byte string."""
+    """Use the layout version stored on the invoice for explicit revisions."""
+    version = invoice.pdf_version or 2
+    if version != 2:
+        raise ValueError("Unsupported invoice PDF version")
+    return _render_invoice_pdf_v2(
+        invoice,
+        lines,
+        logo_path=logo_path,
+        font_regular_path=font_regular_path,
+        font_bold_path=font_bold_path,
+    )
+
+
+def _render_invoice_pdf_v2(
+    invoice: Invoice,
+    lines: Sequence[InvoiceLine],
+    *,
+    logo_path: Path | None = None,
+    font_regular_path: Path | None = None,
+    font_bold_path: Path | None = None,
+) -> bytes:
+    """Render the fixed 4.0 invoice layout for version-two snapshots."""
     regular_font, bold_font = _fonts(font_regular_path, font_bold_path)
     timezone = ZoneInfo(invoice.timezone_name)
     buffer = BytesIO()
@@ -133,21 +154,17 @@ def render_invoice_pdf(
         spaceAfter=0.1 * inch,
         keepWithNext=1,
     )
-    summary_value = ParagraphStyle(
-        "InvoiceSummaryValue",
-        parent=bold,
-        fontSize=8,
-        leading=10,
-    )
     status_label = {
         "PAID": "PAID",
         "VOID": "VOID",
         "UNPAID": "INVOICE",
-    }.get(invoice.status, "INVOICE")
+        "REFUNDED": "REFUNDED",
+    }.get(invoice.display_status, "INVOICE")
     status_color = {
         "PAID": colors.HexColor("#3FB68B"),
         "VOID": colors.HexColor("#AAB2BF"),
-    }.get(invoice.status, colors.HexColor("#17202A"))
+        "REFUNDED": colors.HexColor("#AAB2BF"),
+    }.get(invoice.display_status, colors.HexColor("#17202A"))
     heading = ParagraphStyle(
         "InvoiceHeading",
         parent=body,
@@ -245,110 +262,60 @@ def render_invoice_pdf(
                 f"<b>Rate:</b> {_money(invoice.hourly_rate_cents)} per hour",
                 body,
             ),
-            Spacer(1, 0.14 * inch),
-        ]
-    )
-    totals = Table(
-        [
-            [
-                Paragraph("Total Time", bold),
-                Paragraph(
-                    f"<nobr>{_text(_duration(invoice.total_seconds))}</nobr>",
-                    summary_value,
-                ),
-            ],
-            [
-                Paragraph("Invoice Total", bold),
-                Paragraph(_money(invoice.total_cents), summary_value),
-            ],
-        ],
-        colWidths=[1.05 * inch, 2.15 * inch],
-        hAlign="RIGHT",
-    )
-    totals.setStyle(
-        TableStyle(
-            [
-                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-                ("LINEABOVE", (0, 1), (-1, 1), 0.8, colors.HexColor("#17202A")),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ]
-        )
-    )
-    story.extend([totals, Spacer(1, 0.18 * inch)])
-    story.append(Paragraph("Daily Totals", section_heading))
-    daily_data: list[list[object]] = [
-        [Paragraph(label, bold) for label in ("Day", "Date", "Hours")]
-    ]
-    for day, hours in daily_summary_rows(invoice, lines, timezone):
-        daily_data.append(
-            [
-                Paragraph(day.strftime("%A"), body),
-                Paragraph(day.isoformat(), body),
-                Paragraph("-" if hours is None else str(hours), body),
-            ]
-        )
-    daily_table = Table(
-        daily_data,
-        colWidths=[2.4 * inch, 2.4 * inch, 2.6 * inch],
-        repeatRows=1,
-        hAlign="LEFT",
-    )
-    daily_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E5E9ED")),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#BCC4CC")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ]
-        )
-    )
-    story.extend(
-        [
-            daily_table,
+            Spacer(1, 0.12 * inch),
             Paragraph(
-                "Billable hours are rounded daily to the nearest 0.01 hour.", small
+                f"Amount Due: {_money(invoice.total_cents)}",
+                ParagraphStyle(
+                    "InvoiceAmountDue",
+                    parent=bold,
+                    fontSize=20,
+                    leading=24,
+                ),
             ),
             Spacer(1, 0.2 * inch),
         ]
     )
-    worker_data: list[list[object]] = [
-        [Paragraph("Worker", bold), Paragraph("Hours", bold)]
-    ]
-    for worker_name, hours in worker_summary_rows(lines):
-        worker_data.append(
-            [
-                Paragraph(_text(worker_name), body),
-                Paragraph(str(hours), body),
-            ]
+    for worker_name, days in worker_daily_summary_rows(invoice, lines, timezone):
+        story.append(
+            Paragraph(f"Billable Work - {_text(worker_name)}", section_heading)
         )
-    worker_table = Table(
-        worker_data,
-        colWidths=[4.4 * inch, 3.0 * inch],
-        repeatRows=1,
-        hAlign="LEFT",
-    )
-    worker_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E5E9ED")),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#BCC4CC")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ]
+        worker_data: list[list[object]] = [
+            [Paragraph(label, bold) for label in ("Day", "Date", "Hours")]
+        ]
+        for day, hours in days:
+            worker_data.append(
+                [
+                    Paragraph(day.strftime("%A"), body),
+                    Paragraph(day.isoformat(), body),
+                    Paragraph("-" if hours is None else f"{hours:.2f}", body),
+                ]
+            )
+        worker_table = Table(
+            worker_data,
+            colWidths=[2.4 * inch, 2.4 * inch, 2.6 * inch],
+            repeatRows=1,
+            hAlign="LEFT",
         )
-    )
+        worker_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E5E9ED")),
+                    ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#BCC4CC")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ]
+            )
+        )
+        story.extend([worker_table, Spacer(1, 0.2 * inch)])
     story.extend(
         [
-            Paragraph("Session Totals by Worker", section_heading),
-            worker_table,
+            Paragraph(
+                "Billable hours are rounded daily to the nearest quarter hour.",
+                bold,
+            ),
             PageBreak(),
             Paragraph("Invoiced Sessions", section_heading),
         ]

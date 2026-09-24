@@ -14,7 +14,6 @@
   <div><p class="eyebrow">CONTRACT</p><h1 class="truncate-text" title="{{ contract.name }}">{{ contract.name }}</h1><p class="muted contract-metadata"><span><i class="fa-solid fa-file-invoice-dollar" aria-hidden="true"></i>{{ format_money(contract.hourly_rate) }} per hour</span><span><i class="fa-solid fa-file-contract" aria-hidden="true"></i>{% if contract.payment_terms_days == 0 %}Due Immediately{% else %}NET {{ contract.payment_terms_days }}{% endif %}</span></p></div>
   <div class="heading-actions">
     {% if not contract.archived_at and can('contract:edit') %}<a class="icon-button" href="{{ url_for('main.edit_contract', contract_id=contract.id) }}" title="Update Contract" aria-label="Update Contract"><i class="fa-solid fa-pen" aria-hidden="true"></i></a>{% endif %}
-    {% if not contract.archived_at and can('contract:delete') %}<a class="icon-button danger" href="{{ url_for('main.delete_contract', contract_id=contract.id) }}" title="Delete Contract" aria-label="Delete Contract"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>{% endif %}
     {% if can('contract:edit') %}<a class="icon-button{% if not contract.archived_at %} danger{% else %} accent{% endif %}" href="{{ url_for('main.archive_contract', contract_id=contract.id) }}" title="{{ 'Activate Contract' if contract.archived_at else 'Archive Contract' }}" aria-label="{{ 'Activate Contract' if contract.archived_at else 'Archive Contract' }}"><i class="fa-solid fa-folder-open" aria-hidden="true"></i></a>{% endif %}
     {% if not contract.archived_at and (can('time_entry:view_own') or can('time_entry:view_any')) %}<a class="icon-button" href="{{ url_for('main.contract_sessions', contract_id=contract.id) }}" title="Sessions" aria-label="Sessions"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i></a>{% endif %}
     {% if can('report:view') %}<a class="icon-button" href="{{ url_for('main.report_view', client_id=contract.client_id) }}" title="View Live Report" aria-label="View Live Report"><i class="fa-solid fa-eye" aria-hidden="true"></i></a>{% endif %}
@@ -60,7 +59,7 @@
           </details>
           {% endif %}
           {% if not contract.archived_at and can('task:delete') and logged_user.is_admin %}
-          <a class="icon-button danger" href="{{ url_for('main.delete_task', task_id=task.id) }}" title="Delete Task" aria-label="Delete Task"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>
+          {% if task.id in protected_task_ids %}<button class="icon-button danger" type="button" disabled title="This task has invoiced sessions and cannot be deleted" aria-label="Delete Task unavailable"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>{% else %}<a class="icon-button danger" href="{{ url_for('main.delete_task', task_id=task.id) }}" title="Delete Task" aria-label="Delete Task"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>{% endif %}
           {% endif %}
         </div>
       </div>
@@ -93,7 +92,7 @@
           </details>
           {% endif %}
           {% if not contract.archived_at and can('task:delete') and logged_user.is_admin %}
-          <a class="icon-button danger" href="{{ url_for('main.delete_subtask', subtask_id=subtask.id) }}" title="Delete Subtask" aria-label="Delete Subtask"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>
+          {% if subtask.id in protected_subtask_ids %}<button class="icon-button danger" type="button" disabled title="This subtask has invoiced sessions and cannot be deleted" aria-label="Delete Subtask unavailable"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>{% else %}<a class="icon-button danger" href="{{ url_for('main.delete_subtask', subtask_id=subtask.id) }}" title="Delete Subtask" aria-label="Delete Subtask"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>{% endif %}
           {% endif %}
         </div>
       </div>

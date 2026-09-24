@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from flask import (
@@ -34,6 +35,7 @@ from .config import (
 )
 from .database import init_app as init_database
 from .database import rollback_request_session, session_scope
+from .invoices import migrate_invoice_snapshots
 from .logging_config import configure_logging
 from .routes import register_routes
 
@@ -87,6 +89,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     init_database(app)
     with session_scope(app) as database:
         bootstrap_outcomes = reconcile_bootstrap_users(app, database)
+        migrate_invoice_snapshots(database, Path(str(app.config["BRANDING_PATH"])))
         for bootstrap_outcome in bootstrap_outcomes:
             user = bootstrap_outcome.user
             record_audit_event(

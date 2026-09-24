@@ -50,9 +50,11 @@ The primary modules are:
 - `permissions.py`: centralized role and object-state checks.
 - `routes.py`: authenticated workflows and shared-report endpoints.
 - `reports.py`: report queries and summaries.
-- `invoices.py`: invoice preview, issuance, payment, void, and disbursement
+- `invoices.py`: invoice preview, issuance, payment, refund, and void
   operations.
 - `invoice_routes.py`: administrator invoice workflows and PDF downloads.
+- `disbursements.py` and `disbursement_routes.py`: worker balances, account
+  transactions, and disbursement history.
 - `invoice_time.py`, `invoice_summary.py`, and `invoice_pdf.py`: local-day
   billing calculations, shared snapshot summaries, and invoice rendering.
 - `models.py`: SQLAlchemy entities and database constraints.
@@ -91,7 +93,7 @@ The application has two roles:
 | Manage clients and contracts | No | Yes |
 | Delete shared tasks and subtasks | No | Yes |
 | Move another user's pending time | No | Yes |
-| Advance or reverse billing state | No | Yes |
+| Manage invoices and worker disbursements | No | Yes |
 | Manage users, TOTP recovery, and passkey wipe-all | No | Yes |
 | Create internal and shared reports | No | Yes |
 | Review the audit log | No | Yes |
@@ -129,13 +131,13 @@ existing contracts that predate payment terms. Archiving a contract stops its
 active timers and removes its work from operational selection and reporting.
 Activation restores normal availability.
 
-Deletion is intentionally constrained. Finalized time must first be returned to
-the pending-invoice state. Deleting eligible clients, contracts, tasks,
-subtasks, or time entries marks those records and their dependent work as
-hidden. Normal application queries exclude hidden records, while their stable
-identifiers and the append-only audit history remain available for controlled
-administrative recovery. User accounts follow the same lifecycle principle
-through enablement rather than a delete operation.
+Clients and contracts are archived rather than deleted. Archiving a client
+archives its contracts, stops active timers, and rotates its shared-report
+password. Restoring a client leaves its contracts archived for separate
+activation. Eligible tasks, subtasks, and pending sessions retain soft-delete
+controls. Normal queries exclude deleted records; stable identifiers and audit
+history remain available for controlled administrative recovery. User accounts
+use enablement rather than deletion.
 
 [Back to top](#application-architecture)
 
@@ -155,14 +157,13 @@ recorded with reasons and audit context.
 
 Stopped pending sessions are eligible when their stop time falls inside the
 selected invoice range. A session that started before the range is included in
-full. Exact elapsed time is allocated to each local calendar day, and each
-day's hours are rounded to the nearest hundredth with ROUND_HALF_UP. The
-rounded daily hours are summed, multiplied by the contract rate, then rounded
-to cents with ROUND_HALF_UP.
+full. Exact elapsed time is allocated to each worker's local calendar day.
+Each worker-day total is rounded to the nearest quarter hour, with ties rounded
+up. Each worker's rounded daily hours are multiplied by the contract rate;
+worker amounts are rounded to cents and summed for the invoice total.
 
 Sessions claimed by an invoice are no longer available for ordinary time
-corrections. The invoice correction workflow returns them to a correctable
-state when appropriate.
+corrections. Voiding an unpaid invoice returns them to a correctable state.
 
 [Back to top](#application-architecture)
 
@@ -172,30 +173,35 @@ Administrators select a client and active contract, choose a custom range or
 the period since the last issued invoice, and review a preview before generating
 an invoice. Generation requires sensitive-action authorization and claims the
 previewed sessions atomically. Each invoice receives a per-contract sequence
-number and stores immutable snapshots of its client, contract, contact, rate,
-payment terms, selected sessions, and total.
+number and stores snapshots of its client, contract, contact, rate, payment
+terms, selected sessions, worker-day totals, calculated amount, and PDF.
 
 ```text
-Pending invoice session → Unpaid invoice → Paid invoice → Worker disbursement
+Pending invoice session → Unpaid invoice → Paid invoice
 ```
 
 The due date applies the invoice's terms in calendar days and moves forward
 past weekends and observed dates for fixed-date United States federal holidays.
-Administrators mark an unpaid invoice as paid, then record disbursements for
-one worker at a time with a date and reference. A payment can be corrected to
-unpaid after all disbursements are undone. An unpaid invoice can be voided,
-returning its sessions to pending invoice; the invoice remains as a permanent
-voided record. Correction actions require sensitive-action authorization, and
-reversals and voids record a reason in the audit history.
+Administrators can void an unpaid invoice, returning its sessions to pending
+invoice. A paid invoice can be marked refunded without changing the worker's
+earned balance. Refunds and voids are permanent and require a correction reason
+and sensitive-action authorization.
 
-Invoice downloads render a PDF from the invoice's immutable data snapshots
-whenever an administrator requests one.
+Invoice PDFs are stored when generated and updated when the invoice status
+changes. Downloads serve the stored PDF so later calculation changes do not
+alter issued invoices. Status updates render through the invoice's saved PDF
+layout version.
 
-The invoice detail page presents the billing contact, contract rate, daily
-hours, worker hours, and session details from the same snapshots as the PDF.
-Daily summaries include empty weekdays within the invoice range as a dash and
-include weekends when work was recorded. Worker summaries remain available
-for unpaid, paid, and void invoices.
+The invoice detail page and PDF present the billing contact, contract rate,
+rounded billable work by worker and day, and exact session details. Daily
+summaries include empty weekdays within the invoice range as a dash and include
+weekends when work was recorded.
+
+Paid invoices add each worker's rounded amount to an independent balance.
+Administrators record dated Disbursement, In-Kind Transaction, or Retained
+Earnings entries against that balance. Retained Earnings are available only to
+LLC Members. Entries can be corrected or archived with a reason; workers can
+view their own active transaction history.
 
 [Back to top](#application-architecture)
 
@@ -203,7 +209,7 @@ for unpaid, paid, and void invoices.
 
 Administrators can view live client-wide reports. The report query includes
 running timers and completed sessions that are still pending invoice under
-active contracts. Invoiced, paid, disbursed, and archived-contract sessions are
+active contracts. Invoiced, paid, and archived-contract sessions are
 intentionally excluded from the operational report.
 
 My Sessions groups pending invoice duration and cost by local calendar day.

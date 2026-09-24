@@ -70,11 +70,14 @@ from .auth import (
     verify_password_constant_time,
 )
 from .database import get_session, health_check
-from .invoice_time import TimeSpan, daily_seconds
+from .disbursements import outstanding_cents
+from .invoice_time import TimeSpan, daily_seconds, worker_daily_billable_hours
 from .models import (
     AuditEvent,
     Client,
     Contract,
+    Disbursement,
+    Invoice,
     PasskeyCredential,
     PasskeyIdentity,
     Subtask,
@@ -94,11 +97,10 @@ from .passkeys import (
 from .permissions import (
     AUDIT_VIEW,
     CLIENT_ADD,
-    CLIENT_DELETE,
+    CLIENT_ARCHIVE,
     CLIENT_EDIT,
     CLIENT_VIEW,
     CONTRACT_ADD,
-    CONTRACT_DELETE,
     CONTRACT_EDIT,
     CONTRACT_VIEW,
     REPORT_SHARE,
@@ -532,7 +534,11 @@ def get_shared_report_client(token: str) -> Client:
         abort(404)
     client = get_session().scalar(
         select(Client)
-        .where(Client.report_token == token, Client.visible.is_(True))
+        .where(
+            Client.report_token == token,
+            Client.visible.is_(True),
+            Client.archived_at.is_(None),
+        )
         .options(selectinload(Client.contracts))
     )
     if client is None:
@@ -780,19 +786,20 @@ def correction_reason() -> str:
 
 def require_active_contract(contract: Contract) -> None:
     """Reject operational changes while a contract is archived."""
+    if contract.client.archived_at is not None:
+        abort(409, "Unarchive the client before changing its work data.")
     if contract.archived_at is not None:
         abort(409, "Activate the contract before changing its work data.")
 
 
-def require_pending_sessions_for_deletion(statement: Any) -> None:
+def require_pending_sessions_for_deletion(statement: Any, label: str) -> None:
     """Prevent destructive parent deletes from bypassing session immutability."""
     if get_session().scalar(
         statement.where(TimeEntry.billing_status != "pending_invoice")
     ):
         abort(
             409,
-            "Return all finalized sessions to Pending Invoice before deleting "
-            "this data.",
+            f"This {label} has invoiced sessions and cannot be deleted.",
         )
 
 
@@ -806,7 +813,11 @@ def get_or_404(model: type[Any], identifier: int) -> Any:
 def get_visible_client_or_404(client_id: int) -> Client:
     """Return a client that remains available to normal application workflows."""
     item = get_session().scalar(
-        select(Client).where(Client.id == client_id, Client.visible.is_(True))
+        select(Client).where(
+            Client.id == client_id,
+            Client.visible.is_(True),
+            Client.archived_at.is_(None),
+        )
     )
     if item is None:
         abort(404)
@@ -1000,11 +1011,13 @@ def datetime_local_value(value: datetime, timezone_name: str) -> str:
 
 
 def register_routes(app: Flask) -> None:
+    from .disbursement_routes import disbursement_pages
     from .invoice_routes import invoices
 
     app.before_request(load_current_user)
     app.register_blueprint(main)
     app.register_blueprint(invoices)
+    app.register_blueprint(disbursement_pages)
 
     @app.errorhandler(404)
     def redirect_missing_resource(error: Any) -> Any:
@@ -1773,8 +1786,10 @@ def dashboard() -> Any:
         get_session()
         .scalars(
             select(Client)
-            .where(Client.visible.is_(True))
-            .options(selectinload(Client.contracts))
+            .where(Client.visible.is_(True), Client.archived_at.is_(None))
+            .options(
+                selectinload(Client.contracts.and_(Contract.archived_at.is_(None)))
+            )
             .order_by(Client.name)
         )
         .all()
@@ -1786,18 +1801,78 @@ def dashboard() -> Any:
 @permission_required(CLIENT_VIEW)
 def client(client_id: int) -> Any:
     item = get_session().scalar(
-        select(Client)
-        .where(Client.id == client_id, Client.visible.is_(True))
-        .options(selectinload(Client.contracts))
+        select(Client).where(
+            Client.id == client_id,
+            Client.visible.is_(True),
+            Client.archived_at.is_(None),
+        )
     )
     if item is None:
         abort(404)
+    try:
+        active_page = int(request.args.get("active_page", "1"))
+        archived_page = int(request.args.get("archived_page", "1"))
+    except ValueError:
+        abort(400)
+    if active_page < 1 or archived_page < 1:
+        abort(400)
     if response := unchanged_live_page_response():
         return response
+    database = get_session()
+    counts = {
+        "active": int(
+            database.scalar(
+                select(func.count(Contract.id)).where(
+                    Contract.client_id == client_id, Contract.archived_at.is_(None)
+                )
+            )
+            or 0
+        ),
+        "archived": int(
+            database.scalar(
+                select(func.count(Contract.id)).where(
+                    Contract.client_id == client_id, Contract.archived_at.is_not(None)
+                )
+            )
+            or 0
+        ),
+    }
+    page_size = 25
+    active_pages = max(1, (counts["active"] + page_size - 1) // page_size)
+    archived_pages = max(1, (counts["archived"] + page_size - 1) // page_size)
+    if active_page > active_pages or archived_page > archived_pages:
+        return redirect(
+            url_for(
+                "main.client",
+                client_id=client_id,
+                active_page=min(active_page, active_pages),
+                archived_page=min(archived_page, archived_pages),
+            )
+        )
+    active_contracts = database.scalars(
+        select(Contract)
+        .where(Contract.client_id == client_id, Contract.archived_at.is_(None))
+        .order_by(Contract.name, Contract.id)
+        .offset((active_page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+    archived_contracts = database.scalars(
+        select(Contract)
+        .where(Contract.client_id == client_id, Contract.archived_at.is_not(None))
+        .order_by(Contract.name, Contract.id)
+        .offset((archived_page - 1) * page_size)
+        .limit(page_size)
+    ).all()
     report_token = ensure_client_report_token(item)
     return render_template(
         "client.html",
         client=item,
+        active_contracts=active_contracts,
+        archived_contracts=archived_contracts,
+        active_page=active_page,
+        active_pages=active_pages,
+        archived_page=archived_page,
+        archived_pages=archived_pages,
         report_url=shared_report_url(report_token),
         report_mailto=report_mailto(item, shared_report_url(report_token)),
     )
@@ -1892,60 +1967,156 @@ def edit_client(client_id: int) -> Any:
     return redirect(url_for("main.client", client_id=item.id))
 
 
-@main.route("/clients/<int:client_id>/delete", methods=["GET", "POST"])
-@permission_required(CLIENT_DELETE)
-def delete_client(client_id: int) -> Any:
-    """Hide a client and delete dependent work after administrator reauthentication."""
+@main.route("/clients/<int:client_id>/archive", methods=["GET", "POST"])
+@permission_required(CLIENT_ARCHIVE)
+def archive_client(client_id: int) -> Any:
+    """Archive a client, its contracts, and active timers."""
     database = get_session()
     item = get_visible_client_or_404(client_id)
-    require_pending_sessions_for_deletion(
-        select(TimeEntry.id)
-        .join(TimeEntry.task)
-        .join(Task.contract)
-        .where(Contract.client_id == item.id)
-    )
     actor = cast(User, current_user())
     confirmation = {
-        "eyebrow": "DELETE CLIENT",
+        "eyebrow": "ARCHIVE CLIENT",
         "title": item.name,
         "description": (
-            "Delete this client, all contracts, tasks, subtasks, and recorded "
-            "time. Audit history is retained. This cannot be undone."
+            "Archive this client and its contracts, stop active timers, and "
+            "invalidate client report access."
         ),
-        "submit_label": "Delete Client",
+        "submit_label": "Archive Client",
         "cancel_url": url_for("main.client", client_id=item.id),
         "breadcrumb_parent_label": item.name,
         "breadcrumb_parent_url": url_for("main.client", client_id=item.id),
-        "breadcrumb_label": "Delete Client",
-        "correction_reason_required": True,
+        "breadcrumb_label": "Archive Client",
     }
     if response := require_sensitive_action_authorization(
-        actor, cast(str, confirmation["cancel_url"])
+        actor, confirmation["cancel_url"]
     ):
         return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
-    try:
-        reason = correction_reason()
-    except ValueError as exc:
-        flash(str(exc), "error")
-        return render_template("sensitive_action_form.html", **confirmation), 400
-    client_label = audit_object_label(item.name, item.id)
-    deleted_time = hide_contract_data(
-        select(Contract.id).where(Contract.client_id == item.id)
-    )
-    item.visible = False
+    archived_at = now_utc()
+    stopped_entries = database.scalars(
+        select(TimeEntry)
+        .join(TimeEntry.task)
+        .join(Task.contract)
+        .where(Contract.client_id == item.id, TimeEntry.stopped_at.is_(None))
+        .options(selectinload(TimeEntry.task), selectinload(TimeEntry.user))
+    ).all()
+    for entry in stopped_entries:
+        entry.stopped_at = max(archived_at, entry.started_at)
+    contracts = database.scalars(
+        select(Contract).where(
+            Contract.client_id == item.id, Contract.archived_at.is_(None)
+        )
+    ).all()
+    for contract in contracts:
+        contract.archived_at = archived_at
+        contract.archived_by_user_id = actor.id
+    item.archived_at = archived_at
+    item.archived_by_user_id = actor.id
+    item.report_password_hash = hash_password(generate_temporary_password())
+    item.report_password_version += 1
     database.commit()
+    for entry in stopped_entries:
+        audit(
+            "timer_stopped_automatically",
+            actor_id=actor.id,
+            audit_source="system",
+            initiated_by=actor.id,
+            **audit_time_entry_details(entry),
+            end_time=audit_time(cast(datetime, entry.stopped_at)),
+            stop_reason="Client archived",
+        )
     audit(
-        "client_deleted",
+        "client_archived",
         actor_id=actor.id,
-        client=client_label,
-        deleted_time_entries=deleted_time,
-        correction_reason=reason,
+        client_id=item.id,
+        archived_contracts=len(contracts),
+        stopped_timers=len(stopped_entries),
     )
     consume_sensitive_action_authorization()
-    flash("Client and associated work data deleted.", "success")
+    flash("Client archived.", "success")
     return redirect(url_for("main.dashboard"))
+
+
+@main.get("/clients/archived")
+@permission_required(CLIENT_ARCHIVE)
+def archived_clients() -> Any:
+    try:
+        page = int(request.args.get("page", "1"))
+    except ValueError:
+        abort(400)
+    if page < 1:
+        abort(400)
+    database = get_session()
+    predicate = (Client.visible.is_(True), Client.archived_at.is_not(None))
+    total = int(database.scalar(select(func.count(Client.id)).where(*predicate)) or 0)
+    page_size = 25
+    page_count = max(1, (total + page_size - 1) // page_size)
+    if page > page_count:
+        return redirect(url_for("main.archived_clients", page=page_count))
+    items = database.scalars(
+        select(Client)
+        .where(*predicate)
+        .order_by(Client.name, Client.id)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+    return render_template(
+        "archived_clients.html", clients=items, page=page, page_count=page_count
+    )
+
+
+@main.route("/clients/<int:client_id>/unarchive", methods=["GET", "POST"])
+@permission_required(CLIENT_ARCHIVE)
+def unarchive_client(client_id: int) -> Any:
+    database = get_session()
+    item = database.scalar(
+        select(Client).where(
+            Client.id == client_id,
+            Client.visible.is_(True),
+            Client.archived_at.is_not(None),
+        )
+    )
+    if item is None:
+        abort(404)
+    actor = cast(User, current_user())
+    confirmation = {
+        "eyebrow": "UNARCHIVE CLIENT",
+        "title": item.name,
+        "description": (
+            "Restore this client and generate a new report password. "
+            "Contracts remain archived until activated separately."
+        ),
+        "submit_label": "Unarchive Client",
+        "cancel_url": url_for("main.archived_clients"),
+        "breadcrumb_parent_label": "Archived Clients",
+        "breadcrumb_parent_url": url_for("main.archived_clients"),
+        "breadcrumb_label": "Unarchive Client",
+    }
+    if response := require_sensitive_action_authorization(
+        actor, confirmation["cancel_url"]
+    ):
+        return response
+    if request.method != "POST":
+        return render_template("sensitive_action_form.html", **confirmation)
+    password = generate_temporary_password()
+    item.report_password_hash = hash_password(password)
+    item.report_password_version += 1
+    item.archived_at = None
+    item.archived_by_user_id = None
+    database.commit()
+    audit("client_unarchived", actor_id=actor.id, client_id=item.id)
+    token = report_password_confirmation_store.issue(
+        actor_user_id=actor.id, client_id=item.id, report_password=password
+    )
+    for key in REPORT_PASSWORD_CONFIRMATION_SESSION_KEYS:
+        session.pop(key, None)
+    session["report_password_confirmation_client_id"] = item.id
+    session["report_password_confirmation_token"] = token
+    consume_sensitive_action_authorization()
+    return redirect(
+        url_for("main.client_report_password_confirmation", client_id=item.id)
+    )
 
 
 @main.route("/clients/<int:client_id>/report-password/reset", methods=["GET", "POST"])
@@ -2161,62 +2332,6 @@ def edit_contract(contract_id: int) -> Any:
     return redirect(url_for("main.contract", contract_id=item.id))
 
 
-@main.route("/contracts/<int:contract_id>/delete", methods=["GET", "POST"])
-@permission_required(CONTRACT_DELETE)
-def delete_contract(contract_id: int) -> Any:
-    """Delete a contract and its work data after administrator reauthentication."""
-    database = get_session()
-    item = cast(Contract, get_or_404(Contract, contract_id))
-    require_active_contract(item)
-    require_pending_sessions_for_deletion(
-        select(TimeEntry.id).join(TimeEntry.task).where(Task.contract_id == item.id)
-    )
-    actor = cast(User, current_user())
-    client_id = item.client_id
-    client_name = item.client.name
-    contract_name = item.name
-    confirmation = {
-        "eyebrow": "DELETE CONTRACT",
-        "title": item.name,
-        "description": (
-            "Delete this contract, all tasks, subtasks, and recorded time. Audit "
-            "history is retained. This cannot be undone."
-        ),
-        "submit_label": "Delete Contract",
-        "cancel_url": url_for("main.contract", contract_id=item.id),
-        "breadcrumb_parent_label": client_name,
-        "breadcrumb_parent_url": url_for("main.client", client_id=client_id),
-        "breadcrumb_label": "Delete Contract",
-        "correction_reason_required": True,
-    }
-    if response := require_sensitive_action_authorization(
-        actor, cast(str, confirmation["cancel_url"])
-    ):
-        return response
-    if request.method != "POST":
-        return render_template("sensitive_action_form.html", **confirmation)
-    try:
-        reason = correction_reason()
-    except ValueError as exc:
-        flash(str(exc), "error")
-        return render_template("sensitive_action_form.html", **confirmation), 400
-    client_label = audit_object_label(client_name, client_id)
-    contract_label = audit_object_label(contract_name, item.id)
-    deleted_time = hide_contract_data(select(Contract.id).where(Contract.id == item.id))
-    database.commit()
-    audit(
-        "contract_deleted",
-        actor_id=actor.id,
-        client=client_label,
-        contract=contract_label,
-        deleted_time_entries=deleted_time,
-        correction_reason=reason,
-    )
-    consume_sensitive_action_authorization()
-    flash("Contract and associated work data deleted.", "success")
-    return redirect(url_for("main.client", client_id=client_id))
-
-
 @main.route("/contracts/<int:contract_id>/archive", methods=["GET", "POST"])
 @permission_required(CONTRACT_EDIT)
 def archive_contract(contract_id: int) -> Any:
@@ -2225,6 +2340,8 @@ def archive_contract(contract_id: int) -> Any:
     item = cast(Contract, get_or_404(Contract, contract_id))
     actor = cast(User, current_user())
     activating = item.archived_at is not None
+    if item.client.archived_at is not None:
+        abort(409, "Unarchive the client before activating a contract.")
     confirmation = {
         "eyebrow": "ACTIVATE CONTRACT" if activating else "ARCHIVE CONTRACT",
         "title": item.name,
@@ -2317,11 +2434,31 @@ def contract(contract_id: int) -> Any:
             selectinload(Contract.tasks).selectinload(Task.time_entries),
         )
     )
-    if item is None:
+    if item is None or item.client.archived_at is not None:
         abort(404)
     if response := unchanged_live_page_response():
         return response
-    return render_template("contract.html", contract=item)
+    protected_rows = (
+        get_session()
+        .execute(
+            select(TimeEntry.task_id, TimeEntry.subtask_id)
+            .join(TimeEntry.task)
+            .where(
+                Task.contract_id == item.id,
+                TimeEntry.billing_status != "pending_invoice",
+            )
+            .execution_options(include_hidden=True)
+        )
+        .all()
+    )
+    return render_template(
+        "contract.html",
+        contract=item,
+        protected_task_ids={row.task_id for row in protected_rows},
+        protected_subtask_ids={
+            row.subtask_id for row in protected_rows if row.subtask_id is not None
+        },
+    )
 
 
 @main.post("/tasks/<int:contract_id>/new")
@@ -2475,7 +2612,7 @@ def delete_task(task_id: int) -> Any:
     task = cast(Task, get_or_404(Task, task_id))
     require_active_contract(task.contract)
     require_pending_sessions_for_deletion(
-        select(TimeEntry.id).where(TimeEntry.task_id == task.id)
+        select(TimeEntry.id).where(TimeEntry.task_id == task.id), "task"
     )
     actor = cast(User, current_user())
     if not actor.is_admin:
@@ -2534,7 +2671,7 @@ def delete_subtask(subtask_id: int) -> Any:
     subtask = cast(Subtask, get_or_404(Subtask, subtask_id))
     require_active_contract(subtask.task.contract)
     require_pending_sessions_for_deletion(
-        select(TimeEntry.id).where(TimeEntry.subtask_id == subtask.id)
+        select(TimeEntry.id).where(TimeEntry.subtask_id == subtask.id), "subtask"
     )
     actor = cast(User, current_user())
     if not actor.is_admin:
@@ -3054,7 +3191,8 @@ def my_sessions() -> Any:
             started_at,
             stopped_at or max(snapshot_at, started_at),
         )
-        summary[status]["seconds"] += seconds
+        if status == "pending_invoice":
+            summary[status]["seconds"] += seconds
         summary[status]["cost"] += claimed_costs.get(
             entry_id, calculate_cost(seconds, hourly_rate_cents)
         )
@@ -3080,6 +3218,28 @@ def my_sessions() -> Any:
                     .isoformat(),
                 }
     pending_days = dict(daily_seconds(pending_spans, timezone_info))
+    invoice_ids = {row.invoice_id for row in summary_rows if row.invoice_id is not None}
+    if invoice_ids:
+        invoice_snapshots = database.scalars(
+            select(Invoice)
+            .where(Invoice.id.in_(invoice_ids), Invoice.status != "VOID")
+            .options(selectinload(Invoice.lines))
+        ).all()
+        for invoice in invoice_snapshots:
+            worker_lines = [line for line in invoice.lines if line.user_id == user.id]
+            hours = sum(
+                (
+                    hours
+                    for days in worker_daily_billable_hours(
+                        worker_lines, ZoneInfo(invoice.timezone_name)
+                    ).values()
+                    for _, hours in days
+                ),
+                Decimal("0.00"),
+            )
+            invoice_status = "client_paid" if invoice.status == "PAID" else "invoiced"
+            summary[invoice_status]["seconds"] += int(hours * 3600)
+    summary["client_paid"]["cost"] = Decimal(outstanding_cents(database, user.id)) / 100
     if pending_running is not None:
         current_day = snapshot_at.replace(tzinfo=UTC).astimezone(timezone_info).date()
         pending_days.setdefault(current_day, 0)
@@ -4014,6 +4174,9 @@ def new_user() -> Any:
         role = request.form.get("role", "user").strip()
         if role not in {"admin", "user"}:
             raise ValueError("Select a valid user role.")
+        user_type = request.form.get("user_type", "subcontractor").strip()
+        if user_type not in {"llc_member", "subcontractor"}:
+            raise ValueError("Select a valid user type.")
         temporary_password = generate_temporary_password()
         password_hash = hash_password(temporary_password)
         user = User(
@@ -4024,6 +4187,7 @@ def new_user() -> Any:
             totp_secret=None,
             pending_totp_secret=None,
             role=role,
+            user_type=user_type,
             is_enabled=True,
             password_change_required=True,
             session_version=1,
@@ -4048,6 +4212,7 @@ def new_user() -> Any:
             "First Name": user.first_name,
             "Last Name": user.last_name,
             "Role": "Administrator" if user.is_admin else "User",
+            "User Type": user.user_type,
             "Enabled": user.is_enabled,
             "Two-Factor Authentication": "Not configured",
         },
@@ -4072,6 +4237,7 @@ def edit_user(user_id: int) -> Any:
         "email": user.email,
         "first_name": user.first_name,
         "last_name": user.last_name,
+        "user_type": user.user_type,
     }
     try:
         email = normalize_email(request.form.get("email", ""))
@@ -4080,6 +4246,21 @@ def edit_user(user_id: int) -> Any:
             raise ValueError("A user with that email already exists.")
         first_name = form_text("first_name", "First Name", 100)
         last_name = form_text("last_name", "Last Name", 100)
+        user_type = request.form.get("user_type", user.user_type).strip()
+        if user_type not in {"llc_member", "subcontractor"}:
+            raise ValueError("Select a valid user type.")
+        if user_type == "subcontractor" and database.scalar(
+            select(Disbursement.id)
+            .where(
+                Disbursement.user_id == user.id,
+                Disbursement.type == "RETAINED_EARNINGS",
+                Disbursement.archived_at.is_(None),
+            )
+            .limit(1)
+        ):
+            raise ValueError(
+                "Archive this member's Retained Earnings before changing user type."
+            )
     except ValueError as exc:
         flash(str(exc), "error")
         return render_template("user_edit_form.html", user=user), 400
@@ -4087,6 +4268,7 @@ def edit_user(user_id: int) -> Any:
     user.email = email
     user.first_name = first_name
     user.last_name = last_name
+    user.user_type = user_type
     if email_changed:
         user.session_version += 1
     try:
@@ -4105,6 +4287,7 @@ def edit_user(user_id: int) -> Any:
             email=(previous_values["email"], user.email),
             first_name=(previous_values["first_name"], user.first_name),
             last_name=(previous_values["last_name"], user.last_name),
+            user_type=(previous_values["user_type"], user.user_type),
         ),
     )
     flash("User details updated.", "success")

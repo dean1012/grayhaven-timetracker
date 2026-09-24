@@ -32,9 +32,9 @@ The application provides:
 - Clients, contracts, payment terms, tasks, and optional subtasks.
 - One active timer per user, manual time entries, and administrative time
   reassignment.
-- Contract archiving and activation with safeguards for active timers.
-- Invoice previews and generated PDFs, client-payment tracking, and
-  worker-by-worker disbursements.
+- Client and contract archiving with safeguards for active timers.
+- Invoice previews and stored PDFs, client-payment tracking, and independent
+  worker disbursement balances.
 - Internal reports and permanent password-protected client report links.
 - Append-only audit records and structured JSON application logs.
 - An encrypted SQLCipher database with verification, online backup, and key

@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Archived Clients · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}">Dashboard</a></li><li aria-current="page"><span class="breadcrumb-label">Archived Clients</span></li></ol></nav>{% endblock %}
+{% block content %}
+<section class="page-heading"><div><p class="eyebrow">CLIENTS</p><h1>Archived Clients</h1></div></section>
+<section class="panel session-directory">
+  <div class="table-container"><table class="data-table responsive-table">
+    <caption class="visually-hidden">Archived clients</caption>
+    <thead><tr><th scope="col">Name</th><th scope="col">Actions</th></tr></thead>
+    <tbody>{% for client in clients %}<tr><td class="cell-primary" data-label="Name">{{ client.name }}</td><td class="cell-actions" data-label="Actions"><a class="button button-secondary button-compact" href="{{ url_for('main.unarchive_client', client_id=client.id) }}">Unarchive</a></td></tr>{% else %}<tr class="empty-table-row"><td colspan="2">No archived clients.</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% if page_count > 1 %}<nav class="pagination" aria-label="Archived client pages">{% if page > 1 %}<a class="button button-secondary" href="{{ url_for('main.archived_clients', page=page-1) }}">Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ page }} of {{ page_count }}</span>{% if page < page_count %}<a class="button button-secondary" href="{{ url_for('main.archived_clients', page=page+1) }}">Next</a>{% else %}<span></span>{% endif %}</nav>{% endif %}
+</section>
+{% endblock %}
