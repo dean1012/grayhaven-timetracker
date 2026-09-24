@@ -113,8 +113,8 @@ def invoice_pdf_with_status(
     has_logo = any(
         operator == b"Do" for _, operator in content.operations[: details_positions[0]]
     )
-    # Earlier stored v2 PDFs have a 17-point shorter header; keep their stamp
-    # placement while giving newly issued PDFs room for the reference above the rule.
+    # Earlier stored v2 PDFs have a shorter header; lift their stamp so the
+    # transaction reference clears the existing rule without changing the body.
     spaced_header = header_origins[0] < (695 if has_logo else 710)
     del content.operations[heading_positions[0]]
     regular_font, bold_font = _fonts(font_regular_path, font_bold_path)
@@ -126,7 +126,7 @@ def invoice_pdf_with_status(
     if spaced_header:
         overlay.drawRightString(status_right, 720.3, _STATUS_LABELS[status])
     else:
-        overlay.drawCentredString(475.2, 720.3, _STATUS_LABELS[status])
+        overlay.drawCentredString(475.2, 733.3, _STATUS_LABELS[status])
     if transaction_id and status in {"PAID", "REFUNDED"}:
         reference = f"#{transaction_id}"
         reference_size = min(
@@ -138,7 +138,7 @@ def invoice_pdf_with_status(
         if spaced_header:
             overlay.drawRightString(status_right, 708.5, reference)
         else:
-            overlay.drawCentredString(475.2, 701.5, reference)
+            overlay.drawCentredString(475.2, 714.5, reference)
     overlay.save()
     overlay_buffer.seek(0)
     writer = PdfWriter()
