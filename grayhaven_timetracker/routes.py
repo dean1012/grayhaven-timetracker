@@ -1982,6 +1982,7 @@ def archive_client(client_id: int) -> Any:
             "invalidate client report access."
         ),
         "submit_label": "Archive Client",
+        "submit_icon": "fa-box-archive",
         "cancel_url": url_for("main.client", client_id=item.id),
         "breadcrumb_parent_label": item.name,
         "breadcrumb_parent_url": url_for("main.client", client_id=item.id),
@@ -2088,6 +2089,7 @@ def unarchive_client(client_id: int) -> Any:
             "Contracts remain archived until activated separately."
         ),
         "submit_label": "Unarchive Client",
+        "submit_icon": "fa-folder-open",
         "cancel_url": url_for("main.archived_clients"),
         "breadcrumb_parent_label": "Archived Clients",
         "breadcrumb_parent_url": url_for("main.archived_clients"),
@@ -2352,7 +2354,7 @@ def archive_contract(contract_id: int) -> Any:
             "operational controls."
         ),
         "submit_label": "Activate Contract" if activating else "Archive Contract",
-        "submit_icon": "fa-folder-open",
+        "submit_icon": "fa-folder-open" if activating else "fa-box-archive",
         "submit_class": "button-primary" if activating else "button-danger",
         "cancel_url": url_for("main.contract", contract_id=item.id),
         "breadcrumb_parent_label": item.client.name,
