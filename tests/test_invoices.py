@@ -1100,6 +1100,13 @@ class InvoiceRouteTests(AppTestCase):
         self.assertIn(
             "#REFUND-1", PdfReader(BytesIO(refunded_pdf)).pages[0].extract_text()
         )
+        self.assertNotIn(
+            "#PAYMENT-1", PdfReader(BytesIO(refunded_pdf)).pages[0].extract_text()
+        )
+        refunded_detail = self.client.get(f"/invoices/{invoice_id}")
+        self.assertEqual(refunded_detail.status_code, 200)
+        self.assertIn(b"Payment #PAYMENT-1", refunded_detail.data)
+        self.assertIn(b"Refund #REFUND-1", refunded_detail.data)
         self.assertEqual(self.client.get(refund_path).status_code, 409)
         self.assertEqual(self.client.get(paid_path).status_code, 409)
         self.assertEqual(self.client.get("/invoices?page=invalid").status_code, 400)
