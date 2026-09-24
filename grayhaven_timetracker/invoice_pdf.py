@@ -100,22 +100,6 @@ def invoice_pdf_with_status(
     ]
     if len(heading_positions) != 1:
         raise ValueError("The stored invoice PDF has no unique status heading.")
-    header_origins = [
-        float(operands[5])
-        for operands, operator in content.operations
-        if operator == b"cm"
-        and len(operands) == 6
-        and abs(float(operands[4]) - 57.6) < 0.01
-        and 680 < float(operands[5]) < 730
-    ]
-    if len(header_origins) != 1:
-        raise ValueError("The stored invoice PDF has no unique header position.")
-    has_logo = any(
-        operator == b"Do" for _, operator in content.operations[: details_positions[0]]
-    )
-    # Earlier stored v2 PDFs have a shorter header; lift their stamp so the
-    # transaction reference clears the existing rule without changing the body.
-    spaced_header = header_origins[0] < (695 if has_logo else 710)
     del content.operations[heading_positions[0]]
     regular_font, bold_font = _fonts(font_regular_path, font_bold_path)
     overlay_buffer = BytesIO()
@@ -123,22 +107,16 @@ def invoice_pdf_with_status(
     overlay.setFillColor(_STATUS_COLORS[status])
     overlay.setFont(bold_font, 22)
     status_right = LETTER[0] - 54
-    if spaced_header:
-        overlay.drawRightString(status_right, 720.3, _STATUS_LABELS[status])
-    else:
-        overlay.drawCentredString(475.2, 733.3, _STATUS_LABELS[status])
+    overlay.drawRightString(status_right, 720.3, _STATUS_LABELS[status])
     if transaction_id and status in {"PAID", "REFUNDED"}:
         reference = f"#{transaction_id}"
         reference_size = min(
-            7.5 if spaced_header else 11,
+            7.5,
             190 / pdfmetrics.stringWidth(reference, regular_font, 1),
         )
         overlay.setFillColor(_STATUS_COLORS[status])
         overlay.setFont(regular_font, reference_size)
-        if spaced_header:
-            overlay.drawRightString(status_right, 708.5, reference)
-        else:
-            overlay.drawCentredString(475.2, 714.5, reference)
+        overlay.drawRightString(status_right, 708.5, reference)
     overlay.save()
     overlay_buffer.seek(0)
     writer = PdfWriter()
