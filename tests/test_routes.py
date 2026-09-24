@@ -32,6 +32,7 @@ from grayhaven_timetracker.auth import (
     verify_password,
 )
 from grayhaven_timetracker.database import get_session, session_scope
+from grayhaven_timetracker.invoices import create_invoice, preview_invoice
 from grayhaven_timetracker.models import (
     AuditEvent,
     Client,
@@ -958,6 +959,41 @@ class ClientContractTaskRouteTests(AppTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.login()
+
+    def test_invoiced_sessions_block_task_and_subtask_deletion(self) -> None:
+        seed = self.seed_contract()
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, seed.entry_id)
+            assert entry is not None and entry.stopped_at is not None
+            start = entry.started_at - timedelta(minutes=1)
+            end = entry.stopped_at + timedelta(minutes=1)
+            preview = preview_invoice(
+                database,
+                contract_id=seed.contract_id,
+                range_start_utc=start,
+                range_end_utc=end,
+                timezone_name="UTC",
+            )
+            create_invoice(
+                database,
+                contract_id=seed.contract_id,
+                range_start_utc=start,
+                range_end_utc=end,
+                timezone_name="UTC",
+                expected_fingerprint=preview.fingerprint,
+            )
+            database.commit()
+        for path in (
+            f"/tasks/{seed.task_id}/delete",
+            f"/subtasks/{seed.subtask_id}/delete",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 409)
+                self.assertEqual(self.client.post(path).status_code, 409)
+        with session_scope(self.app) as database:
+            self.assertIsNotNone(database.get(Task, seed.task_id))
+            self.assertIsNotNone(database.get(Subtask, seed.subtask_id))
+            self.assertIsNotNone(database.get(TimeEntry, seed.entry_id))
 
     def test_report_password_confirmation_is_one_time_and_expires(self) -> None:
         with self.assertRaises(ValueError):
@@ -1954,6 +1990,38 @@ class ProfileAndUserAdministrationTests(AppTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.login()
+
+    def test_user_creation_validates_and_stores_user_type(self) -> None:
+        values = {
+            "first_name": "Sample",
+            "last_name": "Worker",
+            "email": "worker@example.invalid",
+        }
+        self.assertEqual(
+            self.client.post(
+                "/users/new", data=values | {"user_type": "invalid"}
+            ).status_code,
+            400,
+        )
+        self.assertEqual(self.client.post("/users/new", data=values).status_code, 200)
+        self.assertEqual(
+            self.client.post(
+                "/users/new",
+                data=values
+                | {"email": "member@example.invalid", "user_type": "llc_member"},
+            ).status_code,
+            200,
+        )
+        with session_scope(self.app) as database:
+            worker = database.scalar(
+                select(User).where(User.email == "worker@example.invalid")
+            )
+            member = database.scalar(
+                select(User).where(User.email == "member@example.invalid")
+            )
+            assert worker is not None and member is not None
+            self.assertEqual(worker.user_type, "subcontractor")
+            self.assertEqual(member.user_type, "llc_member")
 
     def test_users_pin_signed_in_account_without_disrupting_pagination(self) -> None:
         last_names = ("Zulu", "alpha", "Echo", "bravo", "Delta", "charlie")

@@ -28,7 +28,7 @@ from sqlalchemy.orm import selectinload
 from .audit import record_audit_event
 from .auth import current_user
 from .database import get_session
-from .invoice_pdf import render_invoice_pdf
+from .invoice_pdf import invoice_pdf_with_status
 from .invoice_summary import worker_daily_summary_rows
 from .invoices import (
     create_invoice,
@@ -322,8 +322,15 @@ def detail(invoice_id: int) -> str:
 @permission_required(INVOICE_MANAGE)
 def download(invoice_id: int) -> Response:
     invoice = get_invoice(invoice_id)
+    branding = Path(current_app.config["BRANDING_PATH"])
     return Response(
-        invoice.pdf_bytes,
+        invoice_pdf_with_status(
+            invoice.pdf_bytes,
+            invoice.display_status,
+            pdf_version=invoice.pdf_version,
+            font_regular_path=branding / "fonts/inter-400.ttf",
+            font_bold_path=branding / "fonts/inter-700.ttf",
+        ),
         mimetype="application/pdf",
         headers={
             "Content-Disposition": (
@@ -378,15 +385,6 @@ def action(invoice_id: int, action: str) -> Any:
             invoice = refund_invoice(database, invoice_id)
         elif action == "void":
             invoice = void_invoice(database, invoice_id)
-        branding = Path(current_app.config["BRANDING_PATH"])
-        with database.no_autoflush:
-            invoice.pdf_bytes = render_invoice_pdf(
-                invoice,
-                invoice.lines,
-                logo_path=branding / "grayhaven-logo-wordmark-light.png",
-                font_regular_path=branding / "fonts/inter-400.ttf",
-                font_bold_path=branding / "fonts/inter-700.ttf",
-            )
         audit_invoice(
             "invoice_" + action,
             invoice,

@@ -15,6 +15,8 @@ from threading import Lock
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import ContentStream
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import LETTER
@@ -22,6 +24,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfgen import canvas
 from reportlab.platypus import (
     HRFlowable,
     Image,
@@ -38,6 +41,80 @@ from .models import Invoice, InvoiceLine
 
 _FONT_LOCK = Lock()
 _COMPANY_URL = "https://grayhavensystems.com"
+_STATUS_LABELS = {
+    "UNPAID": "INVOICE",
+    "PAID": "PAID",
+    "VOID": "VOID",
+    "REFUNDED": "REFUNDED",
+}
+_STATUS_COLORS = {
+    "UNPAID": colors.HexColor("#17202A"),
+    "PAID": colors.HexColor("#3FB68B"),
+    "VOID": colors.HexColor("#AAB2BF"),
+    "REFUNDED": colors.HexColor("#AAB2BF"),
+}
+
+
+def invoice_pdf_with_status(
+    pdf_bytes: bytes,
+    status: str,
+    *,
+    pdf_version: int,
+    font_regular_path: Path | None = None,
+    font_bold_path: Path | None = None,
+) -> bytes:
+    """Stamp only the status area of an issued PDF; preserve its stored body."""
+    if status == "UNPAID":
+        return pdf_bytes
+    if status not in _STATUS_LABELS or pdf_version != 2:
+        raise ValueError("Unsupported invoice PDF status or version.")
+    reader = PdfReader(BytesIO(pdf_bytes))
+    if not reader.pages:
+        raise ValueError("The stored invoice PDF has no pages.")
+    first = reader.pages[0]
+    if (
+        float(first.mediabox.width) != LETTER[0]
+        or float(first.mediabox.height) != LETTER[1]
+        or first.rotation
+    ):
+        raise ValueError("The stored invoice PDF has an unexpected page layout.")
+    original_content = first.get_contents()
+    if original_content is None:
+        raise ValueError("The stored invoice PDF has no heading content.")
+    content = ContentStream(original_content, reader)
+    details_positions = [
+        index
+        for index, (operands, operator) in enumerate(content.operations)
+        if operator == b"Tj" and len(operands) == 1 and str(operands[0]) == "Bill to"
+    ]
+    if not details_positions:
+        raise ValueError("The stored invoice PDF has no details heading.")
+    heading_positions = [
+        index
+        for index, (operands, operator) in enumerate(content.operations)
+        if index < details_positions[0]
+        and operator == b"Tj"
+        and len(operands) == 1
+        and str(operands[0]) in _STATUS_LABELS.values()
+    ]
+    if len(heading_positions) != 1:
+        raise ValueError("The stored invoice PDF has no unique status heading.")
+    del content.operations[heading_positions[0]]
+    _, bold_font = _fonts(font_regular_path, font_bold_path)
+    overlay_buffer = BytesIO()
+    overlay = canvas.Canvas(overlay_buffer, pagesize=LETTER)
+    overlay.setFillColor(_STATUS_COLORS[status])
+    overlay.setFont(bold_font, 22)
+    overlay.drawCentredString(475.2, 720.3, _STATUS_LABELS[status])
+    overlay.save()
+    overlay_buffer.seek(0)
+    writer = PdfWriter()
+    writer.clone_document_from_reader(reader)
+    writer.pages[0].replace_contents(content)
+    writer.pages[0].merge_page(PdfReader(overlay_buffer).pages[0])
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
 
 
 def _text(value: object) -> str:
@@ -155,17 +232,8 @@ def _render_invoice_pdf_v2(
         spaceAfter=0.1 * inch,
         keepWithNext=1,
     )
-    status_label = {
-        "PAID": "PAID",
-        "VOID": "VOID",
-        "UNPAID": "INVOICE",
-        "REFUNDED": "REFUNDED",
-    }.get(invoice.display_status, "INVOICE")
-    status_color = {
-        "PAID": colors.HexColor("#3FB68B"),
-        "VOID": colors.HexColor("#AAB2BF"),
-        "REFUNDED": colors.HexColor("#AAB2BF"),
-    }.get(invoice.display_status, colors.HexColor("#17202A"))
+    status_label = _STATUS_LABELS.get(invoice.display_status, "INVOICE")
+    status_color = _STATUS_COLORS.get(invoice.display_status, _STATUS_COLORS["UNPAID"])
     heading = ParagraphStyle(
         "InvoiceHeading",
         parent=body,

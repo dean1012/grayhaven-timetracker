@@ -6,11 +6,13 @@ import base64
 import shutil
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
+from pypdf import PdfReader
 from reportlab import rl_config
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
@@ -25,7 +27,10 @@ from grayhaven_timetracker.disbursements import (
     unarchive_disbursement,
     update_disbursement,
 )
-from grayhaven_timetracker.invoice_pdf import render_invoice_pdf
+from grayhaven_timetracker.invoice_pdf import (
+    invoice_pdf_with_status,
+    render_invoice_pdf,
+)
 from grayhaven_timetracker.invoice_summary import (
     daily_summary_rows,
     worker_summary_rows,
@@ -171,6 +176,58 @@ class InvoiceDomainTests(AppTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.seed = self.seed_contract()
+
+    def test_status_overlay_preserves_issued_pdf_body(self) -> None:
+        invoice_id = self.create_test_invoice()
+        with session_scope(self.app) as database:
+            invoice = database.get(Invoice, invoice_id)
+            assert invoice is not None
+            issued_pdf = invoice.pdf_bytes
+        original = PdfReader(BytesIO(issued_pdf))
+        headings = {"INVOICE", "PAID", "VOID", "REFUNDED"}
+
+        def body(pdf: PdfReader) -> list[list[str]]:
+            return [
+                [
+                    line
+                    for line in (page.extract_text() or "").splitlines()
+                    if line.strip() and line.strip() not in headings
+                ]
+                for page in pdf.pages
+            ]
+
+        for status in ("PAID", "VOID", "REFUNDED"):
+            with self.subTest(status=status):
+                updated = PdfReader(
+                    BytesIO(invoice_pdf_with_status(issued_pdf, status, pdf_version=2))
+                )
+                self.assertEqual(len(updated.pages), len(original.pages))
+                self.assertEqual(body(updated), body(original))
+                labels = (updated.pages[0].extract_text() or "").splitlines()
+                self.assertIn(status, labels)
+                self.assertNotIn("INVOICE", labels)
+        self.assertEqual(
+            invoice_pdf_with_status(issued_pdf, "UNPAID", pdf_version=2),
+            issued_pdf,
+        )
+
+    def test_status_overlay_preserves_matching_client_name(self) -> None:
+        invoice_id = self.create_test_invoice()
+        with session_scope(self.app) as database:
+            invoice = database.get(Invoice, invoice_id)
+            assert invoice is not None
+            lines = list(invoice.lines)
+            database.expunge(invoice)
+        for name in ("PAID", "Bill to"):
+            with self.subTest(name=name):
+                invoice.client_name = name
+                issued_pdf = render_invoice_pdf(invoice, lines)
+                updated_pdf = invoice_pdf_with_status(issued_pdf, "PAID", pdf_version=2)
+                text = PdfReader(BytesIO(updated_pdf)).pages[0].extract_text()
+                self.assertIsNotNone(text)
+                assert text is not None
+                self.assertEqual(text.splitlines().count(name), 2)
+                self.assertIn("PAID", text.splitlines())
 
     def test_archived_clients_are_not_offered_for_invoice_generation(self) -> None:
         with session_scope(self.app) as database:
@@ -938,14 +995,15 @@ class InvoiceRouteTests(AppTestCase):
                 (invoice.total_cents, invoice.worker_summary_json, invoice.pdf_version),
                 billing_snapshot,
             )
-            self.assertNotEqual(invoice.pdf_bytes, original_pdf)
-            paid_pdf = invoice.pdf_bytes
+            self.assertEqual(invoice.pdf_bytes, original_pdf)
             self.assertEqual(entry.billing_status, "client_paid")
             event = database.scalar(
                 select(AuditEvent).where(AuditEvent.event == "invoice_paid")
             )
             self.assertIsNotNone(event)
         self.assertEqual(self.client.get(paid_path).status_code, 409)
+        paid_pdf = self.client.get(f"/invoices/{invoice_id}/download").data
+        self.assertNotEqual(paid_pdf, original_pdf)
 
         detail = self.client.get(f"/invoices/{invoice_id}")
         self.assertEqual(detail.status_code, 200)
@@ -982,7 +1040,9 @@ class InvoiceRouteTests(AppTestCase):
                 (invoice.total_cents, invoice.worker_summary_json, invoice.pdf_version),
                 billing_snapshot,
             )
-            self.assertNotEqual(invoice.pdf_bytes, paid_pdf)
+            self.assertEqual(invoice.pdf_bytes, original_pdf)
+        refunded_pdf = self.client.get(f"/invoices/{invoice_id}/download").data
+        self.assertNotEqual(refunded_pdf, paid_pdf)
         self.assertEqual(self.client.get(refund_path).status_code, 409)
         self.assertEqual(self.client.get(paid_path).status_code, 409)
         self.assertEqual(self.client.get("/invoices?page=invalid").status_code, 400)

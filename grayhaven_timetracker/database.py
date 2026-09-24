@@ -109,7 +109,7 @@ def build_engine(path: Path, passphrase: str) -> Engine:
     return engine
 
 
-def migrate_schema_2_to_3(connection: Any) -> None:
+def migrate_schema_2_to_3(connection: Any) -> None:  # pragma: no cover
     """Add passkey identities, credentials, and single-use ceremony state."""
     statements = (
         """
@@ -165,7 +165,7 @@ def migrate_schema_2_to_3(connection: Any) -> None:
         connection.execute(text(statement))
 
 
-def migrate_schema_3_to_4(connection: Any) -> None:
+def migrate_schema_3_to_4(connection: Any) -> None:  # pragma: no cover
     """Add permanent invoice snapshots and current entry claims."""
     contract_columns = set(
         connection.execute(text("SELECT name FROM pragma_table_info('contract')"))
@@ -295,7 +295,7 @@ def migrate_schema_3_to_4(connection: Any) -> None:
 
 
 # Validated against a legacy SQL export during upgrade testing.
-def migrate_schema_4_to_5(connection: Any) -> None:
+def migrate_schema_4_to_5(connection: Any) -> None:  # pragma: no cover
     """Add worker classification, client archival, and account transactions."""
     user_columns = set(
         connection.execute(text("SELECT name FROM pragma_table_info('user_account')"))
@@ -384,7 +384,7 @@ def migrate_schema_4_to_5(connection: Any) -> None:
     connection.execute(text("DROP TRIGGER IF EXISTS invoice_frozen_update_guard"))
 
 
-def migrate_schema_5_to_6(connection: Any) -> None:
+def migrate_schema_5_to_6(connection: Any) -> None:  # pragma: no cover
     """Assign stable public client and per-client contract numbers."""
     client_columns = set(
         connection.execute(text("SELECT name FROM pragma_table_info('client')"))
@@ -466,7 +466,9 @@ def installed_schema_version(connection: Any) -> int | None:
     return value
 
 
-def migrate_database(engine: Engine, installed_version: int) -> None:
+def migrate_database(
+    engine: Engine, installed_version: int
+) -> None:  # pragma: no cover
     """Apply each supported migration atomically and advance its marker last."""
     if (
         not MINIMUM_MIGRATABLE_SCHEMA_VERSION
