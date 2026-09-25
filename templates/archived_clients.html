@@ -7,7 +7,7 @@
   <div class="table-container"><table class="data-table responsive-table">
     <caption class="visually-hidden">Archived clients</caption>
     <thead><tr><th scope="col">Name</th><th scope="col">Actions</th></tr></thead>
-    <tbody>{% for client in clients %}<tr><td class="cell-primary" data-label="Name">{{ client.name }}</td><td class="cell-actions" data-label="Actions"><a class="button button-secondary button-compact" href="{{ url_for('main.unarchive_client', client_id=client.id) }}">Unarchive</a></td></tr>{% else %}<tr class="empty-table-row"><td colspan="2">No archived clients.</td></tr>{% endfor %}</tbody>
+    <tbody>{% for client in clients %}<tr><td class="cell-primary" data-label="Name">{{ client.name }}</td><td class="cell-actions" data-label="Actions"><a class="button button-secondary button-compact" href="{{ url_for('main.activate_client', client_id=client.id) }}">Activate</a></td></tr>{% else %}<tr class="empty-table-row"><td colspan="2">No archived clients.</td></tr>{% endfor %}</tbody>
   </table></div>
   {% if page_count > 1 %}<nav class="pagination" aria-label="Archived client pages">{% if page > 1 %}<a class="button button-secondary" href="{{ url_for('main.archived_clients', page=page-1) }}">Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ page }} of {{ page_count }}</span>{% if page < page_count %}<a class="button button-secondary" href="{{ url_for('main.archived_clients', page=page+1) }}">Next</a>{% else %}<span></span>{% endif %}</nav>{% endif %}
 </section>

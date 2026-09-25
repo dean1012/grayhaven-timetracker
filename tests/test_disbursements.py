@@ -151,6 +151,7 @@ class DisbursementRouteTests(AppTestCase):
         )
         self.assertEqual(refreshed.status_code, 200)
         self.assertIn(b'aria-label="Add Disbursement unavailable"', refreshed.data)
+        self.assertEqual(self.client.get(new_path).status_code, 404)
 
         self.assertIn(b"ACH-1", self.client.get("/my/disbursements").data)
         for action in ("edit", "archive", "unarchive", "delete"):

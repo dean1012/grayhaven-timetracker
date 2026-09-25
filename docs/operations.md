@@ -867,8 +867,9 @@ recorded.
 Archiving a contract stops its active timers and removes it from normal
 selection and client reports. Activating it restores normal availability.
 Archiving a client also archives its contracts, stops active timers, and
-replaces its shared-report password. Unarchiving the client generates a new
-report password; its contracts remain archived until activated separately.
+replaces its shared-report password. Activating the client restores its page;
+its contracts remain archived until activated separately. Reset the report
+password before sharing client report access again.
 
 [Back to top](#operations)
 

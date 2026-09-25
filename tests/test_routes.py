@@ -1641,6 +1641,54 @@ class ClientContractTaskRouteTests(AppTestCase):
                 )
                 self.assertIn(b"icon-button contract-row-action", dashboard.data)
 
+    def test_dashboard_paginates_each_clients_newest_contracts(self) -> None:
+        seed = self.seed_contract()
+        with session_scope(self.app) as database:
+            original = database.get(Contract, seed.contract_id)
+            assert original is not None
+            original.created_at = datetime(2026, 7, 1)
+            contracts = [original]
+            for number in range(2, 7):
+                contract = Contract(
+                    client_id=seed.client_id,
+                    name=f"Sample Contract {number}",
+                    contact_name="Sample Contact",
+                    contact_email="sample@example.invalid",
+                    hourly_rate_cents=5500,
+                    created_at=datetime(2026, 7, number),
+                )
+                database.add(contract)
+                database.flush()
+                contracts.append(contract)
+            refs = [contract.public_ref for contract in contracts]
+
+        first_page = self.client.get("/")
+        self.assertEqual(first_page.status_code, 200)
+        self.assertEqual(
+            first_page.data.count(b'class="contract-row contract-row-summary"'), 4
+        )
+        for ref in refs[2:]:
+            self.assertIn(f'href="/contracts/{ref}"'.encode(), first_page.data)
+        for ref in refs[:2]:
+            self.assertNotIn(f'href="/contracts/{ref}"'.encode(), first_page.data)
+        newest_positions = [
+            first_page.data.index(f'href="/contracts/{ref}"'.encode())
+            for ref in reversed(refs[2:])
+        ]
+        self.assertEqual(newest_positions, sorted(newest_positions))
+
+        second_page = self.client.get("/?contracts_001=2")
+        self.assertEqual(second_page.status_code, 200)
+        self.assertEqual(
+            second_page.data.count(b'class="contract-row contract-row-summary"'), 2
+        )
+        for ref in refs[:2]:
+            self.assertIn(f'href="/contracts/{ref}"'.encode(), second_page.data)
+        for ref in refs[2:]:
+            self.assertNotIn(f'href="/contracts/{ref}"'.encode(), second_page.data)
+
+        self.assertEqual(self.client.get("/?contracts_001=0").status_code, 400)
+
     def test_task_and_subtask_deletion_hides_work_data_and_retains_audit(
         self,
     ) -> None:
@@ -1823,10 +1871,16 @@ class ClientContractTaskRouteTests(AppTestCase):
             self.client.get(f"/contracts/{seed.contract_id}").status_code, 404
         )
         self.assertEqual(self.client.get("/clients/archived").status_code, 200)
-        unarchive_path = f"/clients/{seed.client_id}/unarchive"
-        self.authorize_sensitive_action(unarchive_path, totp_secret="")
-        self.assertEqual(self.client.get(unarchive_path).status_code, 200)
-        self.assertEqual(self.client.post(unarchive_path).status_code, 302)
+        self.assertEqual(
+            self.client.get(f"/contracts/{seed.contract_id}/sessions").status_code,
+            404,
+        )
+        activate_path = f"/clients/{seed.client_id}/activate"
+        self.authorize_sensitive_action(activate_path, totp_secret="")
+        self.assertEqual(self.client.get(activate_path).status_code, 200)
+        activated = self.client.post(activate_path)
+        self.assertEqual(activated.status_code, 302)
+        self.assertEqual(activated.location, f"/clients/{seed.client_id}")
         with session_scope(self.app) as database:
             client = database.get(Client, seed.client_id)
             contract = database.get(Contract, seed.contract_id)
@@ -1834,16 +1888,26 @@ class ClientContractTaskRouteTests(AppTestCase):
             self.assertIsNone(client.archived_at)
             self.assertIsNotNone(contract.archived_at)
             self.assertEqual(
-                client.report_password_version, archived_report_password_version + 1
+                client.report_password_version, archived_report_password_version
             )
-            self.assertNotEqual(
-                client.report_password_hash, archived_report_password_hash
-            )
+            self.assertEqual(client.report_password_hash, archived_report_password_hash)
             self.assertIsNotNone(
                 database.scalar(
-                    select(AuditEvent).where(AuditEvent.event == "client_unarchived")
+                    select(AuditEvent).where(AuditEvent.event == "client_activated")
                 )
             )
+        self.assertEqual(
+            self.client.get(f"/contracts/{seed.contract_id}/sessions").status_code,
+            404,
+        )
+        with session_scope(self.app) as database:
+            contract = database.get(Contract, seed.contract_id)
+            assert contract is not None
+            contract.archived_at = None
+        self.assertEqual(
+            self.client.get(f"/contracts/{seed.contract_id}/sessions").status_code,
+            200,
+        )
 
 
 class TimerAndPermissionRouteTests(AppTestCase):
@@ -3917,9 +3981,7 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertIn(b"NET 30", contract_page.data)
         self.assertNotIn(b'title="New Task"', contract_page.data)
         sessions_page = self.client.get(f"/contracts/{self.seed.contract_id}/sessions")
-        self.assertIn(b"All session controls are disabled", sessions_page.data)
-        self.assertIn(b"responsive-table session-table", sessions_page.data)
-        self.assertIn(b'data-label="Actions"', sessions_page.data)
+        self.assertEqual(sessions_page.status_code, 404)
         archived_report = self.client.get(f"/reports/{self.seed.client_id}")
         self.assertIn(
             b"No pending invoice sessions are available for this client.",
@@ -3933,6 +3995,10 @@ class ReportAndSessionRouteTests(AppTestCase):
             contract = database.get(Contract, self.seed.contract_id)
             assert contract is not None
             self.assertIsNone(contract.archived_at)
+        self.assertEqual(
+            self.client.get(f"/contracts/{self.seed.contract_id}/sessions").status_code,
+            200,
+        )
 
     @unittest.skip(
         "Legacy expiration and rotation assertions replaced by permanent links"

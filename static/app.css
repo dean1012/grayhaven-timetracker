@@ -48,6 +48,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .mobile-nav-links a:not(:where(.button, .icon-button)):hover, .mobile-nav-links a:not(:where(.button, .icon-button)):focus-visible, .mobile-nav-links a:not(:where(.button, .icon-button))[aria-current], .mobile-nav-links a:not(:where(.button, .icon-button)).is-active, .mobile-nav-links .nav-button:hover, .mobile-nav-links .nav-button:focus-visible { color: var(--primary-accent); background: color-mix(in srgb, var(--primary-accent) 9%, transparent); }
 .app-viewport { min-height: 0; overflow-y: auto; flex: 1 1 auto; }
 .page-shell { width: min(1680px, calc(100% - var(--container-padding) - var(--container-padding))); margin: 0 auto; padding: 3.3rem 0 5rem; }
+.page-heading-alert-region > .alert-stack:has(> .alert) { margin-bottom: var(--space-md); }
 .app-breadcrumbs { width: min(1680px, calc(100% - var(--container-padding) - var(--container-padding))); margin: 0 auto; padding: .55rem 0 .7rem; }
 .app-footer {
   flex: 0 0 auto;
@@ -87,8 +88,15 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .empty-panel .content-card-actions { justify-content: center; }
 .error-alert { max-width: 720px; margin: 7rem auto; }
 .error-actions { margin-top: 1rem; }
-.client-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
-.client-card { min-height: 290px; padding: 1.8rem; }
+.client-grid { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: 1fr; gap: 1.5rem; }
+.client-card { display: flex; flex-direction: column; min-height: 31rem; height: 100%; padding: 1.8rem; }
+.client-card .contract-list { flex: 1 1 auto; margin-bottom: 0; }
+.client-card .contract-row { min-height: 3.75rem; }
+.client-card .contract-row-empty { color: var(--soft-white); }
+.client-card .contract-row-empty strong { font-weight: var(--font-weight-semibold); }
+.client-card .client-card-pagination { flex-wrap: wrap; margin-top: var(--space-sm); }
+.client-card-pagination-actions { display: inline-flex; gap: var(--space-xs); }
+.client-card > .text-link { margin-top: var(--space-md); }
 .report-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .client-card .panel-heading > div { min-width: 0; }
 .client-card .panel-heading .content-card-icon { margin-bottom: 0; }
@@ -103,7 +111,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .contract-identity { display: flex; align-items: center; gap: 1rem; min-width: 0; overflow-wrap: anywhere; }
 .contract-row-detailed { display: grid; grid-template-columns: minmax(0, 32rem) minmax(0, 13rem) minmax(0, 1fr) minmax(7rem, .6fr) auto; padding: 1rem .6rem; border-radius: var(--border-radius-sm); transition: background var(--transition-fast); }
 .contract-row-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: .7rem .6rem; border-radius: var(--border-radius-sm); transition: background var(--transition-fast); }
-.contract-row-detailed:hover, .contract-row-summary:hover { background: color-mix(in srgb, var(--standard-hover) 10%, transparent); }
+.contract-row-detailed:hover, .contract-row-summary:not(.contract-row-empty):hover { background: color-mix(in srgb, var(--standard-hover) 10%, transparent); }
 .contract-row-detailed .contract-name-link:hover, .contract-row-summary .contract-name-link:hover { color: var(--soft-white); }
 .contract-contact-details { display: contents; }
 .contract-contact-identity { display: flex; align-items: center; gap: .5rem; min-width: 0; }
@@ -129,6 +137,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .contract-metadata span { display: inline-flex; align-items: center; gap: .35rem; }
 .contract-metadata i { color: var(--primary-accent); }
 .confirmation-expiry { color: var(--alert-error-foreground); font-weight: var(--font-weight-semibold); }
+.one-time-confirmation-content > p { margin-bottom: 0; }
 .contract-layout { display: block; }
 .contract-task-actions, .contract-subtask-actions { flex-wrap: wrap; justify-content: flex-end; }
 .icon-locked { display: inline-grid; place-items: center; width: 32px; height: 32px; color: var(--slate-grey); font-size: .75rem; }

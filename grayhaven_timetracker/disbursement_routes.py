@@ -184,6 +184,8 @@ def _history(user_id: int, *, admin: bool) -> Any:
 @permission_required(DISBURSEMENT_MANAGE)
 def new(user_id: int) -> Any:
     user = _user(user_id)
+    if outstanding_cents(get_session(), user_id) <= 0:
+        abort(404)
     actor = cast(User, current_user())
     if response := require_sensitive_action_authorization(
         actor, url_for("disbursements.detail", user_id=user_id)

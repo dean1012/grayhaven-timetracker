@@ -797,7 +797,7 @@ def correction_reason() -> str:
 def require_active_contract(contract: Contract) -> None:
     """Reject operational changes while a contract is archived."""
     if contract.client.archived_at is not None:
-        abort(409, "Unarchive the client before changing its work data.")
+        abort(409, "Activate the client before changing its work data.")
     if contract.archived_at is not None:
         abort(409, "Activate the contract before changing its work data.")
 
@@ -1847,7 +1847,56 @@ def dashboard() -> Any:
         )
         .all()
     )
-    return render_template("dashboard.html", clients=clients)
+    page_size = 4
+    page_args: dict[str, int] = {}
+    cards: list[dict[str, Any]] = []
+    for client_item in clients:
+        key = f"contracts_{client_item.display_number}"
+        try:
+            requested_page = int(request.args.get(key, "1"))
+        except ValueError:
+            abort(400)
+        if requested_page < 1:
+            abort(400)
+        contracts = sorted(
+            (
+                contract_item
+                for contract_item in client_item.contracts
+                if contract_item.visible and contract_item.archived_at is None
+            ),
+            key=lambda contract_item: (
+                contract_item.created_at,
+                contract_item.id,
+            ),
+            reverse=True,
+        )
+        page_count = max(1, (len(contracts) + page_size - 1) // page_size)
+        page = min(requested_page, page_count)
+        if page > 1:
+            page_args[key] = page
+        cards.append(
+            {
+                "client": client_item,
+                "contracts": contracts[(page - 1) * page_size : page * page_size],
+                "page": page,
+                "page_count": page_count,
+                "key": key,
+            }
+        )
+    for card in cards:
+        key = card["key"]
+        page = card["page"]
+        card["previous_url"] = (
+            url_for("main.dashboard", **{**page_args, key: page - 1})
+            if page > 1
+            else None
+        )
+        card["next_url"] = (
+            url_for("main.dashboard", **{**page_args, key: page + 1})
+            if page < card["page_count"]
+            else None
+        )
+    return render_template("dashboard.html", cards=cards)
 
 
 @main.get("/clients/<clientnum:client_id>")
@@ -2120,9 +2169,9 @@ def archived_clients() -> Any:
     )
 
 
-@main.route("/clients/<clientnum:client_id>/unarchive", methods=["GET", "POST"])
+@main.route("/clients/<clientnum:client_id>/activate", methods=["GET", "POST"])
 @permission_required(CLIENT_ARCHIVE)
-def unarchive_client(client_id: int) -> Any:
+def activate_client(client_id: int) -> Any:
     database = get_session()
     item = database.scalar(
         select(Client).where(
@@ -2135,18 +2184,18 @@ def unarchive_client(client_id: int) -> Any:
         abort(404)
     actor = cast(User, current_user())
     confirmation = {
-        "eyebrow": "UNARCHIVE CLIENT",
+        "eyebrow": "ACTIVATE CLIENT",
         "title": item.name,
         "description": (
-            "Restore this client and generate a new report password. "
-            "Contracts remain archived until activated separately."
+            "Activate this client. Contracts remain archived until "
+            "activated separately."
         ),
-        "submit_label": "Unarchive Client",
+        "submit_label": "Activate Client",
         "submit_icon": "fa-folder-open",
         "cancel_url": url_for("main.archived_clients"),
         "breadcrumb_parent_label": "Archived Clients",
         "breadcrumb_parent_url": url_for("main.archived_clients"),
-        "breadcrumb_label": "Unarchive Client",
+        "breadcrumb_label": "Activate Client",
     }
     if response := require_sensitive_action_authorization(
         actor, confirmation["cancel_url"]
@@ -2154,24 +2203,13 @@ def unarchive_client(client_id: int) -> Any:
         return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
-    password = generate_temporary_password()
-    item.report_password_hash = hash_password(password)
-    item.report_password_version += 1
     item.archived_at = None
     item.archived_by_user_id = None
     database.commit()
-    audit("client_unarchived", actor_id=actor.id, client_id=item.id)
-    token = report_password_confirmation_store.issue(
-        actor_user_id=actor.id, client_id=item.id, report_password=password
-    )
-    for key in REPORT_PASSWORD_CONFIRMATION_SESSION_KEYS:
-        session.pop(key, None)
-    session["report_password_confirmation_client_id"] = item.id
-    session["report_password_confirmation_token"] = token
+    audit("client_activated", actor_id=actor.id, client_id=item.id)
     consume_sensitive_action_authorization()
-    return redirect(
-        url_for("main.client_report_password_confirmation", client_id=item.id)
-    )
+    flash("Client activated.", "success")
+    return redirect(url_for("main.client", client_id=item.id))
 
 
 @main.route(
@@ -2398,7 +2436,7 @@ def archive_contract(contract_id: int) -> Any:
     actor = cast(User, current_user())
     activating = item.archived_at is not None
     if item.client.archived_at is not None:
-        abort(409, "Unarchive the client before activating a contract.")
+        abort(409, "Activate the client before activating a contract.")
     confirmation = {
         "eyebrow": "ACTIVATE CONTRACT" if activating else "ARCHIVE CONTRACT",
         "title": item.name,
@@ -3013,7 +3051,11 @@ def contract_sessions(contract_id: int) -> Any:
         .where(Contract.id == contract_id)
         .options(selectinload(Contract.client))
     )
-    if contract_item is None:
+    if (
+        contract_item is None
+        or contract_item.archived_at is not None
+        or contract_item.client.archived_at is not None
+    ):
         abort(404)
     if response := unchanged_live_page_response():
         return response
