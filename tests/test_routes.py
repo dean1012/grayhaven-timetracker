@@ -1180,6 +1180,15 @@ class ClientContractTaskRouteTests(AppTestCase):
             )
             record_audit_event(
                 database,
+                "task_deleted",
+                source="admin",
+                details={
+                    "task": "Another Task (ID: 9907)",
+                    "contract": "Gone Contract (ID: 9903)",
+                },
+            )
+            record_audit_event(
+                database,
                 "time_entry_created",
                 source="admin",
                 details={

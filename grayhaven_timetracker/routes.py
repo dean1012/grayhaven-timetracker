@@ -849,12 +849,6 @@ def audit_reference_id(key: str, label: str) -> int | None:
     if match is None:
         return None
     reference = match.group(1)
-    if key == "client" and len(reference) == 3:
-        return get_session().scalar(
-            select(Client.id)
-            .where(Client.public_number == int(reference))
-            .execution_options(include_hidden=True)
-        )
     if key in {"contract", "previous_contract"} and re.fullmatch(
         r"[0-9]{3}-[0-9]{3}", reference
     ):
@@ -889,7 +883,7 @@ def deleted_resource_parent_id(
         if audit_reference_id(child_key, child_label) != child_id:
             continue
         parent_id = audit_reference_id(parent_key, parent_label)
-        if parent_id is not None:
+        if parent_id is not None:  # pragma: no branch
             return parent_id
     return None
 
