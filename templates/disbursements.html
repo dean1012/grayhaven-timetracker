@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Disbursements · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}">Dashboard</a></li><li aria-current="page"><span class="breadcrumb-label">Disbursements</span></li></ol></nav>{% endblock %}
+{% block content %}
+<section class="page-heading"><div><p class="eyebrow">PAYMENTS</p><h1>Disbursements</h1></div></section>
+<section class="panel session-directory">
+  <div class="panel-heading"><div><h2>Workers</h2></div></div>
+  <div class="table-container"><table class="data-table responsive-table">
+    <caption class="visually-hidden">Workers and pending disbursements</caption>
+    <thead><tr><th scope="col">Worker</th><th class="cell-numeric" scope="col">Pending Disbursement</th></tr></thead>
+    <tbody>{% for user, cents in rows %}<tr><td class="cell-primary" data-label="Worker"><span class="user-contact-identity"><i class="fa-solid fa-address-card" aria-hidden="true"></i><a href="{{ url_for('disbursements.detail', user_id=user.id) }}">{{ user.full_name }}</a></span></td><td class="cell-numeric" data-label="Pending Disbursement">{{ disbursement_money(cents) }}</td></tr>{% else %}<tr class="empty-table-row"><td colspan="2">No workers are available.</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% if page_count > 1 %}<nav class="pagination" aria-label="Worker pages">{% if page > 1 %}<a class="button button-secondary" href="{{ url_for('disbursements.index', page=page-1) }}">Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ page }} of {{ page_count }}</span>{% if page < page_count %}<a class="button button-secondary" href="{{ url_for('disbursements.index', page=page+1) }}">Next</a>{% else %}<span></span>{% endif %}</nav>{% endif %}
+</section>
+{% endblock %}

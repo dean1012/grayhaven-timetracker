@@ -28,20 +28,18 @@ from sqlalchemy.orm import selectinload
 from .audit import record_audit_event
 from .auth import current_user
 from .database import get_session
-from .invoice_pdf import render_invoice_pdf
-from .invoice_summary import daily_summary_rows, worker_summary_rows
-from .invoice_time import total_billable_hours
+from .invoice_pdf import invoice_pdf_with_status
+from .invoice_summary import worker_daily_summary_rows
 from .invoices import (
     create_invoice,
-    disburse_invoice,
     mark_invoice_paid,
-    mark_invoice_unpaid,
     preview_invoice,
-    undo_disbursement,
+    refund_invoice,
     void_invoice,
 )
 from .models import Client, Contract, Invoice, InvoiceLine, User
 from .permissions import INVOICE_MANAGE, permission_required
+from .public_ids import find_client, find_contract
 from .reports import format_money
 from .routes import (
     clear_sensitive_action_authorization,
@@ -79,7 +77,9 @@ def invoice_globals() -> dict[str, Any]:
 def range_context(draft: dict[str, Any] | None = None) -> dict[str, Any]:
     database = get_session()
     return {
-        "clients": database.scalars(select(Client).order_by(Client.name)).all(),
+        "clients": database.scalars(
+            select(Client).where(Client.archived_at.is_(None)).order_by(Client.name)
+        ).all(),
         "projects": database.scalars(
             select(Contract)
             .where(Contract.archived_at.is_(None))
@@ -94,20 +94,15 @@ def get_invoice(invoice_id: int) -> Invoice:
     invoice = get_session().scalar(
         select(Invoice)
         .where(Invoice.id == invoice_id)
-        .options(selectinload(Invoice.lines).selectinload(InvoiceLine.entry))
+        .options(
+            selectinload(Invoice.client),
+            selectinload(Invoice.contract),
+            selectinload(Invoice.lines).selectinload(InvoiceLine.entry),
+        )
     )
     if invoice is None:
         abort(404)
     return invoice
-
-
-def has_disbursements(invoice: Invoice) -> bool:
-    return any(
-        line.entry is not None
-        and line.entry.invoice_number == invoice.invoice_number
-        and line.entry.billing_status == "disbursed"
-        for line in invoice.lines
-    )
 
 
 def audit_invoice(event: str, invoice: Invoice, **details: Any) -> None:
@@ -121,7 +116,6 @@ def audit_invoice(event: str, invoice: Invoice, **details: Any) -> None:
         path=request.path,
         details={
             "invoice_number": invoice.invoice_number,
-            "invoice_id": invoice.id,
             **details,
         },
     )
@@ -143,10 +137,17 @@ def index() -> Any:
         return redirect(url_for("invoices.index", page=page_count))
     items = database.scalars(
         select(Invoice)
-        .options(selectinload(Invoice.lines).selectinload(InvoiceLine.entry))
+        .options(
+            selectinload(Invoice.client),
+            selectinload(Invoice.contract),
+            selectinload(Invoice.lines).selectinload(InvoiceLine.entry),
+        )
         .order_by(
             case(
-                (Invoice.status == "UNPAID", 0), (Invoice.status == "PAID", 1), else_=2
+                (Invoice.status == "UNPAID", 0),
+                ((Invoice.status == "PAID") & (Invoice.refunded.is_(False)), 1),
+                (Invoice.refunded.is_(True), 2),
+                else_=3,
             ),
             Invoice.issued_at.desc(),
             Invoice.id.desc(),
@@ -160,7 +161,6 @@ def index() -> Any:
         total=total,
         page=page,
         page_count=page_count,
-        disbursed_invoice_ids={item.id for item in items if has_disbursements(item)},
         timezone_info=ZoneInfo(current_app.config["DISPLAY_TIMEZONE"]),
         **range_context(),
     )
@@ -181,12 +181,13 @@ def preview() -> Any:
         for key in ("client_id", "contract_id", "mode", "range_start", "range_end")
     }
     try:
-        client_id = int(draft["client_id"])
-        contract_id = int(draft["contract_id"])
-        contract = get_session().get(Contract, contract_id)
+        database = get_session()
+        client = find_client(database, str(draft["client_id"]))
+        contract = find_contract(database, str(draft["contract_id"]))
         if (
-            contract is None
-            or contract.client_id != client_id
+            client is None
+            or contract is None
+            or contract.client_id != client.id
             or contract.archived_at is not None
         ):
             raise ValueError(
@@ -203,15 +204,15 @@ def preview() -> Any:
         else:
             raise ValueError("Select a valid invoice range mode.")
         proposed = preview_invoice(
-            get_session(),
-            contract_id=contract_id,
+            database,
+            contract_id=contract.id,
             range_start_utc=start,
             range_end_utc=end,
             timezone_name=timezone_name,
         )
         draft.update(
-            client_id=client_id,
-            contract_id=contract_id,
+            client_id=client.display_number,
+            contract_id=contract.public_ref,
             range_start=datetime_local_value(proposed.range_start_utc, timezone_name),
             range_end=datetime_local_value(proposed.range_end_utc, timezone_name),
             fingerprint=proposed.fingerprint,
@@ -248,13 +249,16 @@ def generate() -> Any:
         return response
     database = get_session()
     try:
+        contract = find_contract(database, str(draft["contract_id"]))
+        if contract is None or contract.client.display_number != draft["client_id"]:
+            raise ValueError("Select a valid client and contract.")
         timezone_name = draft["timezone_name"]
         start = datetime.fromisoformat(draft["start_utc"])
         end = datetime.fromisoformat(draft["end_utc"])
         if request.method == "GET":
             proposed = preview_invoice(
                 database,
-                contract_id=draft["contract_id"],
+                contract_id=contract.id,
                 range_start_utc=start,
                 range_end_utc=end,
                 timezone_name=timezone_name,
@@ -272,7 +276,7 @@ def generate() -> Any:
         branding = Path(current_app.config["BRANDING_PATH"])
         invoice = create_invoice(
             database,
-            contract_id=draft["contract_id"],
+            contract_id=contract.id,
             range_start_utc=start,
             range_end_utc=end,
             timezone_name=timezone_name,
@@ -308,57 +312,51 @@ def generate() -> Any:
     return redirect(url_for("invoices.index"))
 
 
-@invoices.get("/<int:invoice_id>")
+@invoices.get("/<invoicenum:invoice_id>")
 @permission_required(INVOICE_MANAGE)
-def detail(invoice_id: int) -> str:
+def detail(invoice_id: int) -> Response:
     invoice = get_invoice(invoice_id)
-    workers: dict[int, dict[str, Any]] = {}
-    for line in invoice.lines:
-        entry = line.entry
-        if entry is None or entry.invoice_number != invoice.invoice_number:
-            continue
-        worker = workers.setdefault(
-            entry.user_id,
-            {
-                "id": entry.user_id,
-                "name": line.worker_name,
-                "seconds": 0,
-                "pending": 0,
-                "disbursed": 0,
-            },
-        )
-        worker["seconds"] += line.total_seconds
-        worker["disbursed" if entry.billing_status == "disbursed" else "pending"] += 1
-    return render_template(
-        "invoice_detail.html",
-        invoice=invoice,
-        workers=list(workers.values()),
-        daily_totals=daily_summary_rows(
-            invoice, invoice.lines, ZoneInfo(invoice.timezone_name)
+    response = Response(
+        render_template(
+            "invoice_detail.html",
+            invoice=invoice,
+            worker_daily_totals=worker_daily_summary_rows(
+                invoice, invoice.lines, ZoneInfo(invoice.timezone_name)
+            ),
+            timezone_info=ZoneInfo(invoice.timezone_name),
         ),
-        worker_totals=worker_summary_rows(invoice.lines),
-        billable_hours=total_billable_hours(
-            invoice.lines, ZoneInfo(invoice.timezone_name)
-        ),
-        has_disbursements=has_disbursements(invoice),
-        timezone_info=ZoneInfo(invoice.timezone_name),
+        mimetype="text/html",
     )
+    response.cache_control.private = True
+    response.cache_control.no_store = True
+    return response
 
 
-@invoices.get("/<int:invoice_id>/download")
+@invoices.get("/<invoicenum:invoice_id>/download")
 @permission_required(INVOICE_MANAGE)
 def download(invoice_id: int) -> Response:
     invoice = get_invoice(invoice_id)
     branding = Path(current_app.config["BRANDING_PATH"])
-    pdf_bytes = render_invoice_pdf(
-        invoice,
-        invoice.lines,
-        logo_path=branding / "grayhaven-logo-wordmark-light.png",
-        font_regular_path=branding / "fonts/inter-400.ttf",
-        font_bold_path=branding / "fonts/inter-700.ttf",
-    )
-    return Response(
-        pdf_bytes,
+    response = Response(
+        invoice_pdf_with_status(
+            invoice.pdf_bytes,
+            invoice.display_status,
+            pdf_version=invoice.pdf_version,
+            status_date=(
+                invoice.refunded_date
+                if invoice.refunded
+                else invoice.paid_date
+                if invoice.status == "PAID"
+                else invoice.voided_date
+            ),
+            transaction_id=(
+                invoice.refund_transaction_id
+                if invoice.refunded
+                else invoice.paid_transaction_id
+            ),
+            font_regular_path=branding / "fonts/inter-400.ttf",
+            font_bold_path=branding / "fonts/inter-700.ttf",
+        ),
         mimetype="application/pdf",
         headers={
             "Content-Disposition": (
@@ -366,58 +364,45 @@ def download(invoice_id: int) -> Response:
             )
         },
     )
+    response.cache_control.private = True
+    response.cache_control.no_store = True
+    return response
 
 
-@invoices.route(
-    "/<int:invoice_id>/<action>", defaults={"target_id": 0}, methods=["GET", "POST"]
-)
-@invoices.route("/<int:invoice_id>/<action>/<int:target_id>", methods=["GET", "POST"])
+@invoices.route("/<invoicenum:invoice_id>/<action>", methods=["GET", "POST"])
 @permission_required(INVOICE_MANAGE)
-def action(invoice_id: int, action: str, target_id: int) -> Any:
+def action(invoice_id: int, action: str) -> Any:
     labels = {
         "paid": "Mark Paid",
-        "unpaid": "Mark Unpaid",
-        "void": "Mark Void",
-        "disburse": "Mark Disbursed",
-        "undo-disbursement": "Undo Disbursement",
+        "refund": "Refund",
+        "void": "Void",
     }
-    if action not in labels or (
-        target_id and action not in {"disburse", "undo-disbursement"}
-    ):
-        abort(404)
-    if action in {"disburse", "undo-disbursement"} and not target_id:
+    if action not in labels:
         abort(404)
     invoice = get_invoice(invoice_id)
-    if action in {"disburse", "undo-disbursement"}:
-        worker_line = next(
-            (line for line in invoice.lines if line.user_id == target_id), None
-        )
-        if worker_line is None:
-            abort(404)
-        labels[action] += f": {worker_line.worker_name}"
     if invoice.status == "VOID":
         abort(409, "Voiding is permanent. This invoice cannot be changed.")
-    if action in {"unpaid", "void"} and has_disbursements(invoice):
-        abort(
-            409, "Undo all disbursements before correcting the invoice payment status."
-        )
     if (action in {"paid", "void"} and invoice.status != "UNPAID") or (
-        action in {"unpaid", "disburse", "undo-disbursement"}
-        and invoice.status != "PAID"
+        action == "refund" and (invoice.status != "PAID" or invoice.refunded)
     ):
         abort(409, "That action is not available for the invoice's current status.")
+    if action == "void" and (
+        invoice.client.archived_at is not None
+        or invoice.contract.archived_at is not None
+    ):
+        abort(409, "Activate the client and contract before voiding this invoice.")
     actor = cast(User, current_user())
     if response := require_sensitive_action_authorization(
         actor, url_for("invoices.detail", invoice_id=invoice.id)
     ):
         return response
-    reason_required = action in {"unpaid", "void", "undo-disbursement"}
+    reason_required = action in {"refund", "void"}
     context = {
         "invoice": invoice,
         "action": action,
         "action_label": labels[action],
-        "target_id": target_id,
         "reason_required": reason_required,
+        "form_values": {},
         "today": now_utc()
         .replace(tzinfo=ZoneInfo("UTC"))
         .astimezone(ZoneInfo(invoice.timezone_name))
@@ -428,59 +413,38 @@ def action(invoice_id: int, action: str, target_id: int) -> Any:
     database = get_session()
     try:
         reason = correction_reason() if reason_required else None
-        prior = {"status": invoice.status, "paid_date": invoice.paid_date}
-        entry_changes = []
-        for line in invoice.lines:
-            entry = line.entry
-            if (
-                entry is not None
-                and entry.invoice_number == invoice.invoice_number
-                and (
-                    not target_id
-                    or (action == "disburse" and entry.user_id == target_id)
-                    or (action == "undo-disbursement" and entry.user_id == target_id)
-                )
-            ):
-                entry_changes.append(
-                    {
-                        "entry_id": entry.id,
-                        "status": entry.billing_status,
-                        "disbursement_date": entry.disbursement_date,
-                        "reference": entry.transaction_number,
-                    }
-                )
+        prior = {"status": invoice.display_status, "paid_date": invoice.paid_date}
+        status_date = None
+        if action in {"paid", "refund"}:
+            try:
+                status_date = date.fromisoformat(request.form.get("status_date", ""))
+            except ValueError as exc:
+                raise ValueError("Enter a valid date.") from exc
         if action == "paid":
-            invoice = mark_invoice_paid(database, invoice_id)
-        elif action == "unpaid":
-            invoice = mark_invoice_unpaid(database, invoice_id)
-        elif action == "void":
-            invoice = void_invoice(database, invoice_id)
-        elif action == "disburse":
-            disbursed_date = date.fromisoformat(
-                request.form.get("disbursement_date", "")
-            )
-            reference = request.form.get("reference", "")
-            disburse_invoice(
+            invoice = mark_invoice_paid(
                 database,
                 invoice_id,
-                disbursement_date=disbursed_date,
-                reference=reference,
-                user_id=target_id or None,
+                paid_date=status_date,
+                transaction_id=request.form.get("transaction_id"),
+            )
+        elif action == "refund":
+            invoice = refund_invoice(
+                database,
+                invoice_id,
+                transaction_id=request.form.get("transaction_id"),
+                refunded_date=status_date,
             )
         else:
-            undo_disbursement(database, invoice_id, user_id=target_id)
+            invoice = void_invoice(database, invoice_id)
         audit_invoice(
-            "invoice_" + action.replace("-", "_"),
+            "invoice_" + action,
             invoice,
             correction_reason=reason,
             previous=prior,
-            previous_entries=entry_changes,
-            status=invoice.status,
+            status=invoice.display_status,
             paid_date=invoice.paid_date,
-            disbursement_date=request.form.get("disbursement_date")
-            if action == "disburse"
-            else None,
-            reference=request.form.get("reference") if action == "disburse" else None,
+            voided_date=invoice.voided_date,
+            refunded_date=invoice.refunded_date,
         )
         database.commit()
     except (ValueError, IntegrityError, OperationalError) as exc:
@@ -491,6 +455,7 @@ def action(invoice_id: int, action: str, target_id: int) -> Any:
             else "Invoice data changed or is busy. Please reload and try again.",
             "error",
         )
+        context["form_values"] = request.form
         return render_template("invoice_action.html", **context), 409
     consume_sensitive_action_authorization()
     flash(f"Invoice {invoice.invoice_number}: {labels[action]} completed.", "success")

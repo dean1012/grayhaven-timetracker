@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from html import escape
 from io import BytesIO
@@ -15,6 +16,8 @@ from threading import Lock
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import ContentStream, TextStringObject
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import LETTER
@@ -22,6 +25,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfgen import canvas
 from reportlab.platypus import (
     HRFlowable,
     Image,
@@ -33,10 +37,127 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from .invoice_summary import daily_summary_rows, worker_summary_rows
+from .invoice_summary import worker_daily_summary_rows
 from .models import Invoice, InvoiceLine
 
 _FONT_LOCK = Lock()
+_COMPANY_URL = "https://grayhavensystems.com"
+_STATUS_LABELS = {
+    "UNPAID": "INVOICE",
+    "PAID": "PAID",
+    "VOID": "VOID",
+    "REFUNDED": "REFUNDED",
+}
+_STATUS_COLORS = {
+    "UNPAID": colors.HexColor("#17202A"),
+    "PAID": colors.HexColor("#3FB68B"),
+    "VOID": colors.HexColor("#AAB2BF"),
+    "REFUNDED": colors.HexColor("#AAB2BF"),
+}
+_STATUS_DATE_LABELS = {"PAID": "Paid", "VOID": "Voided", "REFUNDED": "Refunded"}
+
+
+def invoice_pdf_with_status(  # pragma: no cover
+    pdf_bytes: bytes,
+    status: str,
+    *,
+    pdf_version: int,
+    status_date: date | None = None,
+    transaction_id: str | None = None,
+    font_regular_path: Path | None = None,
+    font_bold_path: Path | None = None,
+) -> bytes:
+    """Stamp only the status area of an issued PDF; preserve its stored body."""
+    if status == "UNPAID":
+        return pdf_bytes
+    if status not in _STATUS_LABELS or pdf_version != 2:
+        raise ValueError("Unsupported invoice PDF status or version.")
+    if status_date is None:
+        raise ValueError("The invoice status date is unavailable.")
+    reader = PdfReader(BytesIO(pdf_bytes))
+    if not reader.pages:
+        raise ValueError("The stored invoice PDF has no pages.")
+    first = reader.pages[0]
+    if (
+        float(first.mediabox.width) != LETTER[0]
+        or float(first.mediabox.height) != LETTER[1]
+        or first.rotation
+    ):
+        raise ValueError("The stored invoice PDF has an unexpected page layout.")
+    original_content = first.get_contents()
+    if original_content is None:
+        raise ValueError("The stored invoice PDF has no heading content.")
+    content = ContentStream(original_content, reader)
+    details_positions = [
+        index
+        for index, (operands, operator) in enumerate(content.operations)
+        if operator == b"Tj" and len(operands) == 1 and str(operands[0]) == "Bill to"
+    ]
+    if not details_positions:
+        raise ValueError("The stored invoice PDF has no details heading.")
+    heading_positions = [
+        index
+        for index, (operands, operator) in enumerate(content.operations)
+        if index < details_positions[0]
+        and operator == b"Tj"
+        and len(operands) == 1
+        and str(operands[0]) in _STATUS_LABELS.values()
+    ]
+    if len(heading_positions) != 1:
+        raise ValueError("The stored invoice PDF has no unique status heading.")
+    del content.operations[heading_positions[0]]
+    due_positions = [
+        index
+        for index, (operands, operator) in enumerate(content.operations)
+        if operator == b"Tj" and len(operands) == 1 and str(operands[0]) == "Due"
+    ]
+    if len(due_positions) != 1:
+        raise ValueError("The stored invoice PDF has no unique due date heading.")
+    due_date_position = next(
+        (
+            index
+            for index in range(due_positions[0] + 1, len(content.operations))
+            if content.operations[index][1] == b"Tj"
+        ),
+        None,
+    )
+    if due_date_position is None or not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}", str(content.operations[due_date_position][0][0])
+    ):
+        raise ValueError("The stored invoice PDF has no recognizable due date.")
+    content.operations[due_positions[0]] = (
+        [TextStringObject(_STATUS_DATE_LABELS[status])],
+        b"Tj",
+    )
+    content.operations[due_date_position] = (
+        [TextStringObject(status_date.isoformat())],
+        b"Tj",
+    )
+    regular_font, bold_font = _fonts(font_regular_path, font_bold_path)
+    overlay_buffer = BytesIO()
+    overlay = canvas.Canvas(overlay_buffer, pagesize=LETTER)
+    overlay.setFillColor(_STATUS_COLORS[status])
+    overlay.setFont(bold_font, 22)
+    status_right = LETTER[0] - 54
+    overlay.drawRightString(status_right, 720.3, _STATUS_LABELS[status])
+    if transaction_id and status in {"PAID", "REFUNDED"}:
+        reference = f"#{transaction_id}"
+        reference_size = min(
+            7.5,
+            190 / pdfmetrics.stringWidth(reference, regular_font, 1),
+        )
+        overlay.setFillColor(_STATUS_COLORS[status])
+        overlay.setFont(regular_font, reference_size)
+        overlay.drawRightString(status_right, 708.5, reference)
+    overlay.save()
+    overlay_buffer.seek(0)
+    writer = PdfWriter()
+    writer.clone_document_from_reader(reader)
+    writer.pages[0].replace_contents(content)
+    writer.pages[0].merge_page(PdfReader(overlay_buffer).pages[0])
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
 
 
 def _text(value: object) -> str:
@@ -47,9 +168,9 @@ def _fonts(regular_path: Path | None, bold_path: Path | None) -> tuple[str, str]
     if regular_path is None and bold_path is None:
         return "Helvetica", "Helvetica-Bold"
     if regular_path is None or bold_path is None:
-        raise ValueError("Both regular and bold invoice fonts are required")
+        raise ValueError("Both regular and bold invoice fonts are required.")
     if not regular_path.is_file() or not bold_path.is_file():
-        raise ValueError("Invoice font files are unavailable")
+        raise ValueError("Invoice font files are unavailable.")
     digest = hashlib.sha256(
         f"{regular_path.resolve()}\0{bold_path.resolve()}".encode()
     ).hexdigest()[:12]
@@ -100,7 +221,28 @@ def render_invoice_pdf(
     font_regular_path: Path | None = None,
     font_bold_path: Path | None = None,
 ) -> bytes:
-    """Render invoice data to a self-contained, multi-page PDF byte string."""
+    """Use the layout version stored on the invoice for explicit revisions."""
+    version = invoice.pdf_version or 2
+    if version != 2:
+        raise ValueError("Unsupported invoice PDF version.")
+    return _render_invoice_pdf_v2(
+        invoice,
+        lines,
+        logo_path=logo_path,
+        font_regular_path=font_regular_path,
+        font_bold_path=font_bold_path,
+    )
+
+
+def _render_invoice_pdf_v2(
+    invoice: Invoice,
+    lines: Sequence[InvoiceLine],
+    *,
+    logo_path: Path | None = None,
+    font_regular_path: Path | None = None,
+    font_bold_path: Path | None = None,
+) -> bytes:
+    """Render the fixed 4.0 invoice layout for version-two snapshots."""
     regular_font, bold_font = _fonts(font_regular_path, font_bold_path)
     timezone = ZoneInfo(invoice.timezone_name)
     buffer = BytesIO()
@@ -133,21 +275,8 @@ def render_invoice_pdf(
         spaceAfter=0.1 * inch,
         keepWithNext=1,
     )
-    summary_value = ParagraphStyle(
-        "InvoiceSummaryValue",
-        parent=bold,
-        fontSize=8,
-        leading=10,
-    )
-    status_label = {
-        "PAID": "PAID",
-        "VOID": "VOID",
-        "UNPAID": "INVOICE",
-    }.get(invoice.status, "INVOICE")
-    status_color = {
-        "PAID": colors.HexColor("#3FB68B"),
-        "VOID": colors.HexColor("#AAB2BF"),
-    }.get(invoice.status, colors.HexColor("#17202A"))
+    status_label = _STATUS_LABELS.get(invoice.display_status, "INVOICE")
+    status_color = _STATUS_COLORS.get(invoice.display_status, _STATUS_COLORS["UNPAID"])
     heading = ParagraphStyle(
         "InvoiceHeading",
         parent=body,
@@ -161,7 +290,7 @@ def render_invoice_pdf(
     logo: Any
     if logo_path is not None:
         if not logo_path.is_file():
-            raise ValueError("Invoice logo file is unavailable")
+            raise ValueError("Invoice logo file is unavailable.")
         logo = Image(str(logo_path))
         scale = min(
             (2.35 * inch) / logo.imageWidth,
@@ -180,11 +309,11 @@ def render_invoice_pdf(
     header.setStyle(
         TableStyle(
             [
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 0),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 0),
                 ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 24),
                 ("LINEBELOW", (0, 0), (-1, -1), 0.8, colors.HexColor("#596572")),
             ]
         )
@@ -201,12 +330,16 @@ def render_invoice_pdf(
                 ),
             ],
             [
-                Paragraph(
-                    f"{_text(invoice.client_name)}<br/>"
-                    f"{_text(invoice.contact_name)}<br/>"
-                    f"{_text(invoice.contact_email)}",
-                    body,
-                ),
+                [
+                    Paragraph(
+                        f"{_text(invoice.client_name)}<br/>"
+                        f"{_text(invoice.contact_name)}<br/>"
+                        f"{_text(invoice.contact_email)}",
+                        body,
+                    ),
+                    Spacer(1, 0.12 * inch),
+                    Paragraph("Thank you for your business!", bold),
+                ],
                 Paragraph(
                     f"<b>Issued</b><br/>{issue_date.isoformat()}<br/>"
                     f"<b>Due</b><br/>{invoice.due_date.isoformat()}",
@@ -245,110 +378,60 @@ def render_invoice_pdf(
                 f"<b>Rate:</b> {_money(invoice.hourly_rate_cents)} per hour",
                 body,
             ),
-            Spacer(1, 0.14 * inch),
-        ]
-    )
-    totals = Table(
-        [
-            [
-                Paragraph("Total Time", bold),
-                Paragraph(
-                    f"<nobr>{_text(_duration(invoice.total_seconds))}</nobr>",
-                    summary_value,
-                ),
-            ],
-            [
-                Paragraph("Invoice Total", bold),
-                Paragraph(_money(invoice.total_cents), summary_value),
-            ],
-        ],
-        colWidths=[1.05 * inch, 2.15 * inch],
-        hAlign="RIGHT",
-    )
-    totals.setStyle(
-        TableStyle(
-            [
-                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-                ("LINEABOVE", (0, 1), (-1, 1), 0.8, colors.HexColor("#17202A")),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ]
-        )
-    )
-    story.extend([totals, Spacer(1, 0.18 * inch)])
-    story.append(Paragraph("Daily Totals", section_heading))
-    daily_data: list[list[object]] = [
-        [Paragraph(label, bold) for label in ("Day", "Date", "Hours")]
-    ]
-    for day, hours in daily_summary_rows(invoice, lines, timezone):
-        daily_data.append(
-            [
-                Paragraph(day.strftime("%A"), body),
-                Paragraph(day.isoformat(), body),
-                Paragraph("-" if hours is None else str(hours), body),
-            ]
-        )
-    daily_table = Table(
-        daily_data,
-        colWidths=[2.4 * inch, 2.4 * inch, 2.6 * inch],
-        repeatRows=1,
-        hAlign="LEFT",
-    )
-    daily_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E5E9ED")),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#BCC4CC")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ]
-        )
-    )
-    story.extend(
-        [
-            daily_table,
+            Spacer(1, 0.12 * inch),
             Paragraph(
-                "Billable hours are rounded daily to the nearest 0.01 hour.", small
+                f"Amount Due: {_money(invoice.total_cents)}",
+                ParagraphStyle(
+                    "InvoiceAmountDue",
+                    parent=bold,
+                    fontSize=20,
+                    leading=24,
+                ),
             ),
             Spacer(1, 0.2 * inch),
         ]
     )
-    worker_data: list[list[object]] = [
-        [Paragraph("Worker", bold), Paragraph("Hours", bold)]
-    ]
-    for worker_name, hours in worker_summary_rows(lines):
-        worker_data.append(
-            [
-                Paragraph(_text(worker_name), body),
-                Paragraph(str(hours), body),
-            ]
+    for worker_name, days in worker_daily_summary_rows(invoice, lines, timezone):
+        story.append(
+            Paragraph(f"Billable Work - {_text(worker_name)}", section_heading)
         )
-    worker_table = Table(
-        worker_data,
-        colWidths=[4.4 * inch, 3.0 * inch],
-        repeatRows=1,
-        hAlign="LEFT",
-    )
-    worker_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E5E9ED")),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#BCC4CC")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 4),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ]
+        worker_data: list[list[object]] = [
+            [Paragraph(label, bold) for label in ("Day", "Date", "Hours")]
+        ]
+        for day, hours in days:
+            worker_data.append(
+                [
+                    Paragraph(day.strftime("%A"), body),
+                    Paragraph(day.isoformat(), body),
+                    Paragraph("-" if hours is None else f"{hours:.2f}", body),
+                ]
+            )
+        worker_table = Table(
+            worker_data,
+            colWidths=[2.4 * inch, 2.4 * inch, 2.6 * inch],
+            repeatRows=1,
+            hAlign="LEFT",
         )
-    )
+        worker_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E5E9ED")),
+                    ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#BCC4CC")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                    ("TOPPADDING", (0, 0), (-1, -1), 4),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+                ]
+            )
+        )
+        story.extend([worker_table, Spacer(1, 0.2 * inch)])
     story.extend(
         [
-            Paragraph("Session Totals by Worker", section_heading),
-            worker_table,
+            Paragraph(
+                "Billable hours are rounded daily to the nearest quarter hour.",
+                bold,
+            ),
             PageBreak(),
             Paragraph("Invoiced Sessions", section_heading),
         ]
@@ -430,13 +513,20 @@ def render_invoice_pdf(
         canvas.saveState()
         canvas.setFillColor(colors.HexColor("#5D6873"))
         canvas.setFont(regular_font, 7)
-        canvas.drawString(0.55 * inch, 0.3 * inch, f"Payment Terms: {terms}")
-        canvas.setFillColor(colors.black)
-        canvas.setFont(bold_font, 7)
-        canvas.drawCentredString(
-            LETTER[0] / 2, 0.3 * inch, "Thank you for your business"
+        footer_baseline = 0.3 * inch
+        canvas.drawString(0.55 * inch, footer_baseline, f"Payment Terms: {terms}")
+        canvas.setFillColor(colors.HexColor("#1F5F87"))
+        canvas.drawCentredString(LETTER[0] / 2, footer_baseline, _COMPANY_URL)
+        url_width = pdfmetrics.stringWidth(_COMPANY_URL, regular_font, 7)
+        canvas.linkURL(
+            _COMPANY_URL,
+            (
+                (LETTER[0] - url_width) / 2,
+                footer_baseline - 1,
+                (LETTER[0] + url_width) / 2,
+                footer_baseline + 8,
+            ),
         )
-        canvas.setFont(regular_font, 7)
         canvas.setFillColor(colors.HexColor("#5D6873"))
         canvas.drawRightString(
             LETTER[0] - 0.55 * inch,

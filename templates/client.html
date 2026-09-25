@@ -14,7 +14,7 @@
   </div>
   <div class="heading-actions">
     {% if can('client:edit') %}<a class="icon-button" href="{{ url_for('main.edit_client', client_id=client.id) }}" title="Update Client" aria-label="Update Client"><i class="fa-solid fa-pen" aria-hidden="true"></i></a>{% endif %}
-    {% if can('client:delete') %}<a class="icon-button danger" href="{{ url_for('main.delete_client', client_id=client.id) }}" title="Delete Client" aria-label="Delete Client"><i class="fa-solid fa-trash" aria-hidden="true"></i></a>{% endif %}
+    {% if can('client:archive') %}{% if archive_blocked %}<button class="icon-button danger" type="button" disabled title="Resolve pending invoice sessions before archiving" aria-label="Archive Client unavailable"><i class="fa-solid fa-box-archive" aria-hidden="true"></i></button>{% else %}<a class="icon-button danger" href="{{ url_for('main.archive_client', client_id=client.id) }}" title="Archive Client" aria-label="Archive Client"><i class="fa-solid fa-box-archive" aria-hidden="true"></i></a>{% endif %}{% endif %}
     {% if can('report:view') %}<a class="icon-button" href="{{ url_for('main.report_view', client_id=client.id) }}" title="View Live Report" aria-label="View Live Report"><i class="fa-solid fa-eye" aria-hidden="true"></i></a>{% endif %}
   </div>
 </section>
@@ -26,39 +26,31 @@
     <span class="copy-value client-report-link" data-copy-value="{{ report_url }}">
       <a class="content-link" href="{{ report_url }}" target="_blank" rel="noopener noreferrer" title="{{ report_url }}">{{ report_url }}</a>
       <span class="report-link-actions">
-        <button class="icon-button" type="button" data-copy-target=".client-report-link" title="Copy report link" aria-label="Copy report link"><i class="fa-solid fa-copy" aria-hidden="true"></i><span class="visually-hidden">Copy report link</span></button>
-        <a class="icon-button" href="{{ report_mailto }}" title="Share report link by email" aria-label="Share report link by email"><i class="fa-solid fa-envelope" aria-hidden="true"></i><span class="visually-hidden">Share report link by email</span></a>
-        <a class="icon-button" href="{{ url_for('main.reset_client_report_password', client_id=client.id) }}" title="Reset report password" aria-label="Reset report password"><i class="fa-solid fa-key" aria-hidden="true"></i><span class="visually-hidden">Reset report password</span></a>
+        <button class="icon-button" type="button" data-copy-target=".client-report-link" title="Copy Report Link" aria-label="Copy Report Link"><i class="fa-solid fa-copy" aria-hidden="true"></i><span class="visually-hidden">Copy Report Link</span></button>
+        <a class="icon-button" href="{{ report_mailto }}" title="Share Report Link by Email" aria-label="Share Report Link by Email"><i class="fa-solid fa-envelope" aria-hidden="true"></i><span class="visually-hidden">Share Report Link by Email</span></a>
+        <a class="icon-button" href="{{ url_for('main.reset_client_report_password', client_id=client.id) }}" title="Reset Report Password" aria-label="Reset Report Password"><i class="fa-solid fa-key" aria-hidden="true"></i><span class="visually-hidden">Reset Report Password</span></a>
       </span>
     </span>
   </div>
 </section>{% endif %}
-<section class="panel contract-directory" data-live-region="client-contracts">
-  <div class="panel-heading">
-    <div><p class="eyebrow">CONTRACTS</p><h2>Contract Directory</h2></div>
-    {% if can('contract:add') %}<a class="icon-button accent" href="{{ url_for('main.new_contract', client_id=client.id) }}" title="New Contract" aria-label="New Contract"><i class="fa-solid fa-plus" aria-hidden="true"></i></a>{% endif %}
+<section class="panel session-directory" data-live-region="client-contracts">
+  <div class="client-contract-section">
+    <div class="panel-heading"><div><p class="eyebrow">CONTRACTS</p><h2>Active Contracts</h2></div>{% if can('contract:add') %}<a class="icon-button accent" href="{{ url_for('main.new_contract', client_id=client.id) }}" title="New Contract" aria-label="New Contract"><i class="fa-solid fa-plus" aria-hidden="true"></i></a>{% endif %}</div>
+    <div class="table-container"><table class="data-table responsive-table">
+      <caption class="visually-hidden">Active contracts for {{ client.name }}</caption>
+      <thead><tr><th scope="col">Contract</th><th scope="col">Contact</th><th scope="col">Terms</th><th class="cell-numeric" scope="col">Rate</th></tr></thead>
+      <tbody>{% for contract in active_contracts %}<tr><td class="cell-primary" data-label="Contract"><a href="{{ url_for('main.contract', contract_id=contract.id) }}">{{ contract.name }}</a></td><td data-label="Contact"><span class="contract-table-contact"><i class="fa-solid fa-address-card" aria-hidden="true"></i><span><span>{{ contract.contact_name }}</span><a href="mailto:{{ contract.contact_email }}">{{ contract.contact_email }}</a></span></span></td><td data-label="Terms">{{ 'Due Immediately' if contract.payment_terms_days == 0 else 'NET ' ~ contract.payment_terms_days }}</td><td class="cell-numeric" data-label="Rate">{{ format_money(contract.hourly_rate) }}/hr</td></tr>{% else %}<tr class="empty-table-row"><td colspan="4">No active contracts.</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% if active_pages > 1 %}<nav class="pagination" aria-label="Active contract pages">{% if active_page > 1 %}<a class="button button-secondary" href="{{ url_for('main.client', client_id=client.id, active_page=active_page-1, archived_page=archived_page) }}">Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ active_page }} of {{ active_pages }}</span>{% if active_page < active_pages %}<a class="button button-secondary" href="{{ url_for('main.client', client_id=client.id, active_page=active_page+1, archived_page=archived_page) }}">Next</a>{% else %}<span></span>{% endif %}</nav>{% endif %}
   </div>
-  {% for contract in client.contracts %}
-  <div class="contract-row contract-row-detailed">
-    <a class="contract-name-link" href="{{ url_for('main.contract', contract_id=contract.id) }}">
-      <span class="contract-identity">
-      <i class="fa-solid fa-file-signature" aria-hidden="true"></i>
-      <strong class="truncate-text" title="{{ contract.name }}">{{ contract.name }}</strong>
-      {% if contract.archived_at %}<span class="status-pill status-warning">Archived</span>{% endif %}
-      </span>
-    </a>
-    <span class="contract-contact-details">
-      <span class="contract-contact-identity"><i class="fa-solid fa-address-card" aria-hidden="true"></i><strong title="{{ contract.contact_name }}">{{ contract.contact_name }}</strong></span>
-      <a class="contract-contact-email external-link" href="mailto:{{ contract.contact_email }}?subject={{ ('RE: ' ~ client.name ~ '/' ~ contract.name ~ ' Contract')|urlencode }}&amp;body={{ (contract.contact_name ~ ',')|urlencode }}" title="{{ contract.contact_email }}"><span class="truncate-text">{{ contract.contact_email }}</span></a>
-    </span>
-    <span class="contract-payment-terms" aria-label="Payment Terms: {% if contract.payment_terms_days == 0 %}Due Immediately{% else %}NET {{ contract.payment_terms_days }}{% endif %}">{% if contract.payment_terms_days == 0 %}Due Immediately{% else %}NET {{ contract.payment_terms_days }}{% endif %}</span>
-    <span class="contract-rate-details">
-      <span class="rate">{{ format_money(contract.hourly_rate) }}/hr</span>
-      <a class="icon-button contract-row-action" href="{{ url_for('main.contract', contract_id=contract.id) }}" title="Open {{ contract.name }}" aria-label="Open {{ contract.name }}"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></a>
-    </span>
+  <div class="client-contract-section">
+    <div class="panel-heading"><div><h2>Archived Contracts</h2></div></div>
+    <div class="table-container"><table class="data-table responsive-table">
+      <caption class="visually-hidden">Archived contracts for {{ client.name }}</caption>
+      <thead><tr><th scope="col">Contract</th><th scope="col">Contact</th><th scope="col">Terms</th><th class="cell-numeric" scope="col">Rate</th></tr></thead>
+      <tbody>{% for contract in archived_contracts %}<tr><td class="cell-primary" data-label="Contract"><a href="{{ url_for('main.contract', contract_id=contract.id) }}">{{ contract.name }}</a></td><td data-label="Contact"><span class="contract-table-contact"><i class="fa-solid fa-address-card" aria-hidden="true"></i><span><span>{{ contract.contact_name }}</span><a href="mailto:{{ contract.contact_email }}">{{ contract.contact_email }}</a></span></span></td><td data-label="Terms">{{ 'Due Immediately' if contract.payment_terms_days == 0 else 'NET ' ~ contract.payment_terms_days }}</td><td class="cell-numeric" data-label="Rate">{{ format_money(contract.hourly_rate) }}/hr</td></tr>{% else %}<tr class="empty-table-row"><td colspan="4">No archived contracts.</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% if archived_pages > 1 %}<nav class="pagination" aria-label="Archived contract pages">{% if archived_page > 1 %}<a class="button button-secondary" href="{{ url_for('main.client', client_id=client.id, active_page=active_page, archived_page=archived_page-1) }}">Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ archived_page }} of {{ archived_pages }}</span>{% if archived_page < archived_pages %}<a class="button button-secondary" href="{{ url_for('main.client', client_id=client.id, active_page=active_page, archived_page=archived_page+1) }}">Next</a>{% else %}<span></span>{% endif %}</nav>{% endif %}
   </div>
-  {% else %}
-  <div class="panel empty-panel"><div class="panel-heading"><h2>No Contracts Yet</h2></div><p class="muted">No contracts created for this client.</p></div>
-  {% endfor %}
 </section>
 {% endblock %}

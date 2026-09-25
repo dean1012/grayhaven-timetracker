@@ -18,8 +18,12 @@ from sqlalchemy import (
     LargeBinary,
     String,
     Text,
+    event,
+    func,
+    select,
     text,
 )
+from sqlalchemy.engine import Connection
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -31,6 +35,9 @@ class User(Base):
     __tablename__ = "user_account"
     __table_args__ = (
         CheckConstraint("role IN ('admin', 'user')", name="ck_user_role"),
+        CheckConstraint(
+            "user_type IN ('llc_member', 'subcontractor')", name="ck_user_type"
+        ),
         CheckConstraint("length(trim(email)) > 3", name="ck_user_email"),
         CheckConstraint("length(trim(first_name)) > 0", name="ck_user_first_name"),
         CheckConstraint("length(trim(last_name)) > 0", name="ck_user_last_name"),
@@ -48,6 +55,9 @@ class User(Base):
     totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
     pending_totp_secret: Mapped[str | None] = mapped_column(String(64), nullable=True)
     role: Mapped[str] = mapped_column(String(16), default="user")
+    user_type: Mapped[str] = mapped_column(
+        String(16), default="subcontractor", server_default="subcontractor"
+    )
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     password_change_required: Mapped[bool] = mapped_column(Boolean, default=False)
     session_version: Mapped[int] = mapped_column(Integer, default=1)
@@ -59,6 +69,9 @@ class User(Base):
     )
     passkeys: Mapped[list[PasskeyCredential]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
+    )
+    disbursements: Mapped[list[Disbursement]] = relationship(
+        back_populates="user", foreign_keys="Disbursement.user_id"
     )
 
     @property
@@ -85,17 +98,25 @@ class Client(Base):
             name="ck_client_report_password_version",
         ),
         Index("uq_client_name", "name", unique=True),
+        Index("uq_client_public_number", "public_number", unique=True),
         Index("uq_client_report_token", "report_token", unique=True),
         {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    public_number: Mapped[int] = mapped_column(
+        Integer, CheckConstraint("public_number BETWEEN 1 AND 999"), nullable=False
+    )
     name: Mapped[str] = mapped_column(String(200, collation="NOCASE"))
     contact_name: Mapped[str] = mapped_column(String(200))
     contact_email: Mapped[str] = mapped_column(String(255))
     report_password_hash: Mapped[str | None] = mapped_column(String(512), nullable=True)
     report_password_version: Mapped[int] = mapped_column(Integer, default=1)
     visible: Mapped[bool] = mapped_column(Boolean, default=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    archived_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_account.id", ondelete="RESTRICT"), nullable=True
+    )
     report_token: Mapped[str] = mapped_column(
         String(128), default=lambda: secrets.token_urlsafe(32)
     )
@@ -104,6 +125,10 @@ class Client(Base):
         back_populates="client", order_by=lambda: Contract.id.desc()
     )
     invoices: Mapped[list[Invoice]] = relationship(back_populates="client")
+
+    @property
+    def display_number(self) -> str:
+        return f"{self.public_number:03d}"
 
 
 class Contract(Base):
@@ -125,10 +150,19 @@ class Contract(Base):
             name="ck_contract_payment_terms",
         ),
         Index("uq_contract_client_name", "client_id", "name", unique=True),
+        Index(
+            "uq_contract_client_public_number",
+            "client_id",
+            "public_number",
+            unique=True,
+        ),
         {"sqlite_autoincrement": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    public_number: Mapped[int] = mapped_column(
+        Integer, CheckConstraint("public_number BETWEEN 1 AND 999"), nullable=False
+    )
     visible: Mapped[bool] = mapped_column(Boolean, default=True)
     client_id: Mapped[int] = mapped_column(ForeignKey("client.id", ondelete="RESTRICT"))
     name: Mapped[str] = mapped_column(String(200, collation="NOCASE"))
@@ -154,6 +188,40 @@ class Contract(Base):
     @property
     def hourly_rate(self) -> Decimal:
         return Decimal(self.hourly_rate_cents) / Decimal(100)
+
+    @property
+    def public_ref(self) -> str:
+        return f"{self.client.public_number:03d}-{self.public_number:03d}"
+
+
+@event.listens_for(Client, "before_insert")
+def assign_client_public_number(
+    _mapper: Any, connection: Connection, client: Client
+) -> None:
+    if client.public_number is not None:
+        return
+    used = set(connection.execute(select(Client.public_number)).scalars())
+    available = tuple(number for number in range(100, 1000) if number not in used)
+    if not available:  # pragma: no cover
+        raise ValueError("No client numbers remain")
+    client.public_number = secrets.choice(available)
+
+
+@event.listens_for(Contract, "before_insert")
+def assign_contract_public_number(
+    _mapper: Any, connection: Connection, contract: Contract
+) -> None:
+    if contract.public_number is not None:  # pragma: no cover
+        return
+    current = connection.execute(
+        select(func.max(Contract.public_number)).where(
+            Contract.client_id == contract.client_id
+        )
+    ).scalar()
+    next_number = int(current or 0) + 1
+    if next_number > 999:  # pragma: no cover
+        raise ValueError("No contract numbers remain for this client")
+    contract.public_number = next_number
 
 
 class Task(Base):
@@ -316,6 +384,17 @@ class Invoice(Base):
     total_cents: Mapped[int] = mapped_column(Integer)
     due_date: Mapped[date] = mapped_column()
     paid_date: Mapped[date | None] = mapped_column(nullable=True)
+    voided_date: Mapped[date | None] = mapped_column(nullable=True)
+    refunded_date: Mapped[date | None] = mapped_column(nullable=True)
+    paid_transaction_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    refund_transaction_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+    refunded: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    pdf_version: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
+    worker_summary_json: Mapped[str] = mapped_column(
+        Text, default="[]", server_default="[]"
+    )
     pdf_bytes: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
 
     client: Mapped[Client] = relationship(back_populates="invoices")
@@ -326,6 +405,10 @@ class Invoice(Base):
     current_entries: Mapped[list[TimeEntry]] = relationship(
         back_populates="invoice", foreign_keys=[TimeEntry.invoice_id]
     )
+
+    @property
+    def display_status(self) -> str:
+        return "REFUNDED" if self.refunded else self.status
 
 
 class InvoiceLine(Base):
@@ -359,6 +442,49 @@ class InvoiceLine(Base):
 
     invoice: Mapped[Invoice] = relationship(back_populates="lines")
     entry: Mapped[TimeEntry] = relationship(back_populates="invoice_lines")
+
+
+class Disbursement(Base):
+    """Independent worker balance transaction with reversible archival."""
+
+    __tablename__ = "disbursement"
+    __table_args__ = (
+        CheckConstraint("amount_cents > 0", name="ck_disbursement_amount"),
+        CheckConstraint(
+            "type IN ('DISBURSEMENT', 'IN_KIND', 'RETAINED_EARNINGS')",
+            name="ck_disbursement_type",
+        ),
+        CheckConstraint(
+            "(type = 'RETAINED_EARNINGS' AND transaction_id IS NULL) OR "
+            "(type != 'RETAINED_EARNINGS' AND transaction_id IS NOT NULL "
+            "AND length(trim(transaction_id)) > 0)",
+            name="ck_disbursement_transaction_id",
+        ),
+        Index("ix_disbursement_user_date", "user_id", "date", "id"),
+        {"sqlite_autoincrement": True},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_account.id", ondelete="RESTRICT")
+    )
+    date: Mapped[date] = mapped_column()
+    transaction_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    type: Mapped[str] = mapped_column(String(24))
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    archived_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_account.id", ondelete="RESTRICT"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    created_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("user_account.id", ondelete="RESTRICT")
+    )
+
+    user: Mapped[User] = relationship(
+        back_populates="disbursements", foreign_keys=[user_id]
+    )
 
 
 class ApplicationMetadata(Base):

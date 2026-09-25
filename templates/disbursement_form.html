@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% set heading = 'Add Disbursement' %}
+{% block title %}{{ heading }} · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}">Dashboard</a></li><li><a class="breadcrumb-label" href="{{ url_for('disbursements.index') }}">Disbursements</a></li><li><a class="breadcrumb-label" href="{{ url_for('disbursements.detail', user_id=user.id) }}">{{ user.full_name }}</a></li><li aria-current="page"><span class="breadcrumb-label">{{ heading }}</span></li></ol></nav>{% endblock %}
+{% block content %}
+<section class="narrow-content"><div class="panel form-panel"><div class="panel-heading"><div><p class="eyebrow">DISBURSEMENT</p><h1>{{ heading }}</h1><p class="muted">{{ user.full_name }}</p></div></div>
+  <form method="post" action="{{ url_for('disbursements.new', user_id=user.id) }}" class="form-stack" data-disbursement-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>Date<input type="date" name="date" value="{{ form_values.get('date', today.isoformat()) }}" max="{{ today.isoformat() }}" required data-max-now data-timezone="{{ display_timezone }}"></label>
+    <label>Type<span class="select-control"><select name="type" data-disbursement-type required><option value="DISBURSEMENT" {{ 'selected' if form_values.get('type', 'DISBURSEMENT') == 'DISBURSEMENT' }}>Disbursement</option>{% if user.user_type == 'llc_member' %}<option value="IN_KIND" {{ 'selected' if form_values.get('type') == 'IN_KIND' }}>In-Kind Transaction</option><option value="RETAINED_EARNINGS" {{ 'selected' if form_values.get('type') == 'RETAINED_EARNINGS' }}>Retained Earnings</option>{% endif %}</select><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span></label>
+    <label data-disbursement-reference>Transaction ID<input name="transaction_id" value="{{ form_values.get('transaction_id', '') }}" maxlength="20" required autocomplete="off" data-protonpass-ignore="true"></label>
+    <label>Amount<span class="money-input"><span class="money-prefix" aria-hidden="true">$</span><input type="number" name="amount" value="{{ form_values.get('amount', '') }}" min="0.01" step="0.01" required><span class="money-suffix">of {{ disbursement_money(pending) }}</span></span></label>
+    <label>Notes<textarea name="notes" rows="4" maxlength="2000">{{ form_values.get('notes', '') }}</textarea></label>
+    <div class="form-actions"><a class="button button-secondary" href="{{ url_for('disbursements.detail', user_id=user.id) }}">Cancel</a><button class="button button-primary" type="submit">Confirm</button></div>
+  </form>
+</div></section>
+{% endblock %}

@@ -3,27 +3,29 @@
 {% block content %}
 <section class="page-heading">
   <div><p class="eyebrow">OPERATIONS OVERVIEW</p><h1>Clients &amp; Contracts</h1></div>
-  {% if can('client:add') %}<div class="heading-actions"><a class="icon-button accent" href="{{ url_for('main.new_client') }}" title="New Client" aria-label="New Client"><i class="fa-solid fa-plus" aria-hidden="true"></i></a></div>{% endif %}
+  {% if can('client:add') or can('client:archive') %}<div class="heading-actions">{% if can('client:archive') %}<a class="icon-button" href="{{ url_for('main.archived_clients') }}" title="Archived Clients" aria-label="Archived Clients"><i class="fa-solid fa-box-archive" aria-hidden="true"></i></a>{% endif %}{% if can('client:add') %}<a class="icon-button accent" href="{{ url_for('main.new_client') }}" title="New Client" aria-label="New Client"><i class="fa-solid fa-plus" aria-hidden="true"></i></a>{% endif %}</div>{% endif %}
 </section>
 <div data-live-region="dashboard-clients">
-{% if not clients %}<div class="panel empty-panel"><div class="panel-heading"><i class="content-card-icon fa-solid fa-folder-open" aria-hidden="true"></i><h2>No Clients Yet</h2></div><p class="muted">Create the first client to begin tracking contract time.</p></div>{% endif %}
+{% if not cards %}<div class="panel empty-panel"><div class="panel-heading"><i class="content-card-icon fa-solid fa-folder-open" aria-hidden="true"></i><h2>No Clients Yet</h2></div><p class="muted">Create the first client to begin tracking contract time.</p></div>{% endif %}
 <div class="client-grid">
-{% for client in clients %}
+{% for card in cards %}{% set client = card.client %}
   <article class="client-card panel">
-    <div class="card-heading"><div><p class="eyebrow">CLIENT</p><h2><a class="external-link" href="{{ url_for('main.client', client_id=client.id) }}" title="{{ client.name }}"><span class="truncate-text">{{ client.name }}</span></a></h2></div><i class="fa-solid fa-building" aria-hidden="true"></i></div>
-    <div class="contract-list">
-      {% for contract in client.contracts %}
-      <div class="contract-row contract-row-summary">
-        <a class="contract-name-link" href="{{ url_for('main.contract', contract_id=contract.id) }}">
+    <div class="panel-heading"><div><p class="eyebrow">CLIENT</p><h2><a class="external-link" href="{{ url_for('main.client', client_id=client.id) }}" title="{{ client.name }}"><span class="truncate-text">{{ client.name }}</span></a></h2></div><i class="content-card-icon fa-solid fa-building" aria-hidden="true"></i></div>
+    <div class="contract-list" role="table" aria-label="Contracts for {{ client.name }}">
+      <div class="visually-hidden" role="row"><span role="columnheader">Contract</span><span role="columnheader">Rate and open</span></div>
+      {% for contract in card.contracts %}
+      <div class="contract-row contract-row-summary" role="row">
+        <div role="cell"><a class="contract-name-link" href="{{ url_for('main.contract', contract_id=contract.id) }}">
           <span class="contract-identity"><i class="fa-solid fa-file-signature" aria-hidden="true"></i><strong class="truncate-text" title="{{ contract.name }}">{{ contract.name }}</strong></span>
-        </a>
-        <span class="contract-rate-details">
+        </a></div>
+        <span class="contract-rate-details" role="cell">
           <span class="rate">{{ format_money(contract.hourly_rate) }}/hr</span>
           <a class="icon-button contract-row-action" href="{{ url_for('main.contract', contract_id=contract.id) }}" title="Open {{ contract.name }}" aria-label="Open {{ contract.name }}"><i class="fa-solid fa-chevron-right" aria-hidden="true"></i></a>
         </span>
       </div>
-      {% else %}<p class="muted">No contracts created.</p>{% endfor %}
+      {% else %}<div class="contract-row contract-row-summary contract-row-empty" role="row"><span class="contract-identity" role="cell"><i class="fa-solid fa-folder-open" aria-hidden="true"></i><strong>No contracts created.</strong></span></div>{% endfor %}
     </div>
+    {% if card.page_count > 1 %}<nav class="pagination client-card-pagination" aria-label="{{ client.name }} contract pages"><span>Page {{ card.page }} of {{ card.page_count }}</span><span class="client-card-pagination-actions">{% if card.previous_url %}<a class="button button-secondary button-compact" href="{{ card.previous_url }}">Previous</a>{% else %}<button class="button button-secondary button-compact" type="button" disabled>Previous</button>{% endif %}{% if card.next_url %}<a class="button button-secondary button-compact" href="{{ card.next_url }}">Next</a>{% else %}<button class="button button-secondary button-compact" type="button" disabled>Next</button>{% endif %}</span></nav>{% endif %}
     <a class="text-link" href="{{ url_for('main.client', client_id=client.id) }}">View Client <i class="fa-solid fa-chevron-right" aria-hidden="true"></i></a>
   </article>
 {% endfor %}

@@ -7,12 +7,14 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from markupsafe import Markup
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
+from .invoices import invoice_total_cents
 from .models import Client, Contract, Invoice, Task, TimeEntry
 
 MONEY_QUANTUM = Decimal("0.01")
@@ -100,27 +102,35 @@ def invoice_entry_costs(database: Session, invoice_ids: set[int]) -> dict[int, D
     ).all()
     result: dict[int, Decimal] = {}
     for invoice in invoices:
-        if invoice.total_seconds == 0:
-            result.update((line.time_entry_id, Decimal(0)) for line in invoice.lines)
-            continue
-        amounts: dict[int, int] = {}
-        remainders: list[tuple[int, int, int]] = []
+        by_worker: dict[int, list[Any]] = {}
         for line in invoice.lines:
-            cents, remainder = divmod(
-                invoice.total_cents * line.total_seconds, invoice.total_seconds
+            by_worker.setdefault(line.user_id, []).append(line)
+        for worker_lines in by_worker.values():
+            worker_seconds = sum(line.total_seconds for line in worker_lines)
+            worker_cents = invoice_total_cents(
+                worker_lines,
+                ZoneInfo(invoice.timezone_name),
+                invoice.hourly_rate_cents,
             )
-            amounts[line.time_entry_id] = cents
-            remainders.append((remainder, line.id, line.time_entry_id))
-        # Largest fractional shares receive the residual cents. Stable line IDs
-        # break ties, independently of pagination, worker filters, or payment state.
-        residual = invoice.total_cents - sum(amounts.values())
-        for _, _, entry_id in sorted(remainders, key=lambda row: (-row[0], row[1]))[
-            :residual
-        ]:
-            amounts[entry_id] += 1
-        result.update(
-            (entry_id, Decimal(cents) / 100) for entry_id, cents in amounts.items()
-        )
+            if worker_seconds == 0:
+                result.update((line.time_entry_id, Decimal(0)) for line in worker_lines)
+                continue
+            amounts: dict[int, int] = {}
+            remainders: list[tuple[int, int, int]] = []
+            for line in worker_lines:
+                cents, remainder = divmod(
+                    worker_cents * line.total_seconds, worker_seconds
+                )
+                amounts[line.time_entry_id] = cents
+                remainders.append((remainder, line.id, line.time_entry_id))
+            residual = worker_cents - sum(amounts.values())
+            for _, _, entry_id in sorted(remainders, key=lambda row: (-row[0], row[1]))[
+                :residual
+            ]:
+                amounts[entry_id] += 1
+            result.update(
+                (entry_id, Decimal(cents) / 100) for entry_id, cents in amounts.items()
+            )
     return result
 
 

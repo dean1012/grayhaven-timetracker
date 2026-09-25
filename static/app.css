@@ -16,6 +16,11 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 
 .invoice-actions, .table-row-actions { justify-content: flex-start; flex-wrap: wrap; }
 .worker-disbursement-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 1rem; }
+.disbursement-balance { grid-template-columns: minmax(0, 1fr); }
+.paid-disbursement-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: .5rem; }
+.paid-disbursement-heading span { margin-bottom: .4rem; }
+.paid-disbursement-heading .icon-button { flex: 0 0 auto; color: var(--primary-accent); transform: translateY(-2px); }
+@media (width >=576px) { .paid-disbursement-summary { grid-row: span 2; } }
 .invoice-title { display: flex; align-items: center; flex-wrap: wrap; gap: 1rem; }
 #invoice-status { font-size: .65em; line-height: 1; padding: .25em .5em; }
 .display-datetime { display: inline-block; white-space: nowrap; vertical-align: middle; }
@@ -43,6 +48,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .mobile-nav-links a:not(:where(.button, .icon-button)):hover, .mobile-nav-links a:not(:where(.button, .icon-button)):focus-visible, .mobile-nav-links a:not(:where(.button, .icon-button))[aria-current], .mobile-nav-links a:not(:where(.button, .icon-button)).is-active, .mobile-nav-links .nav-button:hover, .mobile-nav-links .nav-button:focus-visible { color: var(--primary-accent); background: color-mix(in srgb, var(--primary-accent) 9%, transparent); }
 .app-viewport { min-height: 0; overflow-y: auto; flex: 1 1 auto; }
 .page-shell { width: min(1680px, calc(100% - var(--container-padding) - var(--container-padding))); margin: 0 auto; padding: 3.3rem 0 5rem; }
+.page-heading-alert-region > .alert-stack:has(> .alert) { margin-bottom: var(--space-md); }
 .app-breadcrumbs { width: min(1680px, calc(100% - var(--container-padding) - var(--container-padding))); margin: 0 auto; padding: .55rem 0 .7rem; }
 .app-footer {
   flex: 0 0 auto;
@@ -82,13 +88,19 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .empty-panel .content-card-actions { justify-content: center; }
 .error-alert { max-width: 720px; margin: 7rem auto; }
 .error-actions { margin-top: 1rem; }
-.client-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; }
-.client-card { min-height: 290px; padding: 1.8rem; }
-.card-heading, .report-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-.card-heading > div { min-width: 0; }
-.card-heading > i { color: var(--primary-accent); font-size: 2.2rem; }
-.card-heading h2 { font-size: 1.45rem; }
-.card-heading h2 .external-link { min-width: 0; max-width: 100%; }
+.client-grid { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: 1fr; gap: 1.5rem; }
+.client-card { display: flex; flex-direction: column; min-height: 31rem; height: 100%; padding: 1.8rem; }
+.client-card .contract-list { flex: 1 1 auto; margin-bottom: 0; }
+.client-card .contract-row { min-height: 3.75rem; }
+.client-card .contract-row-empty { color: var(--soft-white); }
+.client-card .contract-row-empty strong { font-weight: var(--font-weight-semibold); }
+.client-card .client-card-pagination { flex-wrap: wrap; margin-top: var(--space-sm); }
+.client-card-pagination-actions { display: inline-flex; gap: var(--space-xs); }
+.client-card > .text-link { margin-top: var(--space-md); }
+.report-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.client-card .panel-heading > div { min-width: 0; }
+.client-card .panel-heading .content-card-icon { margin-bottom: 0; }
+.client-card .panel-heading h2 .external-link { min-width: 0; max-width: 100%; }
 .contact-line { display: flex; align-items: center; gap: .45rem; min-width: 0; margin: 1.3rem 0; color: var(--cool-grey); font-size: .87rem; }
 .client-contact-name, .client-contact-email { flex: 0 1 auto; min-width: 0; }
 .contact-line i { color: var(--primary-accent); }
@@ -99,7 +111,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .contract-identity { display: flex; align-items: center; gap: 1rem; min-width: 0; overflow-wrap: anywhere; }
 .contract-row-detailed { display: grid; grid-template-columns: minmax(0, 32rem) minmax(0, 13rem) minmax(0, 1fr) minmax(7rem, .6fr) auto; padding: 1rem .6rem; border-radius: var(--border-radius-sm); transition: background var(--transition-fast); }
 .contract-row-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: .7rem .6rem; border-radius: var(--border-radius-sm); transition: background var(--transition-fast); }
-.contract-row-detailed:hover, .contract-row-summary:hover { background: color-mix(in srgb, var(--standard-hover) 10%, transparent); }
+.contract-row-detailed:hover, .contract-row-summary:not(.contract-row-empty):hover { background: color-mix(in srgb, var(--standard-hover) 10%, transparent); }
 .contract-row-detailed .contract-name-link:hover, .contract-row-summary .contract-name-link:hover { color: var(--soft-white); }
 .contract-contact-details { display: contents; }
 .contract-contact-identity { display: flex; align-items: center; gap: .5rem; min-width: 0; }
@@ -111,6 +123,11 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .user-contact-identity { display: inline-flex; align-items: center; gap: .5rem; min-width: 0; max-width: 100%; }
 .user-contact-identity i { flex: 0 0 auto; color: var(--primary-accent); }
 .user-contact-identity strong { min-width: 0; overflow: hidden; color: var(--cool-grey); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.contract-table-contact { display: flex; align-items: flex-start; gap: .5rem; min-width: 0; }
+.contract-table-contact > i { flex: 0 0 auto; color: var(--primary-accent); }
+.contract-table-contact > span { display: grid; gap: .2rem; min-width: 0; }
+.contract-table-contact a { min-width: 0; overflow-wrap: anywhere; }
+.archived-client-table td { vertical-align: middle; }
 .user-contact-email { min-width: 0; max-width: 100%; overflow: hidden; color: var(--primary-accent); }
 .user-contact-email .truncate-text { color: inherit; }
 .user-totp-cell { display: inline-flex; align-items: center; gap: .55rem; }
@@ -125,6 +142,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .contract-metadata span { display: inline-flex; align-items: center; gap: .35rem; }
 .contract-metadata i { color: var(--primary-accent); }
 .confirmation-expiry { color: var(--alert-error-foreground); font-weight: var(--font-weight-semibold); }
+.one-time-confirmation-content > p { margin-bottom: 0; }
 .contract-layout { display: block; }
 .contract-task-actions, .contract-subtask-actions { flex-wrap: wrap; justify-content: flex-end; }
 .icon-locked { display: inline-grid; place-items: center; width: 32px; height: 32px; color: var(--slate-grey); font-size: .75rem; }
@@ -153,6 +171,8 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .auth-panel { width: 490px; padding: 3rem; }
 .auth-logo { display: block; width: 235px; margin: 0 auto 2.7rem; }
 .auth-panel .form-stack { margin-top: 0; }
+.auth-form-actions { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: stretch; gap: var(--space-sm); }
+.auth-form-actions .button { width: 100%; }
 .auth-panel h1 { font-size: 2rem; }
 .optional { color: var(--cool-grey); font-size: .75rem; font-weight: 400; }
 .totp-qr { display: block; width: 220px; margin: 1.5rem auto; padding: .6rem; background: var(--soft-white); border-radius: var(--border-radius); }
@@ -365,6 +385,10 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
   .client-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+@media (width >=1440px) {
+  .archived-client-table .cell-actions { width: 6rem; }
+}
+
 @media (width >=768px) and (width <1120px) {
   .brand { gap: .75rem; }
   .brand-product { padding-left: .75rem; font-size: .78rem; }
@@ -383,4 +407,11 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
   .app-header-inner, .page-shell, .app-footer-inner { max-width: 1760px; }
   .page-shell { padding-top: 4rem; }
   .client-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+[data-disbursement-reference][hidden] {
+  display: none;
+}
+
+.client-contract-section + .client-contract-section {
+  margin-top: var(--space-lg);
 }

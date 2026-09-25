@@ -14,7 +14,7 @@ from pathlib import Path
 import pyotp
 from flask import Flask
 from flask.testing import FlaskClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from grayhaven_timetracker import create_app, routes
 from grayhaven_timetracker.auth import (
@@ -51,6 +51,63 @@ class SeedData:
     subtask_id: int
     other_task_id: int
     entry_id: int
+
+
+class PublicClientId(int):
+    """Retain the database key while formatting seeded client URLs publicly."""
+
+    def __new__(cls, identifier: int, number: int | None = None) -> PublicClientId:
+        instance = super().__new__(cls, identifier)
+        instance.number = identifier if number is None else number
+        return instance
+
+    def __format__(self, spec: str) -> str:
+        return f"{self.number:03d}" if not spec else format(int(self), spec)
+
+    def __str__(self) -> str:
+        return format(self, "")
+
+
+class PublicContractId(int):
+    """Retain the database key while formatting seeded contract URLs publicly."""
+
+    def __new__(
+        cls,
+        identifier: int,
+        client_number: int = 1,
+        contract_number: int | None = None,
+    ) -> PublicContractId:
+        instance = super().__new__(cls, identifier)
+        instance.client_number = client_number
+        instance.contract_number = (
+            identifier if contract_number is None else contract_number
+        )
+        return instance
+
+    def __format__(self, spec: str) -> str:
+        return (
+            f"{self.client_number:03d}-{self.contract_number:03d}"
+            if not spec
+            else format(int(self), spec)
+        )
+
+    def __str__(self) -> str:
+        return format(self, "")
+
+
+class PublicInvoiceId(int):
+    """Retain the database key while formatting an invoice route publicly."""
+
+    def __new__(cls, identifier: int, number: str) -> PublicInvoiceId:
+        instance = super().__new__(cls, identifier)
+        instance.number = number
+        return instance
+
+    def __format__(self, spec: str) -> str:
+        return self.number if not spec else format(int(self), spec)
+
+    def __str__(self) -> str:
+        return format(self, "")
 
 
 def test_config(root: Path, **overrides: object) -> dict[str, object]:
@@ -234,6 +291,9 @@ class AppTestCase(unittest.TestCase):
             )
             assert user is not None
             client = Client(
+                public_number=(
+                    1 if not database.scalar(select(func.count(Client.id))) else None
+                ),
                 name="Sample Client",
                 contact_name="Alex Example",
                 contact_email="alex@example.invalid",
@@ -259,8 +319,10 @@ class AppTestCase(unittest.TestCase):
             database.add_all([client, contract, task, subtask, other_task, entry])
             database.flush()
             result = SeedData(
-                client_id=client.id,
-                contract_id=contract.id,
+                client_id=PublicClientId(client.id, client.public_number),
+                contract_id=PublicContractId(
+                    contract.id, client.public_number, contract.public_number
+                ),
                 task_id=task.id,
                 subtask_id=subtask.id,
                 other_task_id=other_task.id,

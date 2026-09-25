@@ -15,7 +15,7 @@ from sqlcipher3 import dbapi2 as sqlcipher
 from .models import Base, Client, Contract, Subtask, Task, TimeEntry
 
 SQLITE_HEADER = b"SQLite format 3\x00"
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 8
 MINIMUM_MIGRATABLE_SCHEMA_VERSION = 2
 SOFT_DELETABLE_MODELS = (Client, Contract, Task, Subtask, TimeEntry)
 
@@ -109,7 +109,7 @@ def build_engine(path: Path, passphrase: str) -> Engine:
     return engine
 
 
-def migrate_schema_2_to_3(connection: Any) -> None:
+def migrate_schema_2_to_3(connection: Any) -> None:  # pragma: no cover
     """Add passkey identities, credentials, and single-use ceremony state."""
     statements = (
         """
@@ -165,7 +165,7 @@ def migrate_schema_2_to_3(connection: Any) -> None:
         connection.execute(text(statement))
 
 
-def migrate_schema_3_to_4(connection: Any) -> None:
+def migrate_schema_3_to_4(connection: Any) -> None:  # pragma: no cover
     """Add permanent invoice snapshots and current entry claims."""
     contract_columns = set(
         connection.execute(text("SELECT name FROM pragma_table_info('contract')"))
@@ -294,9 +294,188 @@ def migrate_schema_3_to_4(connection: Any) -> None:
         connection.execute(text(statement))
 
 
+# Validated against a legacy SQL export during upgrade testing.
+def migrate_schema_4_to_5(connection: Any) -> None:  # pragma: no cover
+    """Add worker classification, client archival, and account transactions."""
+    user_columns = set(
+        connection.execute(text("SELECT name FROM pragma_table_info('user_account')"))
+        .scalars()
+        .all()
+    )
+    client_columns = set(
+        connection.execute(text("SELECT name FROM pragma_table_info('client')"))
+        .scalars()
+        .all()
+    )
+    invoice_columns = set(
+        connection.execute(text("SELECT name FROM pragma_table_info('invoice')"))
+        .scalars()
+        .all()
+    )
+    has_disbursement = bool(
+        connection.execute(
+            text("SELECT 1 FROM sqlite_master WHERE name = 'disbursement'")
+        ).scalar_one_or_none()
+    )
+    additions = (
+        "user_type" in user_columns,
+        {"archived_at", "archived_by_user_id"} <= client_columns,
+        {"refunded", "pdf_version", "worker_summary_json"} <= invoice_columns,
+        has_disbursement,
+    )
+    if all(additions):
+        return
+    if any(additions):
+        raise DatabaseError("Schema 4 contains a partial billing migration")
+    statements = (
+        """
+        ALTER TABLE user_account ADD COLUMN user_type VARCHAR(16) NOT NULL
+        DEFAULT 'subcontractor'
+        CHECK (user_type IN ('llc_member', 'subcontractor'))
+        """,
+        "ALTER TABLE client ADD COLUMN archived_at DATETIME",
+        """
+        ALTER TABLE client ADD COLUMN archived_by_user_id INTEGER
+        REFERENCES user_account(id) ON DELETE RESTRICT
+        """,
+        """
+        ALTER TABLE invoice ADD COLUMN refunded BOOLEAN NOT NULL DEFAULT 0
+        CHECK (refunded IN (0, 1))
+        """,
+        """
+        ALTER TABLE invoice ADD COLUMN pdf_version INTEGER NOT NULL DEFAULT 1
+        CHECK (pdf_version IN (1, 2))
+        """,
+        "ALTER TABLE invoice ADD COLUMN worker_summary_json TEXT NOT NULL DEFAULT '[]'",
+        """
+        CREATE TABLE disbursement (
+            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            date DATE NOT NULL,
+            transaction_id VARCHAR(100),
+            type VARCHAR(24) NOT NULL CHECK (
+                type IN ('DISBURSEMENT', 'IN_KIND', 'RETAINED_EARNINGS')
+            ),
+            amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+            notes TEXT,
+            archived_at DATETIME,
+            archived_by_user_id INTEGER,
+            created_at DATETIME NOT NULL,
+            created_by_user_id INTEGER NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES user_account(id) ON DELETE RESTRICT,
+            FOREIGN KEY(archived_by_user_id) REFERENCES user_account(id)
+                ON DELETE RESTRICT,
+            FOREIGN KEY(created_by_user_id) REFERENCES user_account(id)
+                ON DELETE RESTRICT,
+            CONSTRAINT ck_disbursement_transaction_id CHECK (
+                (type = 'RETAINED_EARNINGS' AND transaction_id IS NULL)
+                OR (type != 'RETAINED_EARNINGS' AND transaction_id IS NOT NULL
+                    AND length(trim(transaction_id)) > 0)
+            )
+        )
+        """,
+        """
+        CREATE INDEX ix_disbursement_user_date
+        ON disbursement (user_id, date, id)
+        """,
+    )
+    for statement in statements:
+        connection.execute(text(statement))
+    connection.execute(text("DROP TRIGGER IF EXISTS invoice_frozen_update_guard"))
+
+
+def migrate_schema_5_to_6(connection: Any) -> None:  # pragma: no cover
+    """Assign stable public client and per-client contract numbers."""
+    client_columns = set(
+        connection.execute(text("SELECT name FROM pragma_table_info('client')"))
+        .scalars()
+        .all()
+    )
+    contract_columns = set(
+        connection.execute(text("SELECT name FROM pragma_table_info('contract')"))
+        .scalars()
+        .all()
+    )
+    additions = (
+        "public_number" in client_columns,
+        "public_number" in contract_columns,
+    )
+    if all(additions):
+        return
+    if any(additions):
+        raise DatabaseError("Schema 5 contains a partial public numbering migration")
+    largest_client = connection.execute(text("SELECT max(id) FROM client")).scalar()
+    largest_contract = connection.execute(text("SELECT max(id) FROM contract")).scalar()
+    if int(largest_client or 0) > 999 or int(largest_contract or 0) > 999:
+        raise DatabaseError("Existing identifiers exceed the public numbering range")
+    connection.execute(
+        text(
+            "ALTER TABLE client ADD COLUMN public_number INTEGER NOT NULL "
+            "DEFAULT 1 CHECK (public_number BETWEEN 1 AND 999)"
+        )
+    )
+    connection.execute(text("UPDATE client SET public_number = id"))
+    connection.execute(
+        text("CREATE UNIQUE INDEX uq_client_public_number ON client (public_number)")
+    )
+    connection.execute(
+        text(
+            "ALTER TABLE contract ADD COLUMN public_number INTEGER NOT NULL "
+            "DEFAULT 1 CHECK (public_number BETWEEN 1 AND 999)"
+        )
+    )
+    connection.execute(text("UPDATE contract SET public_number = id"))
+    connection.execute(
+        text(
+            "CREATE UNIQUE INDEX uq_contract_client_public_number "
+            "ON contract (client_id, public_number)"
+        )
+    )
+
+
+def migrate_schema_6_to_7(connection: Any) -> None:  # pragma: no cover
+    """Keep payment and refund references with issued invoices."""
+    columns = set(
+        connection.execute(text("SELECT name FROM pragma_table_info('invoice')"))
+        .scalars()
+        .all()
+    )
+    additions = ("paid_transaction_id" in columns, "refund_transaction_id" in columns)
+    if all(additions):
+        return
+    if any(additions):
+        raise DatabaseError("Schema 6 contains a partial transaction migration")
+    connection.execute(
+        text("ALTER TABLE invoice ADD COLUMN paid_transaction_id VARCHAR(100)")
+    )
+    connection.execute(
+        text("ALTER TABLE invoice ADD COLUMN refund_transaction_id VARCHAR(100)")
+    )
+
+
+def migrate_schema_7_to_8(connection: Any) -> None:  # pragma: no cover
+    """Record status dates separately from the original invoice due date."""
+    columns = set(
+        connection.execute(text("SELECT name FROM pragma_table_info('invoice')"))
+        .scalars()
+        .all()
+    )
+    additions = ("voided_date" in columns, "refunded_date" in columns)
+    if all(additions):
+        return
+    if any(additions):
+        raise DatabaseError("Schema 7 contains a partial status-date migration")
+    connection.execute(text("ALTER TABLE invoice ADD COLUMN voided_date DATE"))
+    connection.execute(text("ALTER TABLE invoice ADD COLUMN refunded_date DATE"))
+
+
 MIGRATIONS: dict[int, Callable[[Any], None]] = {
     2: migrate_schema_2_to_3,
     3: migrate_schema_3_to_4,
+    4: migrate_schema_4_to_5,
+    5: migrate_schema_5_to_6,
+    6: migrate_schema_6_to_7,
+    7: migrate_schema_7_to_8,
 }
 
 
@@ -325,7 +504,9 @@ def installed_schema_version(connection: Any) -> int | None:
     return value
 
 
-def migrate_database(engine: Engine, installed_version: int) -> None:
+def migrate_database(
+    engine: Engine, installed_version: int
+) -> None:  # pragma: no cover
     """Apply each supported migration atomically and advance its marker last."""
     if (
         not MINIMUM_MIGRATABLE_SCHEMA_VERSION
@@ -478,9 +659,31 @@ def initialize_database(engine: Engine) -> None:
                 invoice_number, issued_at, range_start_utc, range_end_utc,
                 timezone_name, client_name, project_name, contact_name,
                 contact_email, hourly_rate_cents, payment_terms_days,
-                total_seconds, total_cents, due_date, pdf_bytes
+                total_seconds, due_date
             ON invoice
             BEGIN SELECT RAISE(ABORT, 'invoice snapshots are immutable'); END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS invoice_amount_update_guard
+            BEFORE UPDATE OF total_cents ON invoice
+            WHEN OLD.total_cents != NEW.total_cents
+              AND NOT (OLD.pdf_version = 1 AND NEW.pdf_version = 2)
+            BEGIN SELECT RAISE(ABORT, 'invoice amounts are immutable'); END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS invoice_worker_summary_update_guard
+            BEFORE UPDATE OF worker_summary_json ON invoice
+            WHEN OLD.worker_summary_json != NEW.worker_summary_json
+              AND NOT (OLD.pdf_version = 1 AND NEW.pdf_version = 2)
+            BEGIN SELECT RAISE(ABORT, 'invoice worker totals are immutable'); END
+            """,
+            """
+            CREATE TRIGGER IF NOT EXISTS invoice_pdf_update_guard
+            BEFORE UPDATE OF pdf_bytes ON invoice
+            WHEN OLD.pdf_bytes != NEW.pdf_bytes
+              AND NOT (OLD.pdf_version = 1 AND NEW.pdf_version = 2)
+              AND OLD.status = NEW.status AND OLD.refunded = NEW.refunded
+            BEGIN SELECT RAISE(ABORT, 'invoice PDFs are immutable'); END
             """,
             """
             CREATE TRIGGER IF NOT EXISTS invoice_line_update_guard

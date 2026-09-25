@@ -841,27 +841,36 @@ To issue an invoice:
 2. In **Generate Invoice**, choose the client and active contract, then select
    **Since Last Invoice → Now** or **Selected Date / Time Range**.
 3. Select **Preview Invoice** and review the stopped eligible sessions,
-   selected range, daily-rounded billable hours, total, rate, and payment terms.
+   selected range, billable hours, total, rate, and payment terms.
 4. Select **Generate Invoice** and complete sensitive-action authorization.
-5. Open the generated invoice to download its current PDF rendition.
+5. Open the generated invoice to download its stored PDF.
 
 To record or correct invoice state:
 
 1. Open the invoice and complete sensitive-action authorization for the action.
-2. Mark an unpaid invoice as paid when client payment is received.
-3. Record each worker's disbursement with its date and reference.
-4. Undo a worker disbursement before correcting payment status, then mark the
-   invoice unpaid when payment needs correction. Enter the requested correction
-   reason.
-5. Void an unpaid invoice when its sessions need to return to pending invoice,
+2. Mark an unpaid invoice as paid when client payment is received. Enter its
+   payment date and transaction ID.
+3. Refund a paid invoice when needed. Enter the refund date, transaction ID,
+   and correction reason; worker balances remain available for disbursement.
+4. Void an unpaid invoice when its sessions need to return to pending invoice,
    then make time corrections and issue a replacement invoice. Enter the
    requested correction reason.
-6. Review the audit log for the invoice action and any corrected time.
+5. Review the audit log for the invoice action and any corrected time.
 
-Archiving a contract stops its active timers and removes it from normal
-selection and client reports. Activating the contract restores it. Deleted
-clients, contracts, tasks, and subtasks are soft-deleted: they remain in the
-database with their original identifiers but are hidden from normal workflows.
+To record a worker transaction, open **Disbursements**, select the worker, and
+add a dated Disbursement, In-Kind Transaction, or Retained Earnings entry.
+Payment, refund, Disbursement, and In-Kind Transaction entries require a
+transaction ID of up to 20 characters that has never been used in Time Tracker.
+Retained Earnings are available only for LLC Members. Entries are final once
+recorded.
+
+Resolve pending invoice sessions before archiving a contract or client.
+Archiving a contract removes it from normal selection and client reports;
+activating it restores normal availability. Archiving a client also archives
+its contracts and replaces its shared-report password. Activating the client
+restores its page; its contracts remain archived until activated separately.
+Activate the client and contract before voiding an unpaid invoice. Reset the
+report password before sharing client report access again.
 
 [Back to top](#operations)
 
@@ -876,8 +885,8 @@ To enable a client's shared report:
    channels.
 
 To revoke existing shared-report sessions, rotate the report password from the
-client page. The report displays eligible live work. Invoiced, paid,
-disbursed, and archived-contract time is excluded.
+client page. The report displays eligible live work. Invoiced, paid, and
+archived-contract time is excluded.
 
 [Back to top](#operations)
 

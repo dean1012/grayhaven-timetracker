@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Disbursements · {{ user.full_name }} · Grayhaven Systems LLC Time Tracker{% endblock %}
+{% block breadcrumbs %}<nav class="breadcrumbs app-breadcrumbs" aria-label="Breadcrumb"><ol><li><a class="breadcrumb-label" href="{{ url_for('main.dashboard') }}">Dashboard</a></li>{% if admin %}<li><a class="breadcrumb-label" href="{{ url_for('disbursements.index') }}">Disbursements</a></li><li aria-current="page"><span class="breadcrumb-label">{{ user.full_name }}</span></li>{% else %}<li><a class="breadcrumb-label" href="{{ url_for('main.my_sessions') }}">My Sessions</a></li><li aria-current="page"><span class="breadcrumb-label">Disbursements</span></li>{% endif %}</ol></nav>{% endblock %}
+{% block content %}
+<section class="page-heading"><div><p class="eyebrow">PAYMENTS</p><h1>{{ user.full_name if admin else 'My Disbursements' }}</h1></div></section>
+{% if admin %}<section class="summary-grid session-summary panel disbursement-balance" aria-label="Worker balance" data-live-region="disbursement-balance"><div class="summary-card"><span>Pending Disbursement</span><strong>{{ disbursement_money(pending) }}</strong></div></section>{% endif %}
+<section class="panel session-directory" data-live-region="disbursement-history">
+  <div class="panel-heading"><div><h2>Disbursement History</h2></div>{% if admin %}<div class="row-actions">{% if pending > 0 %}<a class="icon-button accent" href="{{ url_for('disbursements.new', user_id=user.id) }}" title="Add Disbursement" aria-label="Add Disbursement"><i class="fa-solid fa-plus" aria-hidden="true"></i></a>{% else %}<button class="icon-button accent" type="button" disabled title="No pending disbursement" aria-label="Add Disbursement unavailable"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>{% endif %}</div>{% endif %}</div>
+  <div class="table-container"><table class="data-table responsive-table">
+    <caption class="visually-hidden">Processed disbursements</caption>
+    <thead><tr><th scope="col">Date</th><th scope="col">Transaction ID</th><th scope="col">Type</th><th class="cell-numeric" scope="col">Amount</th>{% if admin %}<th scope="col">Notes</th>{% endif %}</tr></thead>
+    <tbody>{% for item in items %}<tr>
+      <td class="cell-primary" data-label="Date">{{ item.date }}</td>
+      <td data-label="Transaction ID">{{ item.transaction_id or '—' }}</td>
+      <td data-label="Type">{{ {'DISBURSEMENT': 'Disbursement', 'IN_KIND': 'In-Kind Transaction', 'RETAINED_EARNINGS': 'Retained Earnings'}[item.type] }}</td>
+      <td class="cell-numeric" data-label="Amount">{{ disbursement_money(item.amount_cents) }}</td>
+      {% if admin %}<td data-label="Notes">{{ item.notes or '—' }}</td>{% endif %}
+    </tr>{% else %}<tr class="empty-table-row"><td colspan="{{ 5 if admin else 4 }}">No disbursements have been recorded.</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% if page_count > 1 %}<nav class="pagination" aria-label="Disbursement pages">{% if page > 1 %}<a class="button button-secondary" href="{{ url_for('disbursements.detail', user_id=user.id, page=page-1) if admin else url_for('disbursements.my_history', page=page-1) }}">Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ page }} of {{ page_count }}</span>{% if page < page_count %}<a class="button button-secondary" href="{{ url_for('disbursements.detail', user_id=user.id, page=page+1) if admin else url_for('disbursements.my_history', page=page+1) }}">Next</a>{% else %}<span></span>{% endif %}</nav>{% endif %}
+</section>
+{% endblock %}
