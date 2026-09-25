@@ -1210,6 +1210,7 @@ def register_routes(app: Flask) -> None:
     @app.context_processor
     def inject_globals() -> dict[str, Any]:
         active_entry = active_time_entry_for_current_user()
+        display_timezone = cast(str, app.config["DISPLAY_TIMEZONE"])
         return {
             "app_version": app.config["APP_VERSION"],
             "can": can,
@@ -1218,6 +1219,8 @@ def register_routes(app: Flask) -> None:
             "format_datetime_inline": format_datetime,
             "format_duration": format_duration,
             "format_money": format_money,
+            "display_timezone": display_timezone,
+            "input_max_datetime": datetime_local_value(now_utc(), display_timezone),
             "logged_user": current_user(),
             "active_entry": active_entry,
             "active_elapsed_seconds": (

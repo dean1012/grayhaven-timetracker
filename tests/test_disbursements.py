@@ -198,7 +198,12 @@ class DisbursementRouteTests(AppTestCase):
             "transaction_id": "ACH-1",
             "amount": "10.00",
         }
-        for changes in ({"date": "invalid"}, {"amount": "invalid"}, {"amount": "0"}):
+        for changes in (
+            {"date": "invalid"},
+            {"date": (date.today() + timedelta(days=1)).isoformat()},
+            {"amount": "invalid"},
+            {"amount": "0"},
+        ):
             with self.subTest(changes=changes):
                 self.assertEqual(
                     self.client.post(path, data=valid | changes).status_code, 409

@@ -634,10 +634,24 @@ function datetimeLocalNow(timeZone) {
   return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second}`;
 }
 
+function refreshCurrentDateLimit(input) {
+  const current = datetimeLocalNow(input.dataset.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone);
+  input.max = input.type === "date" ? current.slice(0, 10) : current;
+}
+
+document.querySelectorAll("[data-max-now]").forEach((input) => {
+  if (!(input instanceof HTMLInputElement)) return;
+  refreshCurrentDateLimit(input);
+  for (const eventName of ["focus", "pointerdown", "keydown"]) {
+    input.addEventListener(eventName, () => refreshCurrentDateLimit(input));
+  }
+});
+
 document.querySelectorAll("[data-set-now-for]").forEach((button) => {
   button.addEventListener("click", () => {
     const input = document.querySelector(button.dataset.setNowFor || "");
     if (input instanceof HTMLInputElement) {
+      if (input.hasAttribute("data-max-now")) refreshCurrentDateLimit(input);
       input.value = datetimeLocalNow(input.dataset.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone);
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }

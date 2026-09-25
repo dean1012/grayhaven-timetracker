@@ -6,7 +6,7 @@
   <form method="post" action="{{ url_for('invoices.action', invoice_id=invoice.id, action=action) }}" class="form-stack">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     {% if action in ('paid', 'refund') %}<label>Transaction ID<input name="transaction_id" value="{{ form_values.get('transaction_id', '') }}" maxlength="20" required autocomplete="off" data-protonpass-ignore="true"></label>{% endif %}
-    {% if action in ('paid', 'refund') %}<label>{{ 'Payment' if action == 'paid' else 'Refund' }} Date<input type="date" name="status_date" value="{{ form_values.get('status_date', today.isoformat()) }}" max="{{ today.isoformat() }}" required></label>{% endif %}
+    {% if action in ('paid', 'refund') %}<label>{{ 'Payment' if action == 'paid' else 'Refund' }} Date<input type="date" name="status_date" value="{{ form_values.get('status_date', today.isoformat()) }}" max="{{ today.isoformat() }}" required data-max-now data-timezone="{{ invoice.timezone_name }}"></label>{% endif %}
     {% if reason_required %}<label>Correction reason<textarea name="correction_reason" rows="4" maxlength="1000" required autocomplete="off" data-protonpass-ignore="true">{{ form_values.get('correction_reason', '') }}</textarea></label>{% endif %}
     <div class="form-actions"><a class="button button-secondary" href="{{ url_for('invoices.detail', invoice_id=invoice.id) }}">Cancel</a><button class="button {{ 'button-danger' if action == 'void' else 'button-stop' if action == 'refund' else 'button-primary' }}" type="submit"><i class="fa-solid {{ 'fa-ban' if action == 'void' else 'fa-check' }}" aria-hidden="true"></i> Confirm</button></div>
   </form>
