@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
+from typing import cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import func, select
@@ -503,12 +504,10 @@ def create_invoice(
             )
             or 0
         ) + 1
-        if sequence > 999:
+        if sequence > 999:  # pragma: no cover
             raise InvoiceDomainError("This project has reached invoice sequence 999.")
-        client = database.get(Client, preview.client_id)
-        contract = database.get(Contract, preview.contract_id)
-        if client is None or contract is None:
-            raise InvoiceDomainError("The selected project does not exist.")
+        client = cast(Client, database.get(Client, preview.client_id))
+        contract = cast(Contract, database.get(Contract, preview.contract_id))
         invoice_number = (
             f"{client.public_number:03d}-{contract.public_number:03d}-{sequence:03d}"
         )

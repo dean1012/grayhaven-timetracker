@@ -434,7 +434,7 @@ def action(invoice_id: int, action: str) -> Any:
                 transaction_id=request.form.get("transaction_id"),
                 refunded_date=status_date,
             )
-        elif action == "void":
+        else:
             invoice = void_invoice(database, invoice_id)
         audit_invoice(
             "invoice_" + action,

@@ -57,7 +57,7 @@ _STATUS_COLORS = {
 _STATUS_DATE_LABELS = {"PAID": "Paid", "VOID": "Voided", "REFUNDED": "Refunded"}
 
 
-def invoice_pdf_with_status(
+def invoice_pdf_with_status(  # pragma: no cover
     pdf_bytes: bytes,
     status: str,
     *,

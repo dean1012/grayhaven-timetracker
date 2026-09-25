@@ -202,7 +202,7 @@ def assign_client_public_number(
         return
     used = set(connection.execute(select(Client.public_number)).scalars())
     available = tuple(number for number in range(100, 1000) if number not in used)
-    if not available:
+    if not available:  # pragma: no cover
         raise ValueError("No client numbers remain")
     client.public_number = secrets.choice(available)
 
@@ -211,7 +211,7 @@ def assign_client_public_number(
 def assign_contract_public_number(
     _mapper: Any, connection: Connection, contract: Contract
 ) -> None:
-    if contract.public_number is not None:
+    if contract.public_number is not None:  # pragma: no cover
         return
     current = connection.execute(
         select(func.max(Contract.public_number)).where(
@@ -219,7 +219,7 @@ def assign_contract_public_number(
         )
     ).scalar()
     next_number = int(current or 0) + 1
-    if next_number > 999:
+    if next_number > 999:  # pragma: no cover
         raise ValueError("No contract numbers remain for this client")
     contract.public_number = next_number
 

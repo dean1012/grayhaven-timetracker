@@ -645,17 +645,6 @@ def hide_task_data(task_ids: Any) -> int:
     return hidden_time or 0
 
 
-def hide_contract_data(contract_ids: Any) -> int:
-    """Hide contracts and dependent work data without deleting audit events."""
-    database = get_session()
-    task_ids = select(Task.id).where(Task.contract_id.in_(contract_ids))
-    hidden_time = hide_task_data(task_ids)
-    database.execute(
-        update(Contract).where(Contract.id.in_(contract_ids)).values(visible=False)
-    )
-    return hidden_time
-
-
 def shared_report_url(token: str) -> str:
     """Build a share URL from the configured origin or a trusted request Host."""
     path = url_for("main.shared_report", token=token)
@@ -803,7 +792,7 @@ def require_active_contract(contract: Contract) -> None:
 
 
 def has_pending_invoice_sessions(item: Client | Contract) -> bool:
-    """Check whether visible work would become unavailable after archiving."""
+    """Reject archiving while uninvoiced work or a timer remains."""
     statement = select(TimeEntry.id).join(TimeEntry.task)
     if isinstance(item, Client):
         statement = statement.join(Task.contract).where(Contract.client_id == item.id)
@@ -811,18 +800,15 @@ def has_pending_invoice_sessions(item: Client | Contract) -> bool:
         statement = statement.where(Task.contract_id == item.id)
     return (
         get_session().scalar(
-            statement.where(TimeEntry.billing_status == "pending_invoice").limit(1)
+            statement.where(
+                or_(
+                    TimeEntry.billing_status == "pending_invoice",
+                    TimeEntry.stopped_at.is_(None),
+                )
+            ).limit(1)
         )
         is not None
     )
-
-
-def lock_archive_write() -> None:
-    """Serialize the final pending-session check with the archive update."""
-    database = get_session()
-    if database.in_transaction():
-        database.rollback()
-    database.connection().exec_driver_sql("BEGIN IMMEDIATE")
 
 
 def require_pending_sessions_for_deletion(statement: Any, label: str) -> None:
@@ -1094,49 +1080,6 @@ def register_routes(app: Flask) -> None:
         path = request.path
         if path.startswith("/api/") or request.method not in {"GET", "HEAD", "POST"}:
             return error
-
-        client_match = re.fullmatch(r"/clients/([0-9]{3})(?:/.*)?", path)
-        if client_match:
-            client_item = get_session().scalar(
-                select(Client)
-                .where(Client.public_number == int(client_match.group(1)))
-                .execution_options(include_hidden=True)
-            )
-            if client_item is None or client_item.visible:
-                return error
-            return stale_resource_redirect("main.dashboard", "client_deleted")
-
-        report_match = re.fullmatch(r"/reports/([0-9]{3})(?:/.*)?", path)
-        if report_match:
-            client_item = get_session().scalar(
-                select(Client)
-                .where(Client.public_number == int(report_match.group(1)))
-                .execution_options(include_hidden=True)
-            )
-            if client_item is None or client_item.visible:
-                return error
-            return stale_resource_redirect("main.dashboard", "client_deleted")
-
-        contract_match = re.fullmatch(r"/contracts/([0-9]{3})-([0-9]{3})(?:/.*)?", path)
-        if contract_match:
-            contract_item = get_session().scalar(
-                select(Contract)
-                .join(Client, Client.id == Contract.client_id)
-                .where(
-                    Client.public_number == int(contract_match.group(1)),
-                    Contract.public_number == int(contract_match.group(2)),
-                )
-                .execution_options(include_hidden=True)
-            )
-            if contract_item is None or contract_item.visible:
-                return error
-            if contract_item.client.visible:
-                return stale_resource_redirect(
-                    "main.client",
-                    "contract_deleted",
-                    client_id=contract_item.client_id,
-                )
-            return stale_resource_redirect("main.dashboard", "contract_deleted")
 
         task_match = re.fullmatch(r"/tasks/(\d+)(?:/.*)?", path)
         if task_match:
@@ -2121,20 +2064,7 @@ def archive_client(client_id: int) -> Any:
         return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
-    lock_archive_write()
-    item = get_visible_client_or_404(client_id)
-    if has_pending_invoice_sessions(item):
-        abort(409, "Resolve pending invoice sessions before archiving this client.")
     archived_at = now_utc()
-    stopped_entries = database.scalars(
-        select(TimeEntry)
-        .join(TimeEntry.task)
-        .join(Task.contract)
-        .where(Contract.client_id == item.id, TimeEntry.stopped_at.is_(None))
-        .options(selectinload(TimeEntry.task), selectinload(TimeEntry.user))
-    ).all()
-    for entry in stopped_entries:
-        entry.stopped_at = max(archived_at, entry.started_at)
     contracts = database.scalars(
         select(Contract).where(
             Contract.client_id == item.id, Contract.archived_at.is_(None)
@@ -2148,22 +2078,12 @@ def archive_client(client_id: int) -> Any:
     item.report_password_hash = hash_password(generate_temporary_password())
     item.report_password_version += 1
     database.commit()
-    for entry in stopped_entries:
-        audit(
-            "timer_stopped_automatically",
-            actor_id=actor.id,
-            audit_source="system",
-            initiated_by=actor.id,
-            **audit_time_entry_details(entry),
-            end_time=audit_time(cast(datetime, entry.stopped_at)),
-            stop_reason="Client archived",
-        )
     audit(
         "client_archived",
         actor_id=actor.id,
         client_id=item.id,
         archived_contracts=len(contracts),
-        stopped_timers=len(stopped_entries),
+        stopped_timers=0,
     )
     consume_sensitive_action_authorization()
     flash("Client archived.", "success")
@@ -2490,16 +2410,6 @@ def archive_contract(contract_id: int) -> Any:
         return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
-    if not activating:
-        lock_archive_write()
-        item = cast(Contract, get_or_404(Contract, contract_id))
-        if item.client.archived_at is not None:
-            abort(409, "Activate the client before activating a contract.")
-        if has_pending_invoice_sessions(item):
-            abort(
-                409,
-                "Resolve pending invoice sessions before archiving this contract.",
-            )
     if activating:
         item.archived_at = None
         item.archived_by_user_id = None
@@ -2514,39 +2424,16 @@ def archive_contract(contract_id: int) -> Any:
         consume_sensitive_action_authorization()
         flash("Contract activated.", "success")
     else:
-        stopped_count = 0
         stopped_at = now_utc()
-        stopped_entries: list[TimeEntry] = []
-        entries = database.scalars(
-            select(TimeEntry)
-            .join(TimeEntry.task)
-            .where(Task.contract_id == item.id, TimeEntry.stopped_at.is_(None))
-            .options(selectinload(TimeEntry.task), selectinload(TimeEntry.user))
-        ).all()
-        for entry in entries:
-            entry.stopped_at = max(stopped_at, entry.started_at)
-            stopped_entries.append(entry)
-            stopped_count += 1
         item.archived_at = stopped_at
         item.archived_by_user_id = actor.id
         database.commit()
-        for entry in stopped_entries:
-            stopped_entry_at = cast(datetime, entry.stopped_at)
-            audit(
-                "timer_stopped_automatically",
-                actor_id=actor.id,
-                audit_source="system",
-                initiated_by=actor.id,
-                **audit_time_entry_details(entry),
-                end_time=audit_time(stopped_entry_at),
-                stop_reason="Contract archived",
-            )
         audit(
             "contract_archived",
             actor_id=actor.id,
             client_id=item.client_id,
             contract_id=item.id,
-            stopped_timers=stopped_count,
+            stopped_timers=0,
             changes={"Archived": {"from": "Active", "to": "Archived"}},
         )
         consume_sensitive_action_authorization()

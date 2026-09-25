@@ -829,21 +829,6 @@ class AuditRouteTests(AppTestCase):
                 g.database_session = database
                 record_audit_event(
                     database,
-                    "contract_deleted",
-                    source="admin",
-                    details={"contract": "Missing Parent (ID: 699)"},
-                )
-                record_audit_event(
-                    database,
-                    "contract_deleted",
-                    source="admin",
-                    details={
-                        "contract": "Deleted Contract (ID: 700)",
-                        "client": f"Sample Client (ID: {seed.client_id})",
-                    },
-                )
-                record_audit_event(
-                    database,
                     "time_entry_created",
                     source="admin",
                     details={"time entry": "Missing Parent (ID: 700)"},
@@ -858,19 +843,8 @@ class AuditRouteTests(AppTestCase):
                     },
                 )
                 self.assertEqual(
-                    routes.deleted_resource_parent_id(
-                        ("contract_deleted",), "contract", 700, "client"
-                    ),
-                    seed.client_id,
-                )
-                self.assertEqual(
                     routes.created_resource_parent_id("time entry", 701, "contract"),
                     seed.contract_id,
-                )
-                self.assertIsNone(
-                    routes.deleted_resource_parent_id(
-                        ("contract_deleted",), "contract", 999, "client"
-                    )
                 )
 
     def test_admin_can_filter_and_paginate_append_only_audit_history(self) -> None:
@@ -1160,29 +1134,11 @@ class ClientContractTaskRouteTests(AppTestCase):
         with session_scope(self.app) as database:
             record_audit_event(
                 database,
-                "contract_deleted",
-                source="admin",
-                details={
-                    "contract": "No Parent ID (ID: 9910)",
-                    "client": "Client without an ID",
-                },
-            )
-            record_audit_event(
-                database,
                 "time_entry_created",
                 source="admin",
                 details={
                     "time entry": "No Parent ID (ID: 9911)",
                     "contract": "Contract without an ID",
-                },
-            )
-            record_audit_event(
-                database,
-                "contract_deleted",
-                source="admin",
-                details={
-                    "contract": "Match Contract (ID: 9900)",
-                    "client": f"Sample Client (ID: {seed.client_id})",
                 },
             )
             record_audit_event(
@@ -1197,33 +1153,13 @@ class ClientContractTaskRouteTests(AppTestCase):
         with self.app.app_context(), session_scope(self.app) as database:
             g.database_session = database
             self.assertEqual(
-                routes.deleted_resource_parent_id(
-                    ("contract_deleted",), "contract", 9900, "client"
-                ),
-                seed.client_id,
-            )
-            self.assertEqual(
                 routes.created_resource_parent_id("time entry", 9900, "contract"),
                 seed.contract_id,
-            )
-            self.assertIsNone(
-                routes.deleted_resource_parent_id(
-                    ("contract_deleted",), "contract", 9910, "client"
-                )
             )
             self.assertIsNone(
                 routes.created_resource_parent_id("time entry", 9911, "contract")
             )
         with session_scope(self.app) as database:
-            record_audit_event(
-                database,
-                "contract_deleted",
-                source="admin",
-                details={
-                    "contract": "Gone Contract (ID: 9901)",
-                    "client": f"Sample Client (ID: {seed.client_id})",
-                },
-            )
             record_audit_event(
                 database,
                 "task_deleted",
@@ -1942,12 +1878,23 @@ class ClientContractTaskRouteTests(AppTestCase):
             self.client.get(f"/contracts/{seed.contract_id}/sessions").status_code,
             404,
         )
+        self.assertEqual(
+            self.client.get(f"/contracts/{seed.contract_id}/archive").status_code,
+            409,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/timer/start", data={"task_id": seed.task_id}
+            ).status_code,
+            409,
+        )
         activate_path = f"/clients/{seed.client_id}/activate"
         self.authorize_sensitive_action(activate_path, totp_secret="")
         self.assertEqual(self.client.get(activate_path).status_code, 200)
         activated = self.client.post(activate_path)
         self.assertEqual(activated.status_code, 302)
         self.assertEqual(activated.location, f"/clients/{seed.client_id}")
+        self.assertEqual(self.client.get(activate_path).status_code, 404)
         with session_scope(self.app) as database:
             client = database.get(Client, seed.client_id)
             contract = database.get(Contract, seed.contract_id)
