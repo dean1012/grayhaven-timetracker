@@ -171,7 +171,7 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .auth-panel { width: 490px; padding: 3rem; }
 .auth-logo { display: block; width: 235px; margin: 0 auto 2.7rem; }
 .auth-panel .form-stack { margin-top: 0; }
-.auth-form-actions { display: grid; gap: var(--space-sm); }
+.auth-form-actions { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: stretch; gap: var(--space-sm); }
 .auth-form-actions .button { width: 100%; }
 .auth-panel h1 { font-size: 2rem; }
 .optional { color: var(--cool-grey); font-size: .75rem; font-weight: 400; }
