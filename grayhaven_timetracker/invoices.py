@@ -708,6 +708,13 @@ def void_invoice(database: Session, invoice_id: int) -> Invoice:
         invoice = _invoice(database, invoice_id)
         if invoice.status != "UNPAID":
             raise InvoiceDomainError("Only an unpaid invoice can be voided.")
+        if (
+            invoice.client.archived_at is not None
+            or invoice.contract.archived_at is not None
+        ):
+            raise InvoiceDomainError(
+                "Activate the client and contract before voiding this invoice."
+            )
         entries = _claimed_entries(database, invoice)
         if any(entry.billing_status != "invoiced" for entry in entries):
             raise InvoiceDomainError("Invoice entries have an invalid payment state.")

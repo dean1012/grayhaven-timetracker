@@ -278,6 +278,40 @@ class InvoiceDomainTests(AppTestCase):
             self.seed.client_id, [client.id for client in context["clients"]]
         )
 
+    def test_void_requires_active_client_and_contract(self) -> None:
+        invoice_id = self.create_test_invoice()
+        for parent_type in (Client, Contract):
+            with self.subTest(parent=parent_type.__name__):
+                with session_scope(self.app) as database:
+                    invoice = database.get(Invoice, invoice_id)
+                    assert invoice is not None
+                    parent = (
+                        database.get(Client, invoice.client_id)
+                        if parent_type is Client
+                        else database.get(Contract, invoice.contract_id)
+                    )
+                    assert parent is not None
+                    parent.archived_at = datetime(2026, 7, 16)
+                with session_scope(self.app) as database:
+                    with self.assertRaisesRegex(
+                        InvoiceDomainError,
+                        "Activate the client and contract before voiding",
+                    ):
+                        void_invoice(database, invoice_id)
+                with session_scope(self.app) as database:
+                    invoice = database.get(Invoice, invoice_id)
+                    assert invoice is not None
+                    parent = (
+                        database.get(Client, invoice.client_id)
+                        if parent_type is Client
+                        else database.get(Contract, invoice.contract_id)
+                    )
+                    assert parent is not None
+                    parent.archived_at = None
+        with session_scope(self.app) as database:
+            voided = void_invoice(database, invoice_id)
+            self.assertEqual(voided.status, "VOID")
+
     def test_invoice_detail_summaries_survive_void_and_source_edits(self) -> None:
         self.login()
         invoice_id = self.create_test_invoice()
@@ -801,7 +835,13 @@ class InvoiceDomainTests(AppTestCase):
             invoice_domain._claimed_entries(database, invoice)
 
     def test_transition_guards_reject_malformed_claim_states(self) -> None:
-        invoice = SimpleNamespace(id=7, status="UNPAID", timezone_name="UTC")
+        invoice = SimpleNamespace(
+            id=7,
+            status="UNPAID",
+            timezone_name="UTC",
+            client=SimpleNamespace(archived_at=None),
+            contract=SimpleNamespace(archived_at=None),
+        )
         entry = SimpleNamespace(billing_status="client_paid")
         with (
             patch.object(invoice_domain, "_immediate_transaction") as transaction,
@@ -923,6 +963,37 @@ class InvoiceRouteTests(AppTestCase):
         shutil.copyfile(bold, fonts / "inter-700.ttf")
         self.app.config["BRANDING_PATH"] = str(branding)
 
+    def test_void_is_unavailable_for_archived_contract(self) -> None:
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, self.seed.entry_id)
+            assert entry is not None and entry.stopped_at is not None
+            preview = preview_invoice(
+                database,
+                contract_id=self.seed.contract_id,
+                range_start_utc=entry.started_at,
+                range_end_utc=entry.stopped_at + timedelta(seconds=1),
+                timezone_name="UTC",
+            )
+            invoice = create_invoice(
+                database,
+                contract_id=self.seed.contract_id,
+                range_start_utc=preview.range_start_utc,
+                range_end_utc=preview.range_end_utc,
+                timezone_name="UTC",
+                expected_fingerprint=preview.fingerprint,
+            )
+            database.flush()
+            invoice_id = PublicInvoiceId(invoice.id, invoice.invoice_number)
+            contract = database.get(Contract, self.seed.contract_id)
+            assert contract is not None
+            contract.archived_at = datetime(2026, 7, 16)
+        self.login()
+        path = f"/invoices/{invoice_id}/void"
+        self.assertEqual(self.client.get(path).status_code, 409)
+        self.assertEqual(self.client.post(path).status_code, 409)
+        self.assertIn(b"Void</button>", self.client.get("/invoices").data)
+        self.assertIn(b"Void</button>", self.client.get(f"/invoices/{invoice_id}").data)
+
     def test_payment_reference_errors_preserve_form_values(self) -> None:
         with session_scope(self.app) as database:
             entry = database.get(TimeEntry, self.seed.entry_id)
@@ -1042,6 +1113,7 @@ class InvoiceRouteTests(AppTestCase):
         with session_scope(self.app) as database:
             malformed_invoice = database.get(Invoice, invoice_id)
             assert malformed_invoice is not None
+            _ = malformed_invoice.client, malformed_invoice.contract
             malformed_line = malformed_invoice.lines[0]
             _ = malformed_line.entry
             database.expunge_all()

@@ -864,12 +864,13 @@ transaction ID of up to 20 characters that has never been used in Time Tracker.
 Retained Earnings are available only for LLC Members. Entries are final once
 recorded.
 
-Archiving a contract stops its active timers and removes it from normal
-selection and client reports. Activating it restores normal availability.
-Archiving a client also archives its contracts, stops active timers, and
-replaces its shared-report password. Activating the client restores its page;
-its contracts remain archived until activated separately. Reset the report
-password before sharing client report access again.
+Resolve pending invoice sessions before archiving a contract or client.
+Archiving a contract removes it from normal selection and client reports;
+activating it restores normal availability. Archiving a client also archives
+its contracts and replaces its shared-report password. Activating the client
+restores its page; its contracts remain archived until activated separately.
+Activate the client and contract before voiding an unpaid invoice. Reset the
+report password before sharing client report access again.
 
 [Back to top](#operations)
 

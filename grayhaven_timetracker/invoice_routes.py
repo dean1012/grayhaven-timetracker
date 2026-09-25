@@ -94,7 +94,11 @@ def get_invoice(invoice_id: int) -> Invoice:
     invoice = get_session().scalar(
         select(Invoice)
         .where(Invoice.id == invoice_id)
-        .options(selectinload(Invoice.lines).selectinload(InvoiceLine.entry))
+        .options(
+            selectinload(Invoice.client),
+            selectinload(Invoice.contract),
+            selectinload(Invoice.lines).selectinload(InvoiceLine.entry),
+        )
     )
     if invoice is None:
         abort(404)
@@ -133,7 +137,11 @@ def index() -> Any:
         return redirect(url_for("invoices.index", page=page_count))
     items = database.scalars(
         select(Invoice)
-        .options(selectinload(Invoice.lines).selectinload(InvoiceLine.entry))
+        .options(
+            selectinload(Invoice.client),
+            selectinload(Invoice.contract),
+            selectinload(Invoice.lines).selectinload(InvoiceLine.entry),
+        )
         .order_by(
             case(
                 (Invoice.status == "UNPAID", 0),
@@ -378,6 +386,11 @@ def action(invoice_id: int, action: str) -> Any:
         action == "refund" and (invoice.status != "PAID" or invoice.refunded)
     ):
         abort(409, "That action is not available for the invoice's current status.")
+    if action == "void" and (
+        invoice.client.archived_at is not None
+        or invoice.contract.archived_at is not None
+    ):
+        abort(409, "Activate the client and contract before voiding this invoice.")
     actor = cast(User, current_user())
     if response := require_sensitive_action_authorization(
         actor, url_for("invoices.detail", invoice_id=invoice.id)

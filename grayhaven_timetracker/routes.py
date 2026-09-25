@@ -802,6 +802,29 @@ def require_active_contract(contract: Contract) -> None:
         abort(409, "Activate the contract before changing its work data.")
 
 
+def has_pending_invoice_sessions(item: Client | Contract) -> bool:
+    """Check whether visible work would become unavailable after archiving."""
+    statement = select(TimeEntry.id).join(TimeEntry.task)
+    if isinstance(item, Client):
+        statement = statement.join(Task.contract).where(Contract.client_id == item.id)
+    else:
+        statement = statement.where(Task.contract_id == item.id)
+    return (
+        get_session().scalar(
+            statement.where(TimeEntry.billing_status == "pending_invoice").limit(1)
+        )
+        is not None
+    )
+
+
+def lock_archive_write() -> None:
+    """Serialize the final pending-session check with the archive update."""
+    database = get_session()
+    if database.in_transaction():
+        database.rollback()
+    database.connection().exec_driver_sql("BEGIN IMMEDIATE")
+
+
 def require_pending_sessions_for_deletion(statement: Any, label: str) -> None:
     """Prevent destructive parent deletes from bypassing session immutability."""
     if get_session().scalar(
@@ -1975,6 +1998,7 @@ def client(client_id: int) -> Any:
         active_pages=active_pages,
         archived_page=archived_page,
         archived_pages=archived_pages,
+        archive_blocked=has_pending_invoice_sessions(item),
         report_url=shared_report_url(report_token),
         report_mailto=report_mailto(item, shared_report_url(report_token)),
     )
@@ -2072,16 +2096,17 @@ def edit_client(client_id: int) -> Any:
 @main.route("/clients/<clientnum:client_id>/archive", methods=["GET", "POST"])
 @permission_required(CLIENT_ARCHIVE)
 def archive_client(client_id: int) -> Any:
-    """Archive a client, its contracts, and active timers."""
+    """Archive a client and its contracts after pending work is resolved."""
     database = get_session()
     item = get_visible_client_or_404(client_id)
+    if has_pending_invoice_sessions(item):
+        abort(409, "Resolve pending invoice sessions before archiving this client.")
     actor = cast(User, current_user())
     confirmation = {
         "eyebrow": "ARCHIVE CLIENT",
         "title": item.name,
         "description": (
-            "Archive this client and its contracts, stop active timers, and "
-            "invalidate client report access."
+            "Archive this client and its contracts and invalidate client report access."
         ),
         "submit_label": "Archive Client",
         "submit_icon": "fa-box-archive",
@@ -2096,6 +2121,10 @@ def archive_client(client_id: int) -> Any:
         return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
+    lock_archive_write()
+    item = get_visible_client_or_404(client_id)
+    if has_pending_invoice_sessions(item):
+        abort(409, "Resolve pending invoice sessions before archiving this client.")
     archived_at = now_utc()
     stopped_entries = database.scalars(
         select(TimeEntry)
@@ -2437,14 +2466,15 @@ def archive_contract(contract_id: int) -> Any:
     activating = item.archived_at is not None
     if item.client.archived_at is not None:
         abort(409, "Activate the client before activating a contract.")
+    if not activating and has_pending_invoice_sessions(item):
+        abort(409, "Resolve pending invoice sessions before archiving this contract.")
     confirmation = {
         "eyebrow": "ACTIVATE CONTRACT" if activating else "ARCHIVE CONTRACT",
         "title": item.name,
         "description": (
             "Activate this contract and restore its operational controls."
             if activating
-            else "Archive this contract, stop its active timers, and disable all "
-            "operational controls."
+            else "Archive this contract and disable all operational controls."
         ),
         "submit_label": "Activate Contract" if activating else "Archive Contract",
         "submit_icon": "fa-folder-open" if activating else "fa-box-archive",
@@ -2460,6 +2490,16 @@ def archive_contract(contract_id: int) -> Any:
         return response
     if request.method != "POST":
         return render_template("sensitive_action_form.html", **confirmation)
+    if not activating:
+        lock_archive_write()
+        item = cast(Contract, get_or_404(Contract, contract_id))
+        if item.client.archived_at is not None:
+            abort(409, "Activate the client before activating a contract.")
+        if has_pending_invoice_sessions(item):
+            abort(
+                409,
+                "Resolve pending invoice sessions before archiving this contract.",
+            )
     if activating:
         item.archived_at = None
         item.archived_by_user_id = None
@@ -2510,7 +2550,7 @@ def archive_contract(contract_id: int) -> Any:
             changes={"Archived": {"from": "Active", "to": "Archived"}},
         )
         consume_sensitive_action_authorization()
-        flash("Contract archived and active timers stopped.", "success")
+        flash("Contract archived.", "success")
     return redirect(url_for("main.contract", contract_id=item.id))
 
 
@@ -2549,6 +2589,9 @@ def contract(contract_id: int) -> Any:
     return render_template(
         "contract.html",
         contract=item,
+        archive_blocked=(
+            item.archived_at is None and has_pending_invoice_sessions(item)
+        ),
         protected_task_ids={row.task_id for row in protected_rows},
         protected_subtask_ids={
             row.subtask_id for row in protected_rows if row.subtask_id is not None

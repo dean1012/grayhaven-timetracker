@@ -1400,7 +1400,16 @@ class ClientContractTaskRouteTests(AppTestCase):
 
     def test_sensitive_archive_and_delete_forms_require_reauthentication(self) -> None:
         seed = self.seed_contract()
-        client_path = f"/clients/{seed.client_id}/archive"
+        client_response = self.client.post(
+            "/clients/new",
+            data={
+                "name": "Sample Archive Client",
+                "contact_name": "Sample Contact",
+                "contact_email": "sample@example.invalid",
+            },
+        )
+        self.assertEqual(client_response.status_code, 302)
+        client_path = f"{client_response.location}/archive"
         self.assertEqual(self.client.get(client_path).status_code, 302)
         authentication_url = self.client.get(client_path).location
         self.assertEqual(self.client.get(authentication_url).status_code, 200)
@@ -1412,7 +1421,7 @@ class ClientContractTaskRouteTests(AppTestCase):
             400,
         )
         cancelled = self.client.post(authentication_url, data={"cancel": "1"})
-        self.assertEqual(cancelled.location, f"/clients/{seed.client_id}")
+        self.assertEqual(cancelled.location, client_response.location)
         with self.client.session_transaction() as browser_session:
             self.assertFalse(
                 any(
@@ -1858,6 +1867,23 @@ class ClientContractTaskRouteTests(AppTestCase):
         seed = self.seed_contract()
         with session_scope(self.app) as database:
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
+            entry = database.get(TimeEntry, seed.entry_id)
+            assert entry is not None and entry.stopped_at is not None
+            preview = preview_invoice(
+                database,
+                contract_id=seed.contract_id,
+                range_start_utc=entry.started_at - timedelta(minutes=1),
+                range_end_utc=entry.stopped_at + timedelta(minutes=1),
+                timezone_name="UTC",
+            )
+            create_invoice(
+                database,
+                contract_id=seed.contract_id,
+                range_start_utc=preview.range_start_utc,
+                range_end_utc=preview.range_end_utc,
+                timezone_name="UTC",
+                expected_fingerprint=preview.fingerprint,
+            )
             assert admin is not None
             admin.totp_secret = None
         client_path = f"/clients/{seed.client_id}/archive"
@@ -1926,6 +1952,28 @@ class ClientContractTaskRouteTests(AppTestCase):
             self.client.get(f"/contracts/{seed.contract_id}/sessions").status_code,
             200,
         )
+
+    def test_archiving_client_and_contract_rejects_pending_sessions(self) -> None:
+        seed = self.seed_contract()
+        client_page = self.client.get(f"/clients/{seed.client_id}")
+        contract_page = self.client.get(f"/contracts/{seed.contract_id}")
+        self.assertIn(b'aria-label="Archive Client unavailable"', client_page.data)
+        self.assertIn(b'aria-label="Archive Contract unavailable"', contract_page.data)
+        for path in (
+            f"/clients/{seed.client_id}/archive",
+            f"/contracts/{seed.contract_id}/archive",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 409)
+                self.assertEqual(self.client.post(path).status_code, 409)
+        with session_scope(self.app) as database:
+            client = database.get(Client, seed.client_id)
+            contract = database.get(Contract, seed.contract_id)
+            entry = database.get(TimeEntry, seed.entry_id)
+            assert client is not None and contract is not None and entry is not None
+            self.assertIsNone(client.archived_at)
+            self.assertIsNone(contract.archived_at)
+            self.assertEqual(entry.billing_status, "pending_invoice")
 
 
 class TimerAndPermissionRouteTests(AppTestCase):
@@ -3968,16 +4016,35 @@ class ReportAndSessionRouteTests(AppTestCase):
                 previous_report_version + 1,
             )
 
-    def test_archiving_contract_stops_timers_and_disables_operations(self) -> None:
+    def test_archiving_contract_requires_invoiced_work_and_disables_operations(
+        self,
+    ) -> None:
         self.login()
+        self.assertEqual(
+            self.client.get(f"/contracts/{self.seed.contract_id}/archive").status_code,
+            409,
+        )
         with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, self.seed.entry_id)
             admin = database.scalar(select(User).where(User.email == ADMIN_EMAIL))
-            task = database.get(Task, self.seed.other_task_id)
-            assert admin is not None and task is not None
-            active = TimeEntry(user=admin, task=task, started_at=datetime.now())
-            database.add(active)
-            database.flush()
-            active_id = active.id
+            assert (
+                entry is not None and entry.stopped_at is not None and admin is not None
+            )
+            preview = preview_invoice(
+                database,
+                contract_id=self.seed.contract_id,
+                range_start_utc=entry.started_at - timedelta(minutes=1),
+                range_end_utc=entry.stopped_at + timedelta(minutes=1),
+                timezone_name="UTC",
+            )
+            create_invoice(
+                database,
+                contract_id=self.seed.contract_id,
+                range_start_utc=preview.range_start_utc,
+                range_end_utc=preview.range_end_utc,
+                timezone_name="UTC",
+                expected_fingerprint=preview.fingerprint,
+            )
             reset_totp_replay_state(database, admin.id)
 
         archive_url = f"/contracts/{self.seed.contract_id}/archive"
@@ -3987,10 +4054,10 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertEqual(archived.status_code, 302)
         with session_scope(self.app) as database:
             contract = database.get(Contract, self.seed.contract_id)
-            active = database.get(TimeEntry, active_id)
-            assert contract is not None and active is not None
+            entry = database.get(TimeEntry, self.seed.entry_id)
+            assert contract is not None and entry is not None
             self.assertIsNotNone(contract.archived_at)
-            self.assertIsNotNone(active.stopped_at)
+            self.assertEqual(entry.billing_status, "invoiced")
 
         contract_page = self.client.get(f"/contracts/{self.seed.contract_id}")
         self.assertEqual(contract_page.status_code, 200)
