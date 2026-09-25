@@ -194,6 +194,8 @@ class DisbursementRouteTests(AppTestCase):
             self.client.get(f"/disbursements/{self.worker_id}?page=999").status_code,
             302,
         )
+        self.assertEqual(self.client.get("/disbursements?page=999").status_code, 302)
+        self.assertEqual(self.client.get("/my/disbursements?page=999").status_code, 302)
         self.assertEqual(self.client.get("/disbursements/999999").status_code, 404)
         self.assertEqual(self.client.get("/disbursements/999999/new").status_code, 404)
         self.assertEqual(self.client.get("/disbursements/999999/edit").status_code, 404)
@@ -215,6 +217,7 @@ class DisbursementRouteTests(AppTestCase):
             {"date": (date.today() + timedelta(days=1)).isoformat()},
             {"amount": "invalid"},
             {"amount": "0"},
+            {"amount": "10000000.01"},
         ):
             with self.subTest(changes=changes):
                 self.assertEqual(

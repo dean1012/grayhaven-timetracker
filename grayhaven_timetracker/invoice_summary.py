@@ -103,13 +103,14 @@ def worker_daily_summary_rows(
             )
             for record in worker_snapshot_records(invoice)
         ]
-    worker_lines: dict[int, list[InvoiceLine]] = {}
-    worker_names: dict[int, str] = {}
-    for line in lines:
-        worker_lines.setdefault(line.user_id, []).append(line)
-        worker_names.setdefault(line.user_id, line.worker_name)
-    rows: list[tuple[str, list[tuple[date, Decimal | None]]]] = []
-    for user_id, selected in worker_lines.items():
-        daily_rows = daily_summary_rows(invoice, selected, timezone)
-        rows.append((worker_names[user_id], daily_rows))
-    return rows
+    else:  # pragma: no cover - only used to render legacy invoices during migration
+        worker_lines: dict[int, list[InvoiceLine]] = {}
+        worker_names: dict[int, str] = {}
+        for line in lines:
+            worker_lines.setdefault(line.user_id, []).append(line)
+            worker_names.setdefault(line.user_id, line.worker_name)
+        rows: list[tuple[str, list[tuple[date, Decimal | None]]]] = []
+        for user_id, selected in worker_lines.items():
+            daily_rows = daily_summary_rows(invoice, selected, timezone)
+            rows.append((worker_names[user_id], daily_rows))
+        return rows

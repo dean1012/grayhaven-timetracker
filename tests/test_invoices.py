@@ -31,12 +31,14 @@ from grayhaven_timetracker.invoice_pdf import (
 )
 from grayhaven_timetracker.invoice_summary import (
     daily_summary_rows,
+    worker_snapshot_records,
     worker_summary_rows,
 )
 from grayhaven_timetracker.invoice_time import (
     TimeSpan,
     daily_billable_hours,
     daily_seconds,
+    rounded_quarter_hours,
     total_billable_hours,
 )
 from grayhaven_timetracker.invoices import (
@@ -184,6 +186,10 @@ class InvoiceTimeTests(TestCase):
             ),
             [],
         )
+
+    def test_billable_time_rejects_negative_seconds(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cannot be negative"):
+            rounded_quarter_hours(-1)
 
     def test_due_dates_advance_over_weekends_and_observed_holidays(self) -> None:
         self.assertEqual(calculate_due_date(date(2026, 7, 3), 0), date(2026, 7, 6))
@@ -860,6 +866,7 @@ class InvoiceDomainTests(AppTestCase):
         invoice = SimpleNamespace(
             id=7,
             status="UNPAID",
+            refunded=False,
             timezone_name="UTC",
             client=SimpleNamespace(archived_at=None),
             contract=SimpleNamespace(archived_at=None),
@@ -881,6 +888,11 @@ class InvoiceDomainTests(AppTestCase):
             with self.assertRaisesRegex(InvoiceDomainError, "invalid payment state"):
                 void_invoice(SimpleNamespace(), invoice.id)
 
+            invoice.status = "PAID"
+            with self.assertRaisesRegex(InvoiceDomainError, "invalid payment state"):
+                refund_invoice(SimpleNamespace(), invoice.id)
+
+            invoice.status = "UNPAID"
             entry.billing_status = "client_paid"
             with self.assertRaisesRegex(InvoiceDomainError, "invalid payment state"):
                 void_invoice(SimpleNamespace(), invoice.id)
@@ -937,6 +949,11 @@ class InvoiceDomainTests(AppTestCase):
             [date(2026, 7, 17), date(2026, 7, 20)],
         )
 
+    def test_worker_snapshot_rejects_empty_v2_records(self) -> None:
+        invoice = Invoice(id=1, pdf_version=2, worker_summary_json="[]")
+        with self.assertRaisesRegex(ValueError, "worker snapshot is invalid"):
+            worker_snapshot_records(invoice)
+
     def test_pdf_rejects_incomplete_runtime_assets(self) -> None:
         with self.assertRaisesRegex(ValueError, "Both regular and bold"):
             render_invoice_pdf(
@@ -955,6 +972,28 @@ class InvoiceDomainTests(AppTestCase):
         )
         with self.assertRaisesRegex(ValueError, "logo file is unavailable"):
             render_invoice_pdf(invoice, [], logo_path=self.root / "missing-logo.png")
+
+    def test_pdf_rejects_unsupported_snapshot_version(self) -> None:
+        invoice = Invoice(pdf_version=3, timezone_name="UTC")
+        with self.assertRaisesRegex(ValueError, "Unsupported invoice PDF version"):
+            render_invoice_pdf(invoice, [])
+
+    def test_invoice_total_rounds_each_workers_daily_amount_separately(self) -> None:
+        lines = (
+            InvoiceLine(
+                user_id=1,
+                started_at_utc=datetime(2026, 7, 15, 9),
+                stopped_at_utc=datetime(2026, 7, 15, 9, 6),
+                total_seconds=360,
+            ),
+            InvoiceLine(
+                user_id=2,
+                started_at_utc=datetime(2026, 7, 15, 9),
+                stopped_at_utc=datetime(2026, 7, 15, 9, 6),
+                total_seconds=360,
+            ),
+        )
+        self.assertEqual(invoice_domain.invoice_total_cents(lines, UTC, 5500), 0)
 
 
 class InvoiceRouteTests(AppTestCase):
@@ -995,6 +1034,46 @@ class InvoiceRouteTests(AppTestCase):
         self.assertEqual(self.client.post(path).status_code, 409)
         self.assertIn(b"Void</button>", self.client.get("/invoices").data)
         self.assertIn(b"Void</button>", self.client.get(f"/invoices/{invoice_id}").data)
+
+    def test_void_route_releases_an_unpaid_invoice(self) -> None:
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, self.seed.entry_id)
+            assert entry is not None and entry.stopped_at is not None
+            proposed = preview_invoice(
+                database,
+                contract_id=self.seed.contract_id,
+                range_start_utc=entry.started_at,
+                range_end_utc=entry.stopped_at + timedelta(seconds=1),
+                timezone_name="UTC",
+            )
+            invoice = create_invoice(
+                database,
+                contract_id=self.seed.contract_id,
+                range_start_utc=proposed.range_start_utc,
+                range_end_utc=proposed.range_end_utc,
+                timezone_name="UTC",
+                expected_fingerprint=proposed.fingerprint,
+            )
+            database.commit()
+            invoice_id = PublicInvoiceId(invoice.id, invoice.invoice_number)
+        self.login()
+        path = f"/invoices/{invoice_id}/void"
+        self.authorize_sensitive_action(path)
+        response = self.client.post(
+            path, data={"correction_reason": "Duplicate invoice"}
+        )
+        self.assertEqual(response.status_code, 302)
+        with session_scope(self.app) as database:
+            invoice = database.get(Invoice, invoice_id)
+            entry = database.get(TimeEntry, self.seed.entry_id)
+            assert invoice is not None and entry is not None
+            self.assertEqual(invoice.status, "VOID")
+            self.assertEqual(entry.billing_status, "pending_invoice")
+            self.assertIsNone(entry.invoice_id)
+            audit = database.scalar(
+                select(AuditEvent).where(AuditEvent.event == "invoice_void")
+            )
+            self.assertIsNotNone(audit)
 
     def test_payment_reference_errors_preserve_form_values(self) -> None:
         with session_scope(self.app) as database:
@@ -1300,3 +1379,18 @@ class InvoiceRouteTests(AppTestCase):
         stale = self.client.get("/invoices/generate")
         self.assertEqual(stale.status_code, 302)
         self.assertEqual(stale.location, "/invoices/new")
+
+        self.client.post(
+            "/invoices/preview",
+            data={
+                "client_id": str(self.seed.client_id),
+                "contract_id": str(self.seed.contract_id),
+                "mode": "since_last",
+            },
+        )
+        with self.client.session_transaction() as browser_session:
+            browser_session["invoice_draft"]["contract_id"] = "999"
+        self.authorize_sensitive_action("/invoices/generate")
+        deleted_project = self.client.get("/invoices/generate")
+        self.assertEqual(deleted_project.status_code, 302)
+        self.assertEqual(deleted_project.location, "/invoices/new")

@@ -170,3 +170,7 @@ class PublicNumberTests(AppTestCase):
             {},
         )
         self.assertEqual(current, {"client": "Sample Client (ID: 174)"})
+        self.assertEqual(
+            public_audit_details({"client": None}, {2: "174"}, {}, {}),
+            {"client": None},
+        )

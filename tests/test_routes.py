@@ -32,7 +32,11 @@ from grayhaven_timetracker.auth import (
     verify_password,
 )
 from grayhaven_timetracker.database import get_session, session_scope
-from grayhaven_timetracker.invoices import create_invoice, preview_invoice
+from grayhaven_timetracker.invoices import (
+    create_invoice,
+    mark_invoice_paid,
+    preview_invoice,
+)
 from grayhaven_timetracker.models import (
     AuditEvent,
     Client,
@@ -3498,6 +3502,60 @@ class ReportAndSessionRouteTests(AppTestCase):
         redirected = self.client.get("/sessions?page=99&finalized_page=99")
         self.assertEqual(redirected.status_code, 302)
         self.assertIn("/sessions?page=1", redirected.location)
+
+    def test_my_sessions_aggregates_actual_invoice_snapshot_lines(self) -> None:
+        self.login(
+            email=self.user.email,
+            password=self.USER_PASSWORD,
+            totp_secret=self.USER_SECRET,
+        )
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, self.seed.entry_id)
+            assert entry is not None and entry.stopped_at is not None
+            preview = preview_invoice(
+                database,
+                contract_id=self.seed.contract_id,
+                range_start_utc=entry.started_at - timedelta(minutes=1),
+                range_end_utc=entry.stopped_at + timedelta(minutes=1),
+                timezone_name="UTC",
+            )
+            invoice = create_invoice(
+                database,
+                contract_id=self.seed.contract_id,
+                range_start_utc=preview.range_start_utc,
+                range_end_utc=preview.range_end_utc,
+                timezone_name="UTC",
+                expected_fingerprint=preview.fingerprint,
+            )
+            invoice_id = invoice.id
+
+        invoiced = self.client.get("/sessions")
+        self.assertEqual(invoiced.status_code, 200)
+        self.assertRegex(
+            invoiced.data,
+            b'<div class="summary-card"><span>Invoiced \xc2\xb7 Total Time'
+            b"</span><strong>1:00:00</strong>",
+        )
+
+        with session_scope(self.app) as database:
+            mark_invoice_paid(
+                database,
+                invoice_id,
+                paid_date=date.today(),
+                transaction_id="MS-TEST-1",
+            )
+        paid = self.client.get("/sessions")
+        self.assertEqual(paid.status_code, 200)
+        self.assertRegex(
+            paid.data,
+            b'<div class="summary-card"><span>Invoiced \xc2\xb7 Total Time'
+            b"</span><strong>0:00:00</strong>",
+        )
+        self.assertRegex(
+            paid.data,
+            b"<span>Client Paid \xc2\xb7 Pending Disbursement</span>.*?"
+            rb"<strong>\$55\.00</strong>",
+        )
 
     def test_my_sessions_daily_cost_splits_midnight_and_preserves_total(self) -> None:
         self.login()
