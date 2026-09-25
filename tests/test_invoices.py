@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
+from flask import Flask
 from pypdf import PdfReader
 from reportlab import rl_config
 from sqlalchemy import select, text
@@ -59,6 +60,29 @@ from grayhaven_timetracker.models import (
 )
 from grayhaven_timetracker.reports import invoice_entry_costs
 from tests.helpers import AppTestCase, PublicInvoiceId
+
+
+def _configure_invoice_branding(app: Flask, root: Path) -> None:
+    """Provide test-only assets for invoice route PDF rendering."""
+    branding = root / "invoice-branding"
+    fonts = branding / "fonts"
+    fonts.mkdir(parents=True)
+    (branding / "grayhaven-logo-wordmark-light.png").write_bytes(
+        base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+            "+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        )
+    )
+    search_paths = [Path(path) for path in rl_config.TTFSearchPath]
+    regular = next(
+        path / "Vera.ttf" for path in search_paths if (path / "Vera.ttf").is_file()
+    )
+    bold = next(
+        path / "VeraBd.ttf" for path in search_paths if (path / "VeraBd.ttf").is_file()
+    )
+    shutil.copyfile(regular, fonts / "inter-400.ttf")
+    shutil.copyfile(bold, fonts / "inter-700.ttf")
+    app.config["BRANDING_PATH"] = str(branding)
 
 
 class InvoiceTimeTests(TestCase):
@@ -314,6 +338,7 @@ class InvoiceDomainTests(AppTestCase):
 
     def test_invoice_detail_summaries_survive_void_and_source_edits(self) -> None:
         self.login()
+        _configure_invoice_branding(self.app, self.root)
         invoice_id = self.create_test_invoice()
         with session_scope(self.app) as database:
             invoice = database.get(Invoice, invoice_id)
@@ -345,9 +370,6 @@ class InvoiceDomainTests(AppTestCase):
             entry.user.first_name = "Changed"
             entry.task.contract.contact_email = "changed@example.invalid"
             entry.task.contract.hourly_rate_cents = 9900
-        self.app.config["BRANDING_PATH"] = str(
-            Path(__file__).resolve().parents[1] / "branding"
-        )
         voided = self.client.get(f"/invoices/{invoice_id}")
         self.assertEqual(voided.status_code, 200)
         voided_pdf = self.client.get(f"/invoices/{invoice_id}/download")
@@ -941,27 +963,7 @@ class InvoiceRouteTests(AppTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.seed = self.seed_contract()
-        branding = self.root / "invoice-branding"
-        fonts = branding / "fonts"
-        fonts.mkdir(parents=True)
-        (branding / "grayhaven-logo-wordmark-light.png").write_bytes(
-            base64.b64decode(
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
-                "+A8AAQUBAScY42YAAAAASUVORK5CYII="
-            )
-        )
-        search_paths = [Path(path) for path in rl_config.TTFSearchPath]
-        regular = next(
-            path / "Vera.ttf" for path in search_paths if (path / "Vera.ttf").is_file()
-        )
-        bold = next(
-            path / "VeraBd.ttf"
-            for path in search_paths
-            if (path / "VeraBd.ttf").is_file()
-        )
-        shutil.copyfile(regular, fonts / "inter-400.ttf")
-        shutil.copyfile(bold, fonts / "inter-700.ttf")
-        self.app.config["BRANDING_PATH"] = str(branding)
+        _configure_invoice_branding(self.app, self.root)
 
     def test_void_is_unavailable_for_archived_contract(self) -> None:
         with session_scope(self.app) as database:
