@@ -1843,7 +1843,7 @@ def dashboard() -> Any:
             .options(
                 selectinload(Client.contracts.and_(Contract.archived_at.is_(None)))
             )
-            .order_by(Client.name)
+            .order_by(Client.id.desc())
         )
         .all()
     )

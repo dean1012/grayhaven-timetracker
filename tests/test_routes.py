@@ -1689,6 +1689,24 @@ class ClientContractTaskRouteTests(AppTestCase):
 
         self.assertEqual(self.client.get("/?contracts_001=0").status_code, 400)
 
+    def test_dashboard_places_newest_client_first(self) -> None:
+        seed = self.seed_contract()
+        with session_scope(self.app) as database:
+            newer = Client(
+                name="Sample Newer Client",
+                contact_name="Sample Contact",
+                contact_email="newer@example.invalid",
+            )
+            database.add(newer)
+            database.flush()
+            newer_ref = newer.display_number
+        dashboard = self.client.get("/")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertLess(
+            dashboard.data.index(f'href="/clients/{newer_ref}"'.encode()),
+            dashboard.data.index(f'href="/clients/{seed.client_id}"'.encode()),
+        )
+
     def test_task_and_subtask_deletion_hides_work_data_and_retains_audit(
         self,
     ) -> None:

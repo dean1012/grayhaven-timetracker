@@ -4,10 +4,10 @@
 {% block content %}
 <section class="page-heading"><div><p class="eyebrow">CLIENTS</p><h1>Archived Clients</h1></div></section>
 <section class="panel session-directory">
-  <div class="table-container"><table class="data-table responsive-table">
+  <div class="table-container"><table class="data-table responsive-table archived-client-table">
     <caption class="visually-hidden">Archived clients</caption>
     <thead><tr><th scope="col">Name</th><th scope="col">Actions</th></tr></thead>
-    <tbody>{% for client in clients %}<tr><td class="cell-primary" data-label="Name">{{ client.name }}</td><td class="cell-actions" data-label="Actions"><a class="button button-secondary button-compact" href="{{ url_for('main.activate_client', client_id=client.id) }}">Activate</a></td></tr>{% else %}<tr class="empty-table-row"><td colspan="2">No archived clients.</td></tr>{% endfor %}</tbody>
+    <tbody>{% for client in clients %}<tr><td class="cell-primary" data-label="Name"><span class="user-contact-identity archived-client-identity"><i class="fa-solid fa-building" aria-hidden="true"></i><strong class="truncate-text" title="{{ client.name }}">{{ client.name }}</strong></span></td><td class="cell-actions" data-label="Actions"><div class="row-actions table-row-actions"><a class="icon-button accent" href="{{ url_for('main.activate_client', client_id=client.id) }}" title="Activate Client" aria-label="Activate Client"><i class="fa-solid fa-folder-open" aria-hidden="true"></i></a></div></td></tr>{% else %}<tr class="empty-table-row"><td colspan="2">No archived clients.</td></tr>{% endfor %}</tbody>
   </table></div>
   {% if page_count > 1 %}<nav class="pagination" aria-label="Archived client pages">{% if page > 1 %}<a class="button button-secondary" href="{{ url_for('main.archived_clients', page=page-1) }}">Previous</a>{% else %}<span></span>{% endif %}<span>Page {{ page }} of {{ page_count }}</span>{% if page < page_count %}<a class="button button-secondary" href="{{ url_for('main.archived_clients', page=page+1) }}">Next</a>{% else %}<span></span>{% endif %}</nav>{% endif %}
 </section>

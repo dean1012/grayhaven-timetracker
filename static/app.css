@@ -123,6 +123,8 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .user-contact-identity { display: inline-flex; align-items: center; gap: .5rem; min-width: 0; max-width: 100%; }
 .user-contact-identity i { flex: 0 0 auto; color: var(--primary-accent); }
 .user-contact-identity strong { min-width: 0; overflow: hidden; color: var(--cool-grey); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.archived-client-table td { vertical-align: middle; }
+.archived-client-identity strong { color: var(--soft-white); font-size: 1rem; font-weight: var(--font-weight-semibold); }
 .user-contact-email { min-width: 0; max-width: 100%; overflow: hidden; color: var(--primary-accent); }
 .user-contact-email .truncate-text { color: inherit; }
 .user-totp-cell { display: inline-flex; align-items: center; gap: .55rem; }
@@ -376,6 +378,10 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 
 @media (width >=768px) {
   .client-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (width >=1440px) {
+  .archived-client-table .cell-actions { width: 6rem; }
 }
 
 @media (width >=768px) and (width <1120px) {
