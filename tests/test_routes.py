@@ -1700,6 +1700,27 @@ class ClientContractTaskRouteTests(AppTestCase):
 
         self.assertEqual(self.client.get("/?contracts_001=0").status_code, 400)
 
+    def test_client_directory_page_boundaries(self) -> None:
+        self.seed_contract()
+        for path in (
+            "/?contracts_001=invalid",
+            "/clients/001?active_page=invalid",
+            "/clients/001?archived_page=invalid",
+            "/clients/001?active_page=0",
+            "/clients/001?archived_page=0",
+            "/clients/archived?page=invalid",
+            "/clients/archived?page=0",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 400)
+        for path in (
+            "/clients/001?active_page=999",
+            "/clients/001?archived_page=999",
+            "/clients/archived?page=999",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self.client.get(path).status_code, 302)
+
     def test_dashboard_places_newest_client_first(self) -> None:
         seed = self.seed_contract()
         with session_scope(self.app) as database:
