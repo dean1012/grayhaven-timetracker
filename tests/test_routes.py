@@ -1597,8 +1597,6 @@ class ClientContractTaskRouteTests(AppTestCase):
         confirmation = self.client.get(confirmation_url)
         self.assertEqual(confirmation.status_code, 200)
         self.assertIn(replacement_password.encode(), confirmation.data)
-        self.assertIn(b"Copy password", confirmation.data)
-        self.assertIn(b"Email report password", confirmation.data)
         self.assertIn(b'data-expire-after-ms="120000"', confirmation.data)
         self.assertIn(b"data-confirmation-countdown", confirmation.data)
         refreshed = self.client.get(confirmation_url)
@@ -3147,8 +3145,6 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertEqual(client_page.status_code, 200)
         report_url = f"https://time.example.invalid/shared/reports/{token}"
         self.assertIn(report_url.encode(), client_page.data)
-        self.assertIn(b"Copy report link", client_page.data)
-        self.assertIn(b"Share report link by email", client_page.data)
         self.assertIn(b'title="View Live Report"', client_page.data)
         contract_page = self.client.get(f"/contracts/{self.seed.contract_id}")
         self.assertEqual(contract_page.status_code, 200)

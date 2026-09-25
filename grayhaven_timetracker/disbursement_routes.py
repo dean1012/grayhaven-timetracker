@@ -116,13 +116,10 @@ def index() -> Any:
     page_count = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
     if page > page_count:
         return redirect(url_for("disbursements.index", page=page_count))
-    users = database.scalars(
-        select(User)
-        .order_by(User.last_name, User.first_name, User.id)
-        .offset((page - 1) * PAGE_SIZE)
-        .limit(PAGE_SIZE)
-    ).all()
+    users = database.scalars(select(User)).all()
     rows = [(user, outstanding_cents(database, user.id)) for user in users]
+    rows.sort(key=lambda row: (-row[1], row[0].last_name, row[0].first_name, row[0].id))
+    rows = rows[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
     return render_template(
         "disbursements.html", rows=rows, page=page, page_count=page_count
     )

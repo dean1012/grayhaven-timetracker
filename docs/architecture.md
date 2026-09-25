@@ -209,6 +209,9 @@ Earnings entries against that balance. In-Kind Transactions and Retained
 Earnings are available only to LLC Members. Entries are final once recorded;
 workers can view their own transaction history.
 
+The administrator worker directory lists pending disbursement balances from
+highest to lowest before paginating.
+
 [Back to top](#application-architecture)
 
 ## Reporting

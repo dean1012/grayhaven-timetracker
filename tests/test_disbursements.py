@@ -160,6 +160,17 @@ class DisbursementRouteTests(AppTestCase):
                 404,
             )
 
+    def test_worker_directory_orders_by_pending_amount(self) -> None:
+        self.create_user(
+            email="first@example.invalid", first_name="Sample", last_name="Aardvark"
+        )
+        listing = self.client.get("/disbursements")
+        self.assertEqual(listing.status_code, 200)
+        self.assertLess(
+            listing.data.index(b"Admin Operator"),
+            listing.data.index(b"Sample Aardvark"),
+        )
+
     def test_worker_can_view_own_disbursements_only(self) -> None:
         self.create_user()
         self.client.post("/logout")

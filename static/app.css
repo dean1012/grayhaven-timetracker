@@ -123,6 +123,10 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .user-contact-identity { display: inline-flex; align-items: center; gap: .5rem; min-width: 0; max-width: 100%; }
 .user-contact-identity i { flex: 0 0 auto; color: var(--primary-accent); }
 .user-contact-identity strong { min-width: 0; overflow: hidden; color: var(--cool-grey); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.contract-table-contact { display: flex; align-items: flex-start; gap: .5rem; min-width: 0; }
+.contract-table-contact > i { flex: 0 0 auto; color: var(--primary-accent); }
+.contract-table-contact > span { display: grid; gap: .2rem; min-width: 0; }
+.contract-table-contact a { min-width: 0; overflow-wrap: anywhere; }
 .archived-client-table td { vertical-align: middle; }
 .user-contact-email { min-width: 0; max-width: 100%; overflow: hidden; color: var(--primary-accent); }
 .user-contact-email .truncate-text { color: inherit; }
@@ -167,6 +171,8 @@ h2 { margin-bottom: .35rem; font-size: 1.25rem; }
 .auth-panel { width: 490px; padding: 3rem; }
 .auth-logo { display: block; width: 235px; margin: 0 auto 2.7rem; }
 .auth-panel .form-stack { margin-top: 0; }
+.auth-form-actions { display: grid; gap: var(--space-sm); }
+.auth-form-actions .button { width: 100%; }
 .auth-panel h1 { font-size: 2rem; }
 .optional { color: var(--cool-grey); font-size: .75rem; font-weight: 400; }
 .totp-qr { display: block; width: 220px; margin: 1.5rem auto; padding: .6rem; background: var(--soft-white); border-radius: var(--border-radius); }
