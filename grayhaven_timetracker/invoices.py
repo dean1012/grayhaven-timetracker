@@ -622,12 +622,21 @@ def _claimed_entries(database: Session, invoice: Invoice) -> list[TimeEntry]:
     return entries
 
 
+def normalized_transaction_note(note: str | None) -> str | None:
+    """Normalize an optional transaction note before recording it."""
+    normalized = " ".join((note or "").split()) or None
+    if normalized is not None and len(normalized) > 500:
+        raise InvoiceDomainError("Note is too long.")
+    return normalized
+
+
 def mark_invoice_paid(
     database: Session,
     invoice_id: int,
     paid_date: date | None = None,
     *,
     transaction_id: str | None = None,
+    note: str | None = None,
 ) -> Invoice:
     """Record client payment for one unpaid invoice."""
     with _immediate_transaction(database):
@@ -638,6 +647,7 @@ def mark_invoice_paid(
         if any(entry.billing_status != "invoiced" for entry in entries):
             raise InvoiceDomainError("Invoice entries are not awaiting client payment.")
         reference = require_available_transaction_id(database, transaction_id)
+        transaction_note = normalized_transaction_note(note)
         local_paid_date = (
             paid_date
             or utc_now()
@@ -656,6 +666,7 @@ def mark_invoice_paid(
         invoice.status = "PAID"
         invoice.paid_date = local_paid_date
         invoice.paid_transaction_id = reference
+        invoice.paid_transaction_note = transaction_note
         for entry in entries:
             entry.billing_status = "client_paid"
             entry.client_paid_date = local_paid_date
@@ -668,6 +679,7 @@ def refund_invoice(
     *,
     transaction_id: str | None = None,
     refunded_date: date | None = None,
+    note: str | None = None,
 ) -> Invoice:
     """Mark a paid invoice refunded without changing worker entitlements."""
     with _immediate_transaction(database):
@@ -680,6 +692,7 @@ def refund_invoice(
         ):
             raise InvoiceDomainError("Invoice entries have an invalid payment state.")
         reference = require_available_transaction_id(database, transaction_id)
+        transaction_note = normalized_transaction_note(note)
         local_refunded_date = (
             refunded_date
             or utc_now()
@@ -697,6 +710,7 @@ def refund_invoice(
             raise InvoiceDomainError("Refund date cannot be in the future.")
         invoice.refunded = True
         invoice.refund_transaction_id = reference
+        invoice.refund_transaction_note = transaction_note
         invoice.refunded_date = local_refunded_date
         return invoice
 

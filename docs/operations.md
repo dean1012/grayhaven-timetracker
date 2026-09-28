@@ -849,9 +849,13 @@ To record or correct invoice state:
 
 1. Open the invoice and complete sensitive-action authorization for the action.
 2. Mark an unpaid invoice as paid when client payment is received. Enter its
-   payment date and transaction ID.
+   payment date and transaction ID. An optional note can be recorded with the
+   payment transaction.
 3. Refund a paid invoice when needed. Enter the refund date, transaction ID,
-   and correction reason; worker balances remain available for disbursement.
+   correction reason, and an optional note; worker balances remain available
+   for disbursement. The administrator invoice detail page shows the payment
+   and refund note cards even when no note was provided. Entered notes also
+   appear in the audit log, not on the invoice PDF.
 4. Void an unpaid invoice when its sessions need to return to pending invoice,
    then make time corrections and issue a replacement invoice. Enter the
    requested correction reason.

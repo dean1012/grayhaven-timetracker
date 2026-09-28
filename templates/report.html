@@ -1,5 +1,6 @@
 {% extends "report_base.html" %}
 {% block title %}Grayhaven Systems LLC - Client Time Report | {{ report.client.name }}{% endblock %}
 {% block content %}
+{% include "_connection_warning.html" %}
 {% include "_report_content.html" %}
 {% endblock %}

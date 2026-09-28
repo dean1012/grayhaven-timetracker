@@ -91,6 +91,7 @@
         'time_entry_moved': 'This time entry has been moved.'
       } %}
       {% if request.args.get('stale') in stale_messages %}<div class="alert-stack"><div class="alert alert-warning alert-with-icon" role="status"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i><span class="alert-message">{{ stale_messages[request.args.get('stale')] }}</span><button class="alert-dismiss" type="button" data-alert-dismiss aria-label="Dismiss notification"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></div></div>{% endif %}
+      {% if live_page %}{% include "_connection_warning.html" %}{% endif %}
       <div data-live-region="active-timer">{% if active_entry %}{% include "active_timer.html" %}{% endif %}</div>
       {% block content %}{% endblock %}
     </div>

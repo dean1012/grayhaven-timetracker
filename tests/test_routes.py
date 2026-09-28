@@ -3453,7 +3453,8 @@ class ReportAndSessionRouteTests(AppTestCase):
                     ),
                 ]
             )
-        page = self.client.get("/sessions")
+        with patch.object(routes, "now_utc", return_value=datetime(2026, 7, 15, 12)):
+            page = self.client.get("/sessions")
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"My Sessions", page.data)
         self.assertIn(b"responsive-table my-session-table", page.data)
@@ -3466,6 +3467,8 @@ class ReportAndSessionRouteTests(AppTestCase):
         self.assertIn(b'data-pending-day="2026-07-13"', page.data)
         self.assertNotIn(b'data-pending-day="2026-07-11"', page.data)
         self.assertNotIn(b'data-pending-day="2026-07-12"', page.data)
+        self.assertNotIn(b'data-pending-day="2026-07-14"', page.data)
+        self.assertIn(b'data-pending-day="2026-07-15"', page.data)
         self.assertIn(b"data-pending-day-duration", page.data)
         self.assertIn(b"data-base-cost-cents=", page.data)
         self.assertNotIn("ETag", page.headers)
@@ -3590,8 +3593,28 @@ class ReportAndSessionRouteTests(AppTestCase):
             entry.invoice_date = date(2026, 7, 15)
         empty = self.client.get("/sessions")
         self.assertEqual(empty.status_code, 200)
-        self.assertIn(b"No pending invoice time has been recorded.", empty.data)
+        self.assertEqual(len(re.findall(rb'data-pending-day="[^"]+"', empty.data)), 1)
+        self.assertIn(b"data-snapshot-day=", empty.data)
         self.assertNotIn(b"data-running-base-seconds", empty.data)
+
+    def test_my_sessions_keeps_past_day_with_zero_duration_session(self) -> None:
+        self.login(
+            email=self.user.email,
+            password=self.USER_PASSWORD,
+            totp_secret=self.USER_SECRET,
+        )
+        with session_scope(self.app) as database:
+            entry = database.get(TimeEntry, self.seed.entry_id)
+            assert entry is not None
+            entry.stopped_at = entry.started_at
+        with patch.object(routes, "now_utc", return_value=datetime(2026, 7, 20, 12)):
+            page = self.client.get("/sessions")
+        self.assertEqual(page.status_code, 200)
+        row = re.search(rb'data-pending-day="2026-07-14".*?</tr>', page.data, re.S)
+        assert row is not None
+        self.assertIn(b"00:00:00", row.group())
+        self.assertIn(b"$0.00", row.group())
+        self.assertIn(b'data-pending-day="2026-07-20"', page.data)
 
     def test_session_assignment_apis_reject_missing_or_archived_resources(self) -> None:
         self.login()

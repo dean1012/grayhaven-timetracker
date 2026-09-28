@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Sequence
-from datetime import UTC, date, timedelta
+from datetime import UTC, date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -54,23 +54,12 @@ def worker_snapshot_records(invoice: Invoice) -> list[dict[str, Any]]:
 def daily_summary_rows(
     invoice: Invoice, lines: Sequence[InvoiceLine], timezone: ZoneInfo
 ) -> list[tuple[date, Decimal | None]]:
-    """Include worked days and empty weekdays within the invoice range."""
-    worked_hours = dict(daily_billable_hours(lines, timezone))
-    shown_days = set(worked_hours)
-    current_day = (
-        invoice.range_start_utc.replace(tzinfo=UTC).astimezone(timezone).date()
-    )
-    final_day = (
-        (invoice.range_end_utc - timedelta(microseconds=1))
-        .replace(tzinfo=UTC)
-        .astimezone(timezone)
-        .date()
-    )
-    while current_day <= final_day:
-        if current_day.weekday() < 5:
-            shown_days.add(current_day)
-        current_day += timedelta(days=1)
-    return [(day, worked_hours.get(day)) for day in sorted(shown_days)]
+    """Include only local days with invoiced sessions, even if they round to zero."""
+    hours_by_day = dict(daily_billable_hours(lines, timezone))
+    for line in lines:
+        day = line.started_at_utc.replace(tzinfo=UTC).astimezone(timezone).date()
+        hours_by_day.setdefault(day, Decimal("0.00"))
+    return sorted(hours_by_day.items())
 
 
 def worker_summary_rows(

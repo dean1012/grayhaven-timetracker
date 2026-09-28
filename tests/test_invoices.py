@@ -126,9 +126,6 @@ class InvoiceTimeTests(TestCase):
             [
                 (date(2026, 9, 14), Decimal("0.50")),
                 (date(2026, 9, 15), Decimal("0.50")),
-                (date(2026, 9, 16), None),
-                (date(2026, 9, 17), None),
-                (date(2026, 9, 18), None),
                 (date(2026, 9, 19), Decimal("0.50")),
             ],
         )
@@ -354,6 +351,7 @@ class InvoiceDomainTests(AppTestCase):
             day = invoice.lines[0].started_at_utc.date().isoformat()
         unpaid = self.client.get(f"/invoices/{invoice_id}")
         self.assertEqual(unpaid.status_code, 200)
+        self.assertNotIn(b"Transaction Notes", unpaid.data)
         self.assertTrue(unpaid.cache_control.no_store)
         unpaid_pdf = self.client.get(f"/invoices/{invoice_id}/download")
         self.assertTrue(unpaid_pdf.cache_control.no_store)
@@ -378,6 +376,7 @@ class InvoiceDomainTests(AppTestCase):
             entry.task.contract.hourly_rate_cents = 9900
         voided = self.client.get(f"/invoices/{invoice_id}")
         self.assertEqual(voided.status_code, 200)
+        self.assertNotIn(b"Transaction Notes", voided.data)
         voided_pdf = self.client.get(f"/invoices/{invoice_id}/download")
         self.assertEqual(voided_pdf.status_code, 200)
         self.assertTrue(voided_pdf.cache_control.no_store)
@@ -404,6 +403,86 @@ class InvoiceDomainTests(AppTestCase):
             self.assertIn(value, voided.text)
         self.assertNotIn("changed@example.invalid", voided.text)
         self.assertNotIn("Disbursement Management", voided.text)
+
+    def test_transaction_note_cards_remain_visible_without_notes(self) -> None:
+        self.login()
+        invoice_id = self.create_test_invoice()
+        with session_scope(self.app) as database:
+            mark_invoice_paid(database, invoice_id, transaction_id="PAY-NOTELESS")
+        paid = self.client.get(f"/invoices/{invoice_id}")
+        self.assertEqual(paid.status_code, 200)
+        paid_cards = paid.text.split(
+            'class="summary-grid content-grid-two panel transaction-notes-grid">', 1
+        )[1].split("</section>", 1)[0]
+        self.assertEqual(paid_cards.count('class="summary-card"'), 1)
+        self.assertEqual(
+            paid_cards.count("No notes were provided for this transaction."), 1
+        )
+
+        with session_scope(self.app) as database:
+            refund_invoice(database, invoice_id, transaction_id="REF-NOTELESS")
+        refunded = self.client.get(f"/invoices/{invoice_id}")
+        self.assertEqual(refunded.status_code, 200)
+        refunded_cards = refunded.text.split(
+            'class="summary-grid content-grid-two panel transaction-notes-grid">', 1
+        )[1].split("</section>", 1)[0]
+        self.assertEqual(refunded_cards.count('class="summary-card"'), 2)
+        self.assertEqual(
+            refunded_cards.count("No notes were provided for this transaction."), 2
+        )
+
+    def test_new_invoice_pdf_and_detail_show_only_session_days(self) -> None:
+        self.login()
+        start = datetime(2026, 7, 13)
+        end = datetime(2026, 7, 18)
+        with session_scope(self.app) as database:
+            existing = database.get(TimeEntry, self.seed.entry_id)
+            assert existing is not None
+            instant = datetime(2026, 7, 17, 9)
+            database.add(
+                TimeEntry(
+                    user_id=existing.user_id,
+                    task_id=existing.task_id,
+                    started_at=instant,
+                    stopped_at=instant,
+                )
+            )
+            database.flush()
+            database.commit()
+            proposed = preview_invoice(
+                database,
+                contract_id=self.seed.contract_id,
+                range_start_utc=start,
+                range_end_utc=end,
+                timezone_name="UTC",
+            )
+            self.assertEqual(len(proposed.entries), 2)
+            invoice = create_invoice(
+                database,
+                contract_id=self.seed.contract_id,
+                range_start_utc=start,
+                range_end_utc=end,
+                timezone_name="UTC",
+                expected_fingerprint=proposed.fingerprint,
+            )
+            database.flush()
+            invoice_id = PublicInvoiceId(invoice.id, invoice.invoice_number)
+            self.assertEqual(
+                [day for day, _ in worker_snapshot_records(invoice)[0]["days"]],
+                ["2026-07-15", "2026-07-17"],
+            )
+            pdf_text = "\n".join(
+                page.extract_text() or ""
+                for page in PdfReader(BytesIO(invoice.pdf_bytes)).pages
+            )
+        detail = self.client.get(f"/invoices/{invoice_id}")
+        self.assertEqual(detail.status_code, 200)
+        daily_table = detail.text.split("Billable Work -", 1)[1].split("</table>", 1)[0]
+        for rendered in (daily_table, pdf_text):
+            self.assertIn("2026-07-15", rendered)
+            self.assertIn("2026-07-17", rendered)
+            self.assertNotIn("2026-07-14", rendered)
+            self.assertNotIn("2026-07-16", rendered)
 
     def create_test_invoice(self) -> int:
         with session_scope(self.app) as database:
@@ -480,9 +559,20 @@ class InvoiceDomainTests(AppTestCase):
         with session_scope(self.app) as database:
             with self.assertRaisesRegex(InvoiceDomainError, "Only a paid invoice"):
                 refund_invoice(database, invoice_id)
+            with self.assertRaisesRegex(InvoiceDomainError, "Note is too long"):
+                mark_invoice_paid(
+                    database,
+                    invoice_id,
+                    transaction_id="PAYMENT-1",
+                    note="x" * 501,
+                )
         with session_scope(self.app) as database:
             mark_invoice_paid(
-                database, invoice_id, date(2026, 7, 17), transaction_id="PAYMENT-1"
+                database,
+                invoice_id,
+                date(2026, 7, 17),
+                transaction_id="PAYMENT-1",
+                note="  Payment differs from invoice.  ",
             )
             database.commit()
         with session_scope(self.app) as database:
@@ -491,7 +581,19 @@ class InvoiceDomainTests(AppTestCase):
             with self.assertRaisesRegex(InvoiceDomainError, "Only an unpaid invoice"):
                 void_invoice(database, invoice_id)
         with session_scope(self.app) as database:
-            refunded = refund_invoice(database, invoice_id, transaction_id="REFUND-1")
+            with self.assertRaisesRegex(InvoiceDomainError, "Note is too long"):
+                refund_invoice(
+                    database,
+                    invoice_id,
+                    transaction_id="REFUND-1",
+                    note="x" * 501,
+                )
+            refunded = refund_invoice(
+                database,
+                invoice_id,
+                transaction_id="REFUND-1",
+                note="  Refund   agreed. ",
+            )
             self.assertEqual(refunded.display_status, "REFUNDED")
             self.assertIsNotNone(refunded.refunded_date)
             database.commit()
@@ -501,6 +603,10 @@ class InvoiceDomainTests(AppTestCase):
             invoice = database.get(Invoice, invoice_id)
             assert invoice is not None
             self.assertEqual(invoice.display_status, "REFUNDED")
+            self.assertEqual(
+                invoice.paid_transaction_note, "Payment differs from invoice."
+            )
+            self.assertEqual(invoice.refund_transaction_note, "Refund agreed.")
             self.assertEqual(entry.billing_status, "client_paid")
             self.assertEqual(entry.invoice_id, invoice.id)
             with self.assertRaisesRegex(InvoiceDomainError, "Only a paid invoice"):
@@ -920,7 +1026,7 @@ class InvoiceDomainTests(AppTestCase):
                 now=datetime(2026, 7, 15),
             )
 
-    def test_pdf_daily_summary_shows_weekdays_without_work(self) -> None:
+    def test_invoice_daily_summary_omits_only_days_without_sessions(self) -> None:
         invoice = Invoice(
             range_start_utc=datetime(2026, 7, 13),
             range_end_utc=datetime(2026, 7, 18),
@@ -931,23 +1037,31 @@ class InvoiceDomainTests(AppTestCase):
             stopped_at_utc=datetime(2026, 7, 13, 10),
             total_seconds=3600,
         )
-        rows = daily_summary_rows(invoice, [line], UTC)
-        self.assertEqual(
-            [day for day, _ in rows],
-            [date(2026, 7, day) for day in range(13, 18)],
+        short_line = InvoiceLine(
+            started_at_utc=datetime(2026, 7, 15, 9),
+            stopped_at_utc=datetime(2026, 7, 15, 9, 1),
+            total_seconds=60,
         )
-        self.assertIn(None, [hours for _, hours in rows])
+        zero_line = InvoiceLine(
+            started_at_utc=datetime(2026, 7, 17, 9),
+            stopped_at_utc=datetime(2026, 7, 17, 9),
+            total_seconds=0,
+        )
+        self.assertEqual(
+            daily_summary_rows(invoice, [line, short_line, zero_line], UTC),
+            [
+                (date(2026, 7, 13), Decimal("1.00")),
+                (date(2026, 7, 15), Decimal("0.00")),
+                (date(2026, 7, 17), Decimal("0.00")),
+            ],
+        )
 
         weekend_range = Invoice(
             range_start_utc=datetime(2026, 7, 17),
             range_end_utc=datetime(2026, 7, 21),
             timezone_name="UTC",
         )
-        weekend_rows = daily_summary_rows(weekend_range, [], UTC)
-        self.assertEqual(
-            [day for day, _ in weekend_rows],
-            [date(2026, 7, 17), date(2026, 7, 20)],
-        )
+        self.assertEqual(daily_summary_rows(weekend_range, [], UTC), [])
 
     def test_worker_snapshot_rejects_empty_v2_records(self) -> None:
         invoice = Invoice(id=1, pdf_version=2, worker_summary_json="[]")
@@ -1230,6 +1344,7 @@ class InvoiceRouteTests(AppTestCase):
             data={
                 "transaction_id": "PAYMENT-1",
                 "status_date": payment_day.isoformat(),
+                "note": "Payment includes a small overage.",
             },
         )
         self.assertEqual(paid.status_code, 302)
@@ -1241,6 +1356,9 @@ class InvoiceRouteTests(AppTestCase):
             self.assertEqual(invoice.paid_transaction_id, "PAYMENT-1")
             self.assertEqual(invoice.paid_date, payment_day)
             self.assertEqual(
+                invoice.paid_transaction_note, "Payment includes a small overage."
+            )
+            self.assertEqual(
                 (invoice.total_cents, invoice.worker_summary_json, invoice.pdf_version),
                 billing_snapshot,
             )
@@ -1250,6 +1368,8 @@ class InvoiceRouteTests(AppTestCase):
                 select(AuditEvent).where(AuditEvent.event == "invoice_paid")
             )
             self.assertIsNotNone(event)
+            assert event is not None
+            self.assertEqual(event.details["note"], "Payment includes a small overage.")
         self.assertEqual(self.client.get(paid_path).status_code, 409)
         paid_pdf = self.client.get(f"/invoices/{invoice_id}/download").data
         self.assertNotEqual(paid_pdf, original_pdf)
@@ -1257,10 +1377,17 @@ class InvoiceRouteTests(AppTestCase):
             "#PAYMENT-1", PdfReader(BytesIO(paid_pdf)).pages[0].extract_text()
         )
         self.assertIn("Paid", PdfReader(BytesIO(paid_pdf)).pages[0].extract_text())
+        self.assertNotIn(
+            "Payment includes a small overage.",
+            PdfReader(BytesIO(paid_pdf)).pages[0].extract_text(),
+        )
 
         detail = self.client.get(f"/invoices/{invoice_id}")
         self.assertEqual(detail.status_code, 200)
         self.assertIn(b"#PAYMENT-1", detail.data)
+        self.assertIn(b"Payment includes a small overage.", detail.data)
+        self.assertIn(b"Payment Notes", detail.data)
+        self.assertNotIn(b"Refund Notes", detail.data)
         self.assertIn(b"Admin Operator", detail.data)
         self.assertEqual(self.client.get("/invoices/9999").status_code, 404)
         self.assertEqual(self.client.get("/invoices/not-an-action").status_code, 404)
@@ -1297,6 +1424,7 @@ class InvoiceRouteTests(AppTestCase):
                     "correction_reason": "Client refund recorded",
                     "transaction_id": "REFUND-1",
                     "status_date": refund_day.isoformat(),
+                    "note": "Refund entered separately.",
                 },
             ).status_code,
             302,
@@ -1306,6 +1434,14 @@ class InvoiceRouteTests(AppTestCase):
             assert invoice is not None
             self.assertEqual(invoice.display_status, "REFUNDED")
             self.assertEqual(invoice.refund_transaction_id, "REFUND-1")
+            self.assertEqual(
+                invoice.refund_transaction_note, "Refund entered separately."
+            )
+            refund_event = database.scalar(
+                select(AuditEvent).where(AuditEvent.event == "invoice_refund")
+            )
+            assert refund_event is not None
+            self.assertEqual(refund_event.details["note"], "Refund entered separately.")
             self.assertEqual(invoice.refunded_date, refund_day)
             self.assertTrue(invoice.pdf_bytes.startswith(b"%PDF-"))
             self.assertEqual(
@@ -1328,6 +1464,13 @@ class InvoiceRouteTests(AppTestCase):
         self.assertEqual(refunded_detail.status_code, 200)
         self.assertIn(b"Payment #PAYMENT-1", refunded_detail.data)
         self.assertIn(b"Refund #REFUND-1", refunded_detail.data)
+        self.assertIn(b"Payment Notes", refunded_detail.data)
+        self.assertIn(b"Refund Notes", refunded_detail.data)
+        self.assertIn(b"Refund entered separately.", refunded_detail.data)
+        self.assertNotIn(
+            "Refund entered separately.",
+            PdfReader(BytesIO(refunded_pdf)).pages[0].extract_text(),
+        )
         self.assertEqual(self.client.get(refund_path).status_code, 409)
         self.assertEqual(self.client.get(paid_path).status_code, 409)
         self.assertEqual(self.client.get("/invoices?page=invalid").status_code, 400)

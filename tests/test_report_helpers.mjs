@@ -183,6 +183,10 @@ test("running timer refresh updates total, cost, and today's daily row", async (
     intervals[0]();
     intervals[0]();
     assert.equal(reloads, 1);
+    delete summary.dataset.runningBaseSeconds;
+    daily.dataset.snapshotDay = "2025-12-30";
+    intervals[0]();
+    assert.equal(reloads, 2);
   } finally {
     Date.now = originalNow;
     Object.assign(globalThis, originalGlobals);

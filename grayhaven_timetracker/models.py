@@ -387,9 +387,11 @@ class Invoice(Base):
     voided_date: Mapped[date | None] = mapped_column(nullable=True)
     refunded_date: Mapped[date | None] = mapped_column(nullable=True)
     paid_transaction_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    paid_transaction_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     refund_transaction_id: Mapped[str | None] = mapped_column(
         String(100), nullable=True
     )
+    refund_transaction_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     refunded: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     pdf_version: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
     worker_summary_json: Mapped[str] = mapped_column(
