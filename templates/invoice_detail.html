@@ -7,6 +7,15 @@
   <div class="panel-heading"><div><h2>Invoice Summary</h2><p class="muted">Generated {{ format_datetime_inline(invoice.issued_at, timezone_info) }}</p></div><div class="row-actions invoice-actions"><a class="button button-secondary button-compact" href="{{ url_for('invoices.download', invoice_id=invoice.id) }}">Download</a>{% if invoice.status == 'UNPAID' %}<a class="button button-success button-compact" href="{{ url_for('invoices.action', invoice_id=invoice.id, action='paid') }}">Mark Paid</a>{% if invoice.client.archived_at or invoice.contract.archived_at %}<button class="button button-stop button-compact" type="button" disabled title="Activate client and contract before voiding">Void</button>{% else %}<a class="button button-stop button-compact" href="{{ url_for('invoices.action', invoice_id=invoice.id, action='void') }}">Void</a>{% endif %}{% elif invoice.status == 'PAID' and not invoice.refunded %}<a class="button button-stop button-compact" href="{{ url_for('invoices.action', invoice_id=invoice.id, action='refund') }}">Refund</a>{% endif %}</div></div>
   <section class="summary-grid content-grid-two panel" aria-label="Invoice summary"><div class="summary-card"><span>Invoice range</span><strong>Start: {{ format_datetime_inline(invoice.range_start_utc, timezone_info) }}<br>End: {{ format_datetime_inline(invoice.range_end_utc, timezone_info) }}</strong></div><div class="summary-card"><span>Payment terms</span><strong>{% if invoice.payment_terms_days == 0 %}Due Immediately{% elif invoice.payment_terms_days == 7 %}7 days{% else %}NET 30{% endif %}</strong></div><div class="summary-card">{% if invoice.paid_transaction_id or invoice.refund_transaction_id %}<span>Transaction Details</span><strong>{% if invoice.paid_transaction_id %}Payment #{{ invoice.paid_transaction_id }}{% endif %}{% if invoice.refund_transaction_id %}<br>Refund #{{ invoice.refund_transaction_id }}{% endif %}</strong>{% else %}<span>Due Date</span><strong>{{ 'VOID' if invoice.status == 'VOID' else invoice.due_date }}</strong>{% endif %}</div><div class="summary-card"><span>Paid date</span><strong>{{ invoice.paid_date or '—' }}</strong></div></section>
 </section>
+{% if invoice.status == 'PAID' %}
+<section class="panel session-directory" aria-labelledby="transaction-notes-heading">
+  <div class="panel-heading"><div><h2 id="transaction-notes-heading">Transaction Notes</h2></div></div>
+  <div class="summary-grid content-grid-two panel transaction-notes-grid">
+    <div class="summary-card"><span>Payment Notes</span><p class="transaction-note-copy">{{ invoice.paid_transaction_note or 'No notes were provided for this transaction.' }}</p></div>
+    {% if invoice.refunded %}<div class="summary-card"><span>Refund Notes</span><p class="transaction-note-copy">{{ invoice.refund_transaction_note or 'No notes were provided for this transaction.' }}</p></div>{% endif %}
+  </div>
+</section>
+{% endif %}
 <section class="panel session-directory">
   <div class="panel-heading"><div><h2>Bill to</h2></div></div>
   <p>{{ invoice.client_name }}<br>{{ invoice.contact_name }}<br>{{ invoice.contact_email }}</p>

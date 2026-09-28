@@ -11,15 +11,15 @@
   <div class="summary-card"><span>Invoiced · Total Time</span><strong>{{ format_duration(summary.invoiced.seconds) }}</strong></div>
   <div class="summary-card"><span>Invoiced · Billed Cost</span><strong>{{ format_money(summary.invoiced.cost) }}</strong></div>
 </section>
-<section class="panel session-directory" data-live-region="my-pending-daily" data-pending-live-daily data-pending-timezone="{{ timezone_info.key }}"{% if pending_running %} data-snapshot-day="{{ pending_running.snapshot_day }}"{% endif %}>
+<section class="panel session-directory" data-live-region="my-pending-daily" data-pending-live-daily data-pending-timezone="{{ timezone_info.key }}" data-snapshot-day="{{ current_day.isoformat() }}">
   <div class="panel-heading"><div><p class="eyebrow">DAILY TOTALS</p><h2>Pending Invoice Sessions by Day</h2></div></div>
   <div class="table-container"><table class="data-table responsive-table pending-daily-table">
     <caption class="visually-hidden">Pending invoice sessions by calendar day</caption>
     <thead><tr><th scope="col">Date</th><th scope="col">Day</th><th class="cell-numeric" scope="col">Time</th><th class="cell-numeric" scope="col">Cost</th></tr></thead>
-    <tbody>{% for day, seconds, cost in pending_daily %}<tr data-pending-day="{{ day.isoformat() }}">
+    <tbody>{% for day, seconds, cost, has_session in pending_daily %}<tr data-pending-day="{{ day.isoformat() }}">
       <td class="cell-primary" data-label="Date">{{ day.isoformat() }}</td>
       <td data-label="Day">{{ day.strftime('%A') }}</td>
-      <td class="cell-numeric" data-label="Time" data-pending-day-duration data-base-seconds="{{ seconds }}">{% if seconds %}{{ '%02d'|format(seconds // 3600) }}:{{ '%02d'|format((seconds % 3600) // 60) }}:{{ '%02d'|format(seconds % 60) }}{% else %}-{% endif %}</td>
+      <td class="cell-numeric" data-label="Time" data-pending-day-duration data-base-seconds="{{ seconds }}">{% if seconds or has_session %}{{ '%02d'|format(seconds // 3600) }}:{{ '%02d'|format((seconds % 3600) // 60) }}:{{ '%02d'|format(seconds % 60) }}{% else %}-{% endif %}</td>
       <td class="cell-numeric" data-label="Cost" data-pending-day-cost data-base-cost-cents="{{ ((cost or 0) * 100)|int }}">{{ format_money(cost) if cost is not none else '-' }}</td>
     </tr>{% else %}<tr class="empty-table-row"><td colspan="4">No pending invoice time has been recorded.</td></tr>{% endfor %}</tbody>
   </table></div>

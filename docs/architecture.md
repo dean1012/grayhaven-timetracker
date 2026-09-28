@@ -197,11 +197,16 @@ Invoice PDFs are stored when generated. Downloads overlay the current status,
 its date, and any transaction ID on the stored PDF so later calculation changes
 do not alter issued invoices. Status updates render through the invoice's saved
 PDF layout version.
+Optional notes can be recorded with payment and refund transactions. The
+administrator detail page always shows a payment-note card for paid invoices
+and adds a refund-note card for refunded invoices, including when either note
+is empty. Notes are also recorded in the audit log, without altering the
+stored PDF or worker balances.
 
 The invoice detail page and PDF present the billing contact, contract rate,
 rounded billable work by worker and day, and exact session details. Daily
-summaries include empty weekdays within the invoice range as a dash and include
-weekends when work was recorded.
+summaries include only days with invoiced sessions, including sessions whose
+rounded billable time is zero.
 
 Paid invoices add each worker's rounded amount to an independent balance.
 Administrators record dated Disbursement, In-Kind Transaction, or Retained
@@ -222,9 +227,13 @@ active contracts. Invoiced, paid, and archived-contract sessions are
 intentionally excluded from the operational report.
 
 My Sessions groups pending invoice duration and cost by local calendar day.
+The daily table shows days with pending sessions and the current day, even
+when the current day has no sessions; other empty dates are omitted.
 Each session's cost is rounded once, then allocated across days so daily costs
 sum to the pending total. Running sessions refresh the current day's amount;
 crossing midnight refreshes the page to start the next day's row.
+Live pages and reports show a persistent connection warning when a refresh
+fails. Scheduled retries continue, and a successful response clears the warning.
 
 A client has a permanent shared-report link protected by a separate password.
 The report remains live and reflects current eligible work. Administrators can

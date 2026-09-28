@@ -426,6 +426,7 @@ def action(invoice_id: int, action: str) -> Any:
                 invoice_id,
                 paid_date=status_date,
                 transaction_id=request.form.get("transaction_id"),
+                note=request.form.get("note"),
             )
         elif action == "refund":
             invoice = refund_invoice(
@@ -433,9 +434,17 @@ def action(invoice_id: int, action: str) -> Any:
                 invoice_id,
                 transaction_id=request.form.get("transaction_id"),
                 refunded_date=status_date,
+                note=request.form.get("note"),
             )
         else:
             invoice = void_invoice(database, invoice_id)
+        transaction_note = (
+            invoice.paid_transaction_note
+            if action == "paid"
+            else invoice.refund_transaction_note
+            if action == "refund"
+            else None
+        )
         audit_invoice(
             "invoice_" + action,
             invoice,
@@ -445,6 +454,7 @@ def action(invoice_id: int, action: str) -> Any:
             paid_date=invoice.paid_date,
             voided_date=invoice.voided_date,
             refunded_date=invoice.refunded_date,
+            **({"note": transaction_note} if transaction_note else {}),
         )
         database.commit()
     except (ValueError, IntegrityError, OperationalError) as exc:

@@ -143,6 +143,23 @@ function localDateKey(timeZone) {
 }
 
 function updatePendingSessionSummary() {
+  const daily = document.querySelector("[data-pending-live-daily]");
+  const today = daily instanceof HTMLElement
+    ? localDateKey(daily.dataset.pendingTimezone || "")
+    : "";
+  if (today && daily.dataset.snapshotDay && today !== daily.dataset.snapshotDay) {
+    const rollover = `${daily.dataset.snapshotDay}->${today}`;
+    try {
+      const key = "pending-daily-rollover";
+      if (window.sessionStorage.getItem(key) !== rollover) {
+        window.sessionStorage.setItem(key, rollover);
+        window.location.reload();
+        return;
+      }
+    } catch {
+      // Keep the page usable if browser storage is unavailable.
+    }
+  }
   const summary = document.querySelector("[data-pending-live-summary]");
   if (!(summary instanceof HTMLElement) || summary.dataset.runningBaseSeconds === undefined) {
     return;
@@ -169,23 +186,8 @@ function updatePendingSessionSummary() {
     );
   }
 
-  const daily = document.querySelector("[data-pending-live-daily]");
   if (!(daily instanceof HTMLElement)) {
     return;
-  }
-  const today = localDateKey(daily.dataset.pendingTimezone || "");
-  if (today && daily.dataset.snapshotDay && today !== daily.dataset.snapshotDay) {
-    const rollover = `${daily.dataset.snapshotDay}->${today}`;
-    try {
-      const key = "pending-daily-rollover";
-      if (window.sessionStorage.getItem(key) !== rollover) {
-        window.sessionStorage.setItem(key, rollover);
-        window.location.reload();
-        return;
-      }
-    } catch {
-      // Keep the page usable if browser storage is unavailable.
-    }
   }
   const row = Array.from(daily.querySelectorAll("[data-pending-day]"))
     .find((candidate) => candidate.dataset.pendingDay === today);
@@ -414,6 +416,13 @@ function setLiveReportStatus(label, state) {
   }
 }
 
+function setConnectionWarning(visible) {
+  const warning = document.querySelector("[data-connection-warning]");
+  if (warning) {
+    warning.hidden = !visible;
+  }
+}
+
 let reportRequestActive = false;
 let reportReconciliationStopped = false;
 
@@ -429,6 +438,7 @@ async function reconcileLiveReport() {
       headers: { "If-None-Match": `"${article.dataset.liveEtag || ""}"` },
     });
     if (response.status === 304) {
+      setConnectionWarning(false);
       setLiveReportStatus("Live", "live");
       return;
     }
@@ -454,12 +464,14 @@ async function reconcileLiveReport() {
       return;
     }
     if (!response.ok) {
+      setConnectionWarning(true);
       setLiveReportStatus("Reconnecting", "reconnecting");
       return;
     }
     const documentFragment = new DOMParser().parseFromString(await response.text(), "text/html");
     const replacement = documentFragment.querySelector("[data-live-report]");
     if (!replacement) {
+      setConnectionWarning(true);
       setLiveReportStatus("Reconnecting", "reconnecting");
       return;
     }
@@ -473,8 +485,10 @@ async function reconcileLiveReport() {
     }
     initializeReportPagination(replacement, paginationState);
     updateLiveReportCounters();
+    setConnectionWarning(false);
     setLiveReportStatus("Live", "live");
   } catch {
+    setConnectionWarning(true);
     setLiveReportStatus("Reconnecting", "reconnecting");
   } finally {
     reportRequestActive = false;
@@ -543,6 +557,7 @@ async function reconcileLivePage() {
       },
     });
     if (response.status === 304) {
+      setConnectionWarning(false);
       return;
     }
     if (response.redirected) {
@@ -550,20 +565,23 @@ async function reconcileLivePage() {
       return;
     }
     if (!response.ok) {
+      setConnectionWarning(true);
       return;
     }
     const documentFragment = new DOMParser().parseFromString(await response.text(), "text/html");
     const replacement = documentFragment.querySelector("[data-live-page]");
     if (!replacement) {
+      setConnectionWarning(true);
       return;
     }
+    setConnectionWarning(false);
     if (!replaceLiveRegions(page, replacement)) {
       return;
     }
     livePageEtag = response.headers.get("ETag") || "";
     updateRunningTimers();
   } catch {
-    // The next scheduled conditional refresh will retry without disrupting work.
+    setConnectionWarning(true);
   } finally {
     livePageRequestActive = false;
   }

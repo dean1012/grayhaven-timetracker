@@ -3212,6 +3212,7 @@ def my_sessions() -> Any:
     timezone_info = ZoneInfo(cast(str, current_app.config["DISPLAY_TIMEZONE"]))
     pending_spans: list[TimeSpan] = []
     pending_costs: dict[date, Decimal] = {}
+    pending_session_days: set[date] = set()
     pending_running: dict[str, int | str] | None = None
     for entry_id, _, status, started_at, stopped_at, hourly_rate_cents in summary_rows:
         seconds = duration_seconds(
@@ -3224,6 +3225,9 @@ def my_sessions() -> Any:
             entry_id, calculate_cost(seconds, hourly_rate_cents)
         )
         if status == "pending_invoice":
+            pending_session_days.add(
+                started_at.replace(tzinfo=UTC).astimezone(timezone_info).date()
+            )
             span = TimeSpan(
                 started_at, stopped_at or max(snapshot_at, started_at), seconds
             )
@@ -3239,12 +3243,11 @@ def my_sessions() -> Any:
                 pending_running = {
                     "base_seconds": seconds,
                     "hourly_rate_cents": hourly_rate_cents,
-                    "snapshot_day": snapshot_at.replace(tzinfo=UTC)
-                    .astimezone(timezone_info)
-                    .date()
-                    .isoformat(),
                 }
     pending_days = dict(daily_seconds(pending_spans, timezone_info))
+    for day in pending_session_days:
+        pending_days.setdefault(day, 0)
+        pending_costs.setdefault(day, Decimal(0))
     invoice_ids = {row.invoice_id for row in summary_rows if row.invoice_id is not None}
     if invoice_ids:
         invoice_snapshots = database.scalars(
@@ -3267,25 +3270,17 @@ def my_sessions() -> Any:
             invoice_status = "client_paid" if invoice.status == "PAID" else "invoiced"
             summary[invoice_status]["seconds"] += int(hours * 3600)
     summary["client_paid"]["cost"] = Decimal(outstanding_cents(database, user.id)) / 100
-    if pending_running is not None:
-        current_day = snapshot_at.replace(tzinfo=UTC).astimezone(timezone_info).date()
-        pending_days.setdefault(current_day, 0)
-    pending_daily = []
-    if pending_days:
-        day = min(pending_days)
-        last_day = max(pending_days)
-        while day <= last_day:
-            seconds = pending_days.get(day, 0)
-            if (
-                seconds
-                or day.weekday() < 5
-                or (pending_running is not None and day == current_day)
-            ):
-                pending_daily.append((day, seconds, pending_costs.get(day)))
-            day += timedelta(days=1)
+    current_day = snapshot_at.replace(tzinfo=UTC).astimezone(timezone_info).date()
+    pending_days.setdefault(current_day, 0)
+    pending_daily = [
+        (day, seconds, pending_costs.get(day), day in pending_session_days)
+        for day, seconds in sorted(pending_days.items())
+        if seconds or day in pending_session_days or day == current_day
+    ]
     return render_template(
         "my_sessions.html",
         snapshot_at=snapshot_at,
+        current_day=current_day,
         pending_running=pending_running,
         pending_daily=pending_daily,
         session_rows=build_rows(pending_entries),
