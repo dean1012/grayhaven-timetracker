@@ -1,8 +1,8 @@
 # Grayhaven Systems LLC Time Tracker
 
-[![CI](https://github.com/dean1012/grayhaven-timetracker/actions/workflows/ci.yml/badge.svg)](https://github.com/dean1012/grayhaven-timetracker/actions/workflows/ci.yml)
-[![Unit Tests](https://github.com/dean1012/grayhaven-timetracker/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/dean1012/grayhaven-timetracker/actions/workflows/unit-tests.yml)
-[![codecov](https://codecov.io/gh/dean1012/grayhaven-timetracker/graph/badge.svg)](https://codecov.io/gh/dean1012/grayhaven-timetracker)
+[![CI](https://github.com/grayhavensystemsllc/grayhaven-timetracker/actions/workflows/ci.yml/badge.svg)](https://github.com/grayhavensystemsllc/grayhaven-timetracker/actions/workflows/ci.yml)
+[![Unit Tests](https://github.com/grayhavensystemsllc/grayhaven-timetracker/actions/workflows/unit-tests.yml/badge.svg)](https://github.com/grayhavensystemsllc/grayhaven-timetracker/actions/workflows/unit-tests.yml)
+[![codecov](https://codecov.io/gh/grayhavensystemsllc/grayhaven-timetracker/graph/badge.svg)](https://codecov.io/gh/grayhavensystemsllc/grayhaven-timetracker)
 
 Contract time tracking, billing lifecycle management, and client reporting for
 Grayhaven Systems LLC.
