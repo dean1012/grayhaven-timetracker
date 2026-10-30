@@ -901,7 +901,7 @@ setting from one configuration value. Do not change either value directly on
 the managed host.
 
 Follow the authoritative
-[managed timezone procedure](https://github.com/dean1012/grayhaven-config-ansible/blob/main/docs/operations.md#changing-the-managed-timezone)
+[managed timezone procedure](https://github.com/grayhavensystemsllc/grayhaven-config-ansible/blob/main/docs/operations.md#changing-the-managed-timezone)
 in the `grayhaven-config-ansible` repository. After convergence, verify a
 representative time entry and report in the application. Timestamps remain
 stored in UTC; changing the managed timezone changes display and entry
