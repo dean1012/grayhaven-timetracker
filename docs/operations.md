@@ -521,7 +521,7 @@ Use this procedure when the required artifact is not present under
    The backup utility preserves the absolute path below the target. The
    restored artifact is therefore located at
    `/tmp/var/lib/grayhaven/timetracker/backups/<backup>`.
-   The [`grayhaven-backupctl` operations guide](https://github.com/dean1012/grayhaven-backupctl/blob/main/docs/operations.md#restoring-to-a-target-directory)
+   The [`grayhaven-backupctl` operations guide](https://github.com/grayhavensystemsllc/grayhaven-backupctl/blob/main/docs/operations.md#restoring-to-a-target-directory)
    documents additional snapshot selectors and overwrite behavior.
 
 4. Verify the restored artifact with the approved image and matching deployed
@@ -901,7 +901,7 @@ setting from one configuration value. Do not change either value directly on
 the managed host.
 
 Follow the authoritative
-[managed timezone procedure](https://github.com/dean1012/grayhaven-config-ansible/blob/main/docs/operations.md#changing-the-managed-timezone)
+[managed timezone procedure](https://github.com/grayhavensystemsllc/grayhaven-config-ansible/blob/main/docs/operations.md#changing-the-managed-timezone)
 in the `grayhaven-config-ansible` repository. After convergence, verify a
 representative time entry and report in the application. Timestamps remain
 stored in UTC; changing the managed timezone changes display and entry
