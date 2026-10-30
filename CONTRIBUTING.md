@@ -157,7 +157,7 @@ To prepare a release:
 
 The `publish.yml` workflow validates the signed tag and tagged revision before it
 publishes the immutable version tag to
-`ghcr.io/dean1012/grayhaven-timetracker`. It does not publish `latest`.
+`ghcr.io/grayhavensystemsllc/grayhaven-timetracker`. It does not publish `latest`.
 Deployment automation must select the reviewed image by digest.
 
 Do not move, replace, reuse, or delete a published build tag. A correction
